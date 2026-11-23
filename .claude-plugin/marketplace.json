@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "odd-flow",
+  "description": "Local marketplace for the odd-flow plugin.",
+  "owner": {
+    "name": "max"
+  },
+  "plugins": [
+    {
+      "name": "odd-flow",
+      "description": "Organic Driven Development with Engram memory discipline and Orca role workers.",
+      "version": "0.1.0",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
