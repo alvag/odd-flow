@@ -32,6 +32,15 @@ Feature-document mirror: see `tracking.md`; pass `capture_prompt: false` for it.
 
 At a significant close or handoff, call `mem_session_summary` (goal, discoveries, accomplished, next steps, relevant files).
 
+## Conflicts after a save
+
+A save can return `judgment_required` with `candidates`, existing entries that may overlap the new one. Resolve them before the final message:
+
+- Judge each candidate by its own `candidates[].judgment_id`; never reuse the top-level `judgment_id` for all of them. Prefer the batch call (`mem_judge_many`) when there are several.
+- Ask the user, in one question, when you are unsure of the relation, or when it would be `supersedes` or `conflicts_with` on a `decision`, `architecture` or `policy` entry. Otherwise record `related`, `compatible`, `scoped` or `not_conflict` yourself, with a one-line reason.
+- When the new entry replaces an old one, update or supersede the old entry instead of leaving two live versions.
+- Follow the Engram server's own instructions when they differ from this section.
+
 ## Failures
 
 - A memory call never replaces or delays the answer to the user.

@@ -5,6 +5,7 @@ Rules:
 - Read bounded excerpts and search; do not dump whole large files.
 - Cite every claim as `path:line`, or a URL for external facts.
 - Separate verified facts from inferences, and say what you could not find.
+- Never call memory tools or start other workers; the parent saves what your report establishes and routes any follow-up.
 
 Return, at most ~2000 tokens:
 1. Answer: the map or finding the task asked for.
