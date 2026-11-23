@@ -24,3 +24,4 @@ Profile: `claude-gpt`.
 - L1 (user, 2026-11-23): "continuemos con el backlog de odd-flow"
 - L2 (2026-11-23): backlog item 3 of Engram #8307. Explorer E3 dispatches `ctx_29c80e05a5dc`, `ctx_3da6d7511ed2`. The user picked the unknown-window policy in S2.
 - L3 (2026-11-23): consequence to report: a Codex parent with a 258,400-token window gets a threshold of 38,760, so in organic mode it delegates much earlier than today; Claude parents keep 150k unless `ODD_FLOW_CONTEXT_WINDOW` is set. Risk: none of items 1-5 (an added optional field and env var); covered by `tests/context-check.sh`, so no independent verify unless the diff shows otherwise.
+- L4 (2026-11-23): T1 committed as `78dcc75` (`feat: derive the context threshold from the model window`), approved by the user ("luego commitea").

@@ -26,3 +26,4 @@ Profile: `claude-gpt`.
 - L1 (user, 2026-11-23): "continuemos con el backlog de odd-flow"
 - L2 (2026-11-23): backlog item 2 of Engram #8307. Explorer E2 dispatches `ctx_ee3c9fd46569`, `ctx_e2fd46e4512f`. Fix chosen by the parent: re-sample only when the narrow-width result would open a tab, so the common wide and right-column paths gain no wait.
 - L3 (user, 2026-11-23): "lanza el writer con los tests y la nota, luego commitea"
+- L4 (2026-11-23): T1-T3 committed as `90b3297` (`fix: wait for the pane width to settle before choosing a tab`), approved by the user (L3).
