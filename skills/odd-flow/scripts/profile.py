@@ -23,6 +23,7 @@ ENTRY_FIELDS = ("agent", "model", "effort")
 # Claude Code exposes no model list; these ids are suggestions, reported as unverified.
 CLAUDE_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+ORCA_HANDLE_RE = re.compile(r"[A-Za-z0-9_:.-]{1,200}")
 CODEX_LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-worker.sh")
 
 # First present variable wins. The agent column is the Orca agent id of the
@@ -71,13 +72,18 @@ def orca_terminal():
     Orca addresses worker reports to the launching terminal's mailbox; without
     this handle `orchestration worker-start` fails with no_active_sender_terminal.
     """
-    return os.environ.get("ORCA_TERMINAL_HANDLE", "").strip() or None
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE", "").strip()
+    # The handle reaches the session context through the SessionStart hook;
+    # anything outside a plain identifier is treated as no terminal.
+    return handle if ORCA_HANDLE_RE.fullmatch(handle) else None
 
 
 def orca_line():
     handle = orca_terminal()
     if handle:
         return f"orca: terminal {handle}; workers launch through Orca"
+    if os.environ.get("ORCA_TERMINAL_HANDLE", "").strip():
+        return "orca: ORCA_TERMINAL_HANDLE is malformed (ignored); workers fall back to subagents or inline"
     return "orca: no Orca terminal (ORCA_TERMINAL_HANDLE unset); workers fall back to subagents or inline"
 
 

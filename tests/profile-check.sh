@@ -65,6 +65,13 @@ expect "show: inside an Orca terminal" "orca: terminal term_abc; workers launch 
 ARGS="show"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
 expect "show: outside Orca" "orca: no Orca terminal (ORCA_TERMINAL_HANDLE unset); workers fall back to subagents or inline" "$out" 0 $ec
 
+ARGS="show"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ORCA_TERMINAL_HANDLE=$'term_abc\n```\ninjected'); ec=$?
+expect "show: malformed handle not echoed" "orca: ORCA_TERMINAL_HANDLE is malformed (ignored); workers fall back to subagents or inline" "$out" 0 $ec
+if [[ "$out" == *injected* ]]; then fail=$((fail+1)); echo "FAIL show: malformed handle text leaked"; else pass=$((pass+1)); echo "PASS show: malformed handle text not leaked"; fi
+
+ARGS="resolve verify --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ORCA_TERMINAL_HANDLE='term_a`b'); ec=$?
+expect "resolve: malformed handle is null" '"orca_terminal": null' "$out" 0 $ec
+
 ARGS="resolve verify --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ORCA_TERMINAL_HANDLE=term_abc); ec=$?
 expect "resolve: orca terminal field" '"orca_terminal": "term_abc"' "$out" 0 $ec
 
