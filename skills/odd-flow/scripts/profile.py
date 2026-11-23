@@ -65,6 +65,22 @@ def current_agent():
     return agent or os.environ.get("ODD_FLOW_AGENT", "").strip() or None
 
 
+def orca_terminal():
+    """Handle of the Orca terminal this session runs in, or None.
+
+    Orca addresses worker reports to the launching terminal's mailbox; without
+    this handle `orchestration worker-start` fails with no_active_sender_terminal.
+    """
+    return os.environ.get("ORCA_TERMINAL_HANDLE", "").strip() or None
+
+
+def orca_line():
+    handle = orca_terminal()
+    if handle:
+        return f"orca: terminal {handle}; workers launch through Orca"
+    return "orca: no Orca terminal (ORCA_TERMINAL_HANDLE unset); workers fall back to subagents or inline"
+
+
 def session_file(value):
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", value)
     return os.path.join(home_dir(), "sessions", f"{safe}.json")
@@ -230,6 +246,7 @@ def resolve_role(doc, role):
         "notice": notice,
         "launch": "terminal" if command else "worker-start",
         "terminal_command": command,
+        "orca_terminal": orca_terminal(),
     }
 
 
@@ -290,6 +307,7 @@ def cmd_show(_args):
             print("  " + resolve_role(doc, role)["notice"].split(" | ", 1)[1])
         except ProfileError as exc:
             print(f"  {role} -> error: {exc}")
+    print(orca_line())
 
 
 def orca_agents():

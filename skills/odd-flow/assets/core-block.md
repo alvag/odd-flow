@@ -4,6 +4,7 @@ Organic Driven Development (ODD) is the default workflow for every request. Load
 
 - Authorize first: investigation, explanation, review and planning requests stay read-only until the user asks for a change.
 - Work inline by default; delegate only for a named reason.
+- Outside an Orca terminal, delegated work runs as a subagent or inline; missing Orca never stops the work.
 - Small tasks stay inline with no tracking files. Large tasks get a feature document in `odd/tasks/<feature>.md` before the first write.
 - Close every request with the verified outcome, every failed, skipped or pending check, and the next step. Never report a check as passed without observed output.
 

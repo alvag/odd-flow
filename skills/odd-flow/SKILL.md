@@ -14,9 +14,9 @@ metadata:
 
 ## Hard Rules
 
-1. Work inline by default. Launch an Orca worker only when a trigger in `references/delegation.md` names its reason; never one worker per role by habit.
+1. Work inline by default. Launch a worker only when a trigger in `references/delegation.md` names its reason; never one worker per role by habit. A worker is an Orca worker inside an Orca terminal, otherwise a subagent or inline work (`references/orca-dispatch.md`, Without Orca); missing Orca never stops the work.
 2. Before every launch, resolve the role with `scripts/profile.py resolve <role>`; never reuse flags from memory. Print its `notice` line.
-3. If a launch fails because of the agent or model, report role, profile and error. Never switch model or agent on your own.
+3. If a launch fails because of the agent or model, report role, profile and error. Never switch model or agent on your own; the Without Orca fallback is the only sanctioned switch, and its notice names it.
 4. Investigation, explanation, review and planning requests stay read-only until the user asks for a change.
 5. Quote user requirements verbatim; hand work to workers by reference, never by paraphrase.
 6. The parent owns git, commits and scratch cleanup. Workers never commit, stage, delete scratch or launch workers.
@@ -51,7 +51,7 @@ Close every request with: verified outcome; every failed, skipped or pending che
 
 - `references/odd-protocol.md` — steps, task size, high-risk items, test-first policy.
 - `references/delegation.md` — triggers, units, edit surfaces, correction bounds.
-- `references/orca-dispatch.md` — launch, wait and collect Orca workers.
+- `references/orca-dispatch.md` — launch, wait and collect Orca workers; subagent or inline fallback without Orca.
 - `references/profiles.md` — profile file, session binding, commands.
 - `references/tracking.md` — feature document and commit units.
 - `references/commit.md` — commit procedure, message format, failures and amend.

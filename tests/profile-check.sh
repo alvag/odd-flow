@@ -59,6 +59,18 @@ expect "clear removes binding" "session binding removed" "$out" 0 $ec
 ARGS="resolve verify --json"; out=$(run CODEX_THREAD_ID=th-1); ec=$?
 expect "after clear, default again" '"profile_source": "file default"' "$out" 0 $ec
 
+ARGS="show"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ORCA_TERMINAL_HANDLE=term_abc); ec=$?
+expect "show: inside an Orca terminal" "orca: terminal term_abc; workers launch through Orca" "$out" 0 $ec
+
+ARGS="show"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
+expect "show: outside Orca" "orca: no Orca terminal (ORCA_TERMINAL_HANDLE unset); workers fall back to subagents or inline" "$out" 0 $ec
+
+ARGS="resolve verify --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ORCA_TERMINAL_HANDLE=term_abc); ec=$?
+expect "resolve: orca terminal field" '"orca_terminal": "term_abc"' "$out" 0 $ec
+
+ARGS="resolve verify --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
+expect "resolve: no orca terminal, launch unchanged" '"launch": "worker-start", "terminal_command": null, "orca_terminal": null' "$out" 0 $ec
+
 printf '{"profiles":{"X":{"write":{"effort":"high"}}}}' > "$T/profiles.json"
 ARGS="list"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
 expect "effort without model rejected" "'effort' requires 'model'" "$out" 2 $ec

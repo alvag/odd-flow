@@ -13,6 +13,8 @@ No trigger holds by default. When in doubt, work inline. Each trigger is mandato
 
 Never delegate for size, file count, a large task alone, or price. Units of ~100 changed lines or less run inline.
 
+A trigger names a role, not a runtime. Outside an Orca terminal the role runs as a subagent or inline (`orca-dispatch.md`, Without Orca); a trigger never stops the work because Orca is missing.
+
 ## Measuring context
 
 Run `python3 <skill-dir>/scripts/context.py` before the first write of each implementation unit, and quote its line in the one-line reason. Never estimate the context from the conversation's length when the script reports a number.

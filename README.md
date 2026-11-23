@@ -1,6 +1,6 @@
 # odd-flow
 
-Claude Code plugin for Organic Driven Development (ODD): inline-by-default work, Engram memory discipline, and Orca role workers with per-role agent, model and effort profiles.
+Claude Code plugin for Organic Driven Development (ODD): inline-by-default work, Engram memory discipline, and Orca role workers with per-role agent, model and effort profiles. Outside an Orca terminal, delegated roles run as subagents or inline.
 
 ## Contents
 

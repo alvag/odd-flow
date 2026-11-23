@@ -33,9 +33,22 @@ Start every independent worker of one parallel batch from a single shell command
 - `question`: answer from the task or the user's instructions. Otherwise relay it to the user unchanged: every option, label and description in original order, and the allowed answers. Return a valid answer to the worker once.
 - `escalation` or a lost worker: apply the correction bounds in `delegation.md`; never retry a launch blindly.
 
-## Orca unavailable
+## Without Orca
 
-If `ORCA status --json` fails or the start fails at readiness, do not silently run the triggered work inline. Report the blocker, keep existing work, and ask the user whether to continue inline or wait for Orca.
+The session knows from its start whether it runs in an Orca terminal: the `orca:` line of `profile.py show`, injected at session start, and `orca_terminal` in the resolve result. Orca addresses worker reports to the launching terminal's mailbox, so a session outside an Orca terminal cannot start workers (`worker-start` fails with `no_active_sender_terminal`).
+
+Missing Orca never stops ODD. Use the fallback without asking when `orca_terminal` is null, the `orca` executable is missing, `ORCA status --json` fails, or a start fails with `no_active_sender_terminal` or at readiness:
+
+1. Subagent, when the runtime offers one (Claude Code: the Agent tool). Pass the same spec and role prompt; the subagent returns its report, in the role's Return format, as its final message. It obeys hard rule 6: no commits, no staging, no scratch deletion, no further workers. Parallel writers start as subagents in one message.
+2. Inline otherwise: the parent runs the role itself, one unit at a time. A `verify`, `review` or `refute` run inline is not independent; say so in the close.
+
+The fallback runs on the session agent. Pass the profile's model only when its agent is the session agent and the subagent tool accepts that model; otherwise the subagent uses its default. Print the notice with `fallback: subagent` or `fallback: inline` and the profile entry that was not applied.
+
+After a fallback, the steps under "When Orca wakes you" do not apply; the spot check and the edit-surface comparison still do. Record the route as `subagent:<role>` or `inline` in the feature document.
+
+The Named agent trigger is the one exception: the user asked for that agent. Use a subagent that runs it when the runtime has one (for example a Codex subagent from a Codex plugin); otherwise say the named agent is unreachable without Orca and ask whether to run the work on the session agent.
+
+A launch that fails because of the agent or the model is not an Orca outage: report it under hard rule 3 and do not fall back.
 
 ## Limits
 
