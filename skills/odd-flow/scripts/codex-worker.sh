@@ -5,9 +5,9 @@
 #
 # `orca orchestration worker-start --agent codex` starts Codex inside its default
 # workspace-write sandbox, which blocks the connection to Orca: the worker cannot send
-# worker_done. This reproduces the argv Orca uses for Codex workers and adds one override,
-# outbound network for the sandbox, which also lets the worker reach Orca. It never
-# changes the user's Codex config.
+# worker_done. This reproduces the argv Orca uses for Codex workers, explicitly selects
+# workspace-write, and enables outbound network in that sandbox so the worker can reach
+# Orca. It never changes the user's Codex config.
 #
 # Run it as the command of `orca terminal create`; the Orca terminal provides the
 # variables below. Codex filters variables named like keys or tokens out of its tool
@@ -57,4 +57,4 @@ if [ -n "$model" ]; then
 fi
 set -- "$@" -c sandbox_workspace_write.network_access=true
 
-exec codex --no-daemon "$@"
+exec codex --no-daemon --sandbox workspace-write "$@"

@@ -7,8 +7,8 @@ L="$ROOT/skills/odd-flow/scripts/codex-worker.sh"
 P="$ROOT/skills/odd-flow/scripts/profile.py"
 T=$(mktemp -d)
 pass=0; fail=0
-expect() { # name, expected substring, actual, expected exit, actual exit
-  if [[ "$3" == *"$2"* && "$4" == "$5" ]]; then pass=$((pass+1)); echo "PASS $1";
+expect() { # name, expected substring, actual, expected exit, actual exit, [exact]
+  if [[ "$4" == "$5" && ( "$3" == "$2" || ( "${6:-}" != exact && "$3" == *"$2"* ) ) ]]; then pass=$((pass+1)); echo "PASS $1";
   else fail=$((fail+1)); echo "FAIL $1"; echo "  want exit $4 and: $2"; echo "  got  exit $5: $3"; fi
 }
 refute() { # name, unexpected substring, actual
@@ -27,11 +27,21 @@ ARGS="gpt-6-luna medium"; out=$(launch "${ORCA_ENV[@]}"); ec=$?
 expect "sandbox override is passed" $'-c\nsandbox_workspace_write.network_access=true' "$out" 0 $ec
 expect "model is passed" $'-m\ngpt-6-luna' "$out" 0 $ec
 expect "effort is passed" $'-c\nmodel_reasoning_effort=medium' "$out" 0 $ec
-expect "Orca argv: --no-daemon first" $'--no-daemon\n-c\nshell_environment_policy.set.ORCA_USER_DATA_PATH=' "${out:0:200}" 0 $ec
+expect "Orca argv: --no-daemon first" $'\n--no-daemon\n' $'\n'"${out%%$'\n'*}"$'\n' 0 $ec
 expect "Orca argv: startup options kept" $'-c\ncheck_for_update_on_startup=false\n-c\ndisable_paste_burst=true\n-m' "$out" 0 $ec
 expect "path with spaces is forwarded as one TOML literal" "shell_environment_policy.set.ORCA_USER_DATA_PATH='/Users/u/Library/Application Support/orca'" "$out" 0 $ec
 expect "terminal handle is forwarded" "shell_environment_policy.set.ORCA_TERMINAL_HANDLE='term_1'" "$out" 0 $ec
 refute "no wider sandbox mode is set" "sandbox_mode" "$out"
+expect "workspace-write sandbox is passed before the config options" $'\n--sandbox\nworkspace-write\n-c\nshell_environment_policy.set.ORCA_USER_DATA_PATH=' "$out" 0 $ec
+want=$(printf '%s\n' --no-daemon --sandbox workspace-write \
+  -c "shell_environment_policy.set.ORCA_USER_DATA_PATH='/Users/u/Library/Application Support/orca'" \
+  -c "shell_environment_policy.set.ORCA_WORKSPACE_ID='ws-1::/repo'" \
+  -c "shell_environment_policy.set.ORCA_WORKTREE_ID='ws-1::/repo'" \
+  -c "shell_environment_policy.set.ORCA_PANE_KEY='tab-1:pane-1'" \
+  -c "shell_environment_policy.set.ORCA_TERMINAL_HANDLE='term_1'" \
+  -c check_for_update_on_startup=false -c disable_paste_burst=true \
+  -m gpt-6-luna -c model_reasoning_effort=medium -c sandbox_workspace_write.network_access=true)
+expect "argv: pin once, existing order kept" "$want" "$out" 0 $ec exact
 
 ARGS=""; out=$(launch "${ORCA_ENV[@]}"); ec=$?
 refute "no model: no -m flag" $'\n-m\n' "$out"
