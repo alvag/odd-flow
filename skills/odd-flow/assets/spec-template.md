@@ -18,7 +18,7 @@ Spec: odd/tasks/<feature>.md, T<n>, S<a>-S<b>. Read the document until "## Log".
 
 Path: <absolute repo path>
 Base commit: <sha>          # verify, review, refute
-Candidate commit: <sha>     # review, refute
+Candidate commit: <sha>     # verify, review, refute
 
 ## Allowed edit surfaces
 

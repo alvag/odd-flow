@@ -37,10 +37,11 @@ In Claude Code, the `PreToolUse` hook checks that the surface is present and wel
 - `Spec: odd/tasks/<feature>.md, T<n>, S<a>-S<b>` and "read until `## Log`", or the user's request verbatim when there is no document.
 - `## Allowed edit surfaces` (writers), `## Skills to load before work` with exact `SKILL.md` paths that match the task, `## Verification` with exact commands, optional `## Known environmental failures`.
 - The test-first policy and runner.
+- For `verify`, the parent pins and passes `Base commit` and `Candidate commit` before launch. Build the candidate from the base in a temporary Git index, add only the writer's changed paths (including new files and deletions), and use `git commit-tree` to create an unreferenced commit. Do not change the real index or move a branch.
 
 ## Correction bounds
 
 - Worker: one correction per failing check; a second only when the same check still fails; then `partial` with the diagnosed cause.
-- Verifier blockers: one correction batch that fixes every blocker, one recheck limited to those blockers, a second correction only for the same blocker still failing. A new finding never earns another round.
+- Verifier code blockers: one correction batch that fixes every blocker, one recheck limited to those blockers, a second correction only for the same blocker still failing. A new finding never earns another round. Setup blockers return to the parent outside this bound; do not send them to a writer as code fixes.
 - A worker that exhausts its bound ends its cycle, not the unit. What follows is in the active mode file (After a worker exhausts its bound).
 - Spot check: re-run one command a worker reported before accepting its result.
