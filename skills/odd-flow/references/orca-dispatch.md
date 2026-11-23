@@ -40,11 +40,11 @@ The session knows from its start whether it runs in an Orca terminal: the `orca:
 Missing Orca never stops ODD. Use the fallback without asking when `orca_terminal` is null, the `orca` executable is missing, `ORCA status --json` fails, or a start fails with `no_active_sender_terminal` or at readiness:
 
 1. Subagent, when the runtime offers one (Claude Code: the Agent tool). Pass the same spec and role prompt; the subagent returns its report, in the role's Return format, as its final message. It obeys hard rule 6: no commits, no staging, no scratch deletion, no further workers. Parallel writers start as subagents in one message.
-2. Inline otherwise: the parent runs the role itself, one unit at a time. A `verify`, `review` or `refute` run inline is not independent; say so in the close.
+2. No subagent: the active mode file (Without Orca) says what runs instead.
 
-The fallback runs on the session agent. Pass the profile's model and effort only when its agent is the session agent and the subagent tool accepts them (Claude Code's Agent tool takes `model` and `effort`); otherwise the subagent uses its defaults. Print the notice with `fallback: subagent` or `fallback: inline` and every part of the profile entry that was not applied.
+The fallback runs on the session agent. Pass the profile's model and effort only when its agent is the session agent and the subagent tool accepts them (Claude Code's Agent tool takes `model` and `effort`); otherwise the subagent uses its defaults. Print the notice with the fallback the active mode file names and every part of the profile entry that was not applied.
 
-After a fallback, the Orca messaging steps under "When Orca wakes you" (release, `question`, `escalation`) do not apply. The checks on the report still do: compare it with the role's Return format, spot-check one reported command, compare a writer's changed files with its surface, then update the feature document. Record the route as `subagent:<role>` or `inline` in the feature document.
+After a fallback, the Orca messaging steps under "When Orca wakes you" (release, `question`, `escalation`) do not apply. The checks on the report still do: compare it with the role's Return format, spot-check one reported command, compare a writer's changed files with its surface, then update the feature document. Record the route in the feature document as the active mode file says.
 
 The Named agent trigger is the one exception: the user asked for that agent. Use any path in the runtime that runs that agent: a subagent (for example a Codex subagent from a Codex plugin) or that agent's own CLI or plugin runtime, read-only when the request is read-only. When none exists, say the named agent is unreachable without Orca and ask whether to run the work on the session agent.
 

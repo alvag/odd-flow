@@ -11,8 +11,8 @@ Run these steps in order on every request.
 ## 2. Explore
 
 - Explore proportionately, before proposing or writing.
-- Explore only for a map you need to decide or route. Never explore files you will read anyway before writing inline.
-- Inline evidence budget: one parallel batch, at most 3 calls, about 10k tokens. Beyond that, the mapping trigger holds (`delegation.md`).
+- Explore only for a map you need to decide or route. Never explore files that will be read anyway before the write.
+- Parent read budget: one parallel batch, at most 3 calls, about 10k tokens. Beyond that, the mapping trigger holds (`delegation.md`).
 
 ## 3. Resolve uncertainty
 
@@ -30,7 +30,7 @@ Small when all three hold:
 
 Large only when the resume test fails: several sessions, an external wait, deliverables the user wants apart, or requirements long enough to be lost to compaction. File, command, test or line counts never decide size.
 
-Small path: inline; RED before the fix when a test applies; focused test and suite once each; no feature document, no workers, no commits unless asked.
+Small path: RED before the fix when a test applies; focused test and suite once each; no feature document, no commits unless asked. Who writes it: the active mode file.
 
 ### High-risk items
 
@@ -45,11 +45,11 @@ Small path: inline; RED before the fix when a test applies; focused test and sui
 
 ## 5. Track (large only)
 
-Load `tracking.md` and create the feature document before the first source write. Tell the user in one line which document was created and how many tasks it holds.
+Load `tracking.md` and create the feature document before the first source write or writer launch. Tell the user in one line which document was created and how many tasks it holds.
 
 ## 6. Implement
 
-- Before the first write of each unit, run `scripts/context.py`; if it reports `holds`, load `delegation.md` (Writer: context).
+- Who writes each unit, and when a writer launches: the active mode file.
 - Test-first when a runnable deterministic test and a clear expected outcome exist: RED, GREEN, refactor. One RED test per requested rule; one preservation test per existing command or option the change touches; no other cases. Otherwise state the exception and run proportionate checks.
 - Differential check when the diff changes shared code that an unrequested command also uses: run that command against a base copy in `mktemp -d` and against the change; compare stdout, stderr, exit code. Any unrequested difference is a regression to fix and pin.
 - Tests assert every observable effect through the public interface. A user-reported failure is reproduced before deciding it already works.

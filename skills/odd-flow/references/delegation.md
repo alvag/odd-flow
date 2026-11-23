@@ -1,29 +1,15 @@
 # Delegation triggers
 
-No trigger holds by default. When in doubt, work inline. Each trigger is mandatory only when its condition truly holds; record the reason in one line before launching.
+Who writes, and the writer triggers, are the active mode file's rule (`mode-organic.md` or `mode-full-delegation.md`, named by the `mode:` line of `profile.py show`). The triggers below hold in both modes. Each is mandatory only when its condition truly holds; record the reason in one line before launching.
 
 | Trigger | Condition | Role |
 |---|---|---|
-| Mapping | Understanding needs more than the inline budget (3 calls, ~10k tokens) or more than ~5 sequential lookups | `explore` |
-| Writer: parallel | Two or more independent units with disjoint edit surfaces, each several minutes of work (several files or ~100+ changed lines), launched together in one turn | `write`, one per unit |
-| Writer: context | `scripts/context.py` reports `holds` (the parent context is at 150k tokens or more); delegate the next bounded unit | `write` |
+| Mapping | Understanding needs more than the parent's read budget (3 calls, ~10k tokens) or more than ~5 sequential lookups | `explore` |
 | Verification | The change's Risk line names a high-risk item | `verify` |
 | Review | The user asks for review, or verification passed on a change that names a high-risk item and the user accepted the review forecast | `review`, `refute` |
 | Named agent | The user explicitly asks for another agent ("have Codex check this") | role that matches the request |
 
-Never delegate for size, file count, a large task alone, or price. Units of ~100 changed lines or less run inline.
-
-A trigger names a role, not a runtime. Outside an Orca terminal the role runs as a subagent or inline (`orca-dispatch.md`, Without Orca); a trigger never stops the work because Orca is missing.
-
-## Measuring context
-
-Run `python3 <skill-dir>/scripts/context.py` before the first write of each implementation unit, and quote its line in the one-line reason. Never estimate the context from the conversation's length when the script reports a number.
-
-- Claude Code: tokens of the last main-thread reply in the session transcript (input, cache creation and cache read).
-- Codex: input tokens of the last `token_count` event in the session rollout, with the model's context window.
-- `unknown` (Antigravity, a missing file, no session id): judge the trigger yourself and say that the number was unavailable.
-
-The trigger holds from 150k tokens whatever the model's window: a long parent context degrades its attention to the specs before it runs out.
+A trigger names a role, not a runtime. Outside an Orca terminal the role runs as `orca-dispatch.md` (Without Orca) and the active mode file say; a trigger never stops the work because Orca is missing.
 
 ## Units
 
@@ -54,5 +40,5 @@ This is a prompt rule: nothing enforces it at write time. After each writer retu
 
 - Worker: one correction per failing check; a second only when the same check still fails; then `partial` with the diagnosed cause.
 - Verifier blockers: one correction batch that fixes every blocker, one recheck limited to those blockers, a second correction only for the same blocker still failing. A new finding never earns another round.
-- A worker that exhausts its bound ends its cycle, not the unit. Name the cause; fix inline when small and understood, otherwise relaunch once with the diagnosis and a new hypothesis. A repeated cause blocks the unit.
+- A worker that exhausts its bound ends its cycle, not the unit. What follows is in the active mode file (After a worker exhausts its bound).
 - Spot check: re-run one command a worker reported before accepting its result.

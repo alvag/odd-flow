@@ -13,7 +13,7 @@ Profile: `<profile name or none>`.
 
 | ID | Specs | Work | Route | Status | Evidence |
 |---|---|---|---|---|---|
-| T1 | S1 | <short description> | inline | pending | |
+| T1 | S1 | <short description> | <route> | pending | |
 | T2 | S2-S3 | <short description> | orca:write (parallel with T3) | pending | |
 
 ## Log

@@ -2,13 +2,13 @@
 
 ## Feature document
 
-Create `odd/tasks/<feature-name>.md` in the repository before the first source write, from `assets/feature-doc-template.md`. Use a descriptive, filename-safe name; never overwrite another feature's document.
+Create `odd/tasks/<feature-name>.md` in the repository before the first source write or writer launch, from `assets/feature-doc-template.md`. Use a descriptive, filename-safe name; never overwrite another feature's document.
 
 Fixed section order:
 
 1. Header, 2-4 lines: objective, branch, delivery strategy, test runner, `Profile: <name>`.
 2. `## Specs`: numbered `S1..Sn`. Quote the user's exact strings, messages, commands and examples verbatim, in the user's language. Add no unrequested requirement; mark assumptions as assumptions.
-3. `## Tasks`: one line per task: stable ID, linked `S#`, route (`inline` or `orca:<role>` plus trigger reason), status (`pending`, `in_progress`, `done`, `blocked`, `dropped`), commit or RED/GREEN evidence.
+3. `## Tasks`: one line per task: stable ID, linked `S#`, route (one the active mode file names, plus trigger reason), status (`pending`, `in_progress`, `done`, `blocked`, `dropped`), commit or RED/GREEN evidence.
 4. `## Log`, last: `L1` is the user's original request verbatim; later corrections verbatim with their date; evidence, decisions and next step appended.
 
 ## Changes

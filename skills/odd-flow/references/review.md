@@ -29,8 +29,8 @@ Launch one `review` worker per lens, together, with `assets/roles/review.md` and
 ## Reducing findings
 
 1. Only candidate-caused `BLOCKER` or `CRITICAL` findings (`causal_disposition` introduced, behavior-activated or worsened) block. Pre-existing and base-only findings become follow-ups. `unknown` causality escalates to the user.
-2. Send every blocking finding in one batch to a `refute` worker. `corroborated` stays; `refuted` becomes advisory; `inconclusive` or a missing result escalates to the user. A `refute` run inline (`orca-dispatch.md`, Without Orca) is not independent: it never demotes a finding; a finding it would refute goes to the user unchanged, with the refutation attached.
-3. One bounded correction: one batch that fixes every corroborated finding and nothing else, touching only the candidate's paths, at most `min(200, ceil(candidate_changed_lines / 2))` lines. Write it inline or with one `write` worker.
+2. Send every blocking finding in one batch to a `refute` worker. `corroborated` stays; `refuted` becomes advisory; `inconclusive` or a missing result escalates to the user. A `refute` the parent runs itself (`orca-dispatch.md`, Without Orca) is not independent: it never demotes a finding; a finding it would refute goes to the user unchanged, with the refutation attached.
+3. One bounded correction: one batch that fixes every corroborated finding and nothing else, touching only the candidate's paths, at most `min(200, ceil(candidate_changed_lines / 2))` lines. Who writes it: the active mode file (Review correction).
 4. Validate once with a `verify` worker scoped to the original specs plus the corrected findings. A regression or an unfixed finding escalates to the user. No second correction and no new review round.
 
 ## Close
