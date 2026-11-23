@@ -19,5 +19,8 @@
     "minimal": {
       "verify": { "agent": "codex" }
     }
+  },
+  "workflow": {
+    "claude-codex": { "orchestratorMode": "full-delegation" }
   }
 }

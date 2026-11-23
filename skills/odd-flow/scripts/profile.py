@@ -2,8 +2,13 @@
 """Resolve odd-flow role profiles for the current agent session.
 
 Profiles live in $ODD_FLOW_HOME/profiles.json (default ~/.config/odd-flow).
-A session binding written by `use` lives in $ODD_FLOW_HOME/sessions/<key>.json,
-keyed by the agent's own session id, or by the Orca pane as a fallback.
+A session binding written by `use` or `session-mode` lives in
+$ODD_FLOW_HOME/sessions/<key>.json, keyed by the agent's own session id, or by
+the Orca pane as a fallback.
+
+Each profile runs the orchestrator in one of two peer modes, organic (default)
+or full-delegation, stored in the file's top-level `workflow` map. The map sits
+beside `profiles` because a profile's keys are roles only.
 """
 
 import argparse
@@ -20,6 +25,10 @@ BASE_ROLES = ("explore", "write", "verify", "review", "refute")
 LENSES = ("risk", "resilience", "readability", "reliability")
 ROLES = BASE_ROLES + tuple(f"review-{lens}" for lens in LENSES)
 ENTRY_FIELDS = ("agent", "model", "effort")
+MODES = ("organic", "full-delegation")
+DEFAULT_MODE = "organic"
+MODE_ENV = "ODD_ORCHESTRATOR_MODE"
+WORKFLOW_FIELDS = ("orchestratorMode",)
 # Claude Code exposes no model list; these ids are suggestions, reported as unverified.
 CLAUDE_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -78,13 +87,14 @@ def orca_terminal():
     return handle if ORCA_HANDLE_RE.fullmatch(handle) else None
 
 
-def orca_line():
+def orca_line(mode=None):
     handle = orca_terminal()
     if handle:
         return f"orca: terminal {handle}; workers launch through Orca"
+    fallback = "subagents" if mode == "full-delegation" else "subagents or inline"
     if os.environ.get("ORCA_TERMINAL_HANDLE", "").strip():
-        return "orca: ORCA_TERMINAL_HANDLE is malformed (ignored); workers fall back to subagents or inline"
-    return "orca: no Orca terminal (ORCA_TERMINAL_HANDLE unset); workers fall back to subagents or inline"
+        return f"orca: ORCA_TERMINAL_HANDLE is malformed (ignored); workers fall back to {fallback}"
+    return f"orca: no Orca terminal (ORCA_TERMINAL_HANDLE unset); workers fall back to {fallback}"
 
 
 def session_file(value):
@@ -124,7 +134,7 @@ def load_profiles():
     path = profiles_path()
     _, doc = read_raw()
     if doc is None:
-        return {"default": None, "profiles": {}, "path": path, "exists": False}
+        return {"default": None, "profiles": {}, "workflow": {}, "path": path, "exists": False}
     return validate_doc(doc, path)
 
 
@@ -155,25 +165,69 @@ def validate_doc(doc, path):
     default = doc.get("default")
     if default is not None and default not in profiles:
         raise ProfileError(f"{path}: default profile '{default}' is not defined")
-    return {"default": default, "profiles": profiles, "path": path, "exists": True}
+    workflow = doc.get("workflow", {})
+    if not isinstance(workflow, dict):
+        raise ProfileError(f"{path}: 'workflow' must be an object")
+    for name, entry in workflow.items():
+        where = f"{path}: workflow '{name}'"
+        if name not in profiles:
+            raise ProfileError(f"{where}: profile is not defined")
+        if not isinstance(entry, dict):
+            raise ProfileError(f"{where}: must be an object")
+        extra = set(entry) - set(WORKFLOW_FIELDS)
+        if extra:
+            raise ProfileError(f"{where}: unknown fields {sorted(extra)}")
+        mode = entry.get("orchestratorMode", DEFAULT_MODE)
+        if mode not in MODES:
+            raise ProfileError(f"{where}: unknown orchestratorMode '{mode}' (known: {', '.join(MODES)})")
+    return {"default": default, "profiles": profiles, "workflow": workflow, "path": path, "exists": True}
 
 
-def read_binding():
+def read_session():
+    """Return (data, var) of this session's binding file; data is {} when there is none."""
     var, value, _ = session_key()
     if not value:
-        return None
+        return {}, var
     path = session_file(value)
     if not os.path.exists(path):
-        return None
+        return {}, var
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, json.JSONDecodeError) as exc:
         raise ProfileError(f"{path}: unreadable session binding: {exc}") from exc
-    name = data.get("profile") if isinstance(data, dict) else None
-    if not isinstance(name, str) or not name:
+    if not isinstance(data, dict):
+        raise ProfileError(f"{path}: session binding must be an object")
+    name, mode = data.get("profile"), data.get("mode")
+    if name is not None and (not isinstance(name, str) or not name):
+        raise ProfileError(f"{path}: session binding has an invalid profile")
+    if mode is not None and mode not in MODES:
+        raise ProfileError(f"{path}: session binding has unknown mode '{mode}' (known: {', '.join(MODES)})")
+    if name is None and mode is None:
         raise ProfileError(f"{path}: session binding has no profile")
-    return name, f"session ({var})"
+    return data, var
+
+
+def read_binding():
+    data, var = read_session()
+    if not data.get("profile"):
+        return None
+    return data["profile"], f"session ({var})"
+
+
+def write_session(data):
+    """Write this session's binding, or remove it when it holds nothing."""
+    var, value, _ = session_key()
+    if not value:
+        raise ProfileError("no session id found (Claude, Codex, Antigravity or ORCA_PANE_KEY); launch with ODD_PROFILE instead")
+    path = session_file(value)
+    data = {k: v for k, v in data.items() if k in ("profile", "mode") and v}
+    if not data:
+        if os.path.exists(path):
+            os.unlink(path)
+        return var
+    write_json_atomic(path, {**data, "key": var, "updated_at": int(time.time())})
+    return var
 
 
 def selected_profile(doc):
@@ -191,6 +245,44 @@ def selected_profile(doc):
         known = ", ".join(sorted(doc["profiles"])) or "none"
         raise ProfileError(f"profile '{name}' from {source} is not defined in {doc['path']} (known: {known})")
     return name, source
+
+
+def env_mode():
+    """Return (mode, source) from ODD_ORCHESTRATOR_MODE, or None when it is unset or blank."""
+    env = os.environ.get(MODE_ENV, "").strip()
+    if not env:
+        return None
+    if env not in MODES:
+        raise ProfileError(f"{MODE_ENV}: unknown mode '{env}' (known: {', '.join(MODES)})")
+    return env, f"env {MODE_ENV}"
+
+
+def resolve_mode(doc, name):
+    """Return (mode, source) of the orchestrator mode for the selected profile name.
+
+    Order: the ODD_ORCHESTRATOR_MODE override, this session's `session-mode`,
+    the profile's `workflow` entry, then organic. An unknown value fails rather
+    than falling back, so a typo never silently runs the other mode.
+    """
+    env = env_mode()
+    if env:
+        return env
+    data, var = read_session()
+    if data.get("mode"):
+        return data["mode"], f"session ({var})"
+    entry = doc["workflow"].get(name) if name else None
+    if entry and "orchestratorMode" in entry:
+        return entry["orchestratorMode"], f"profile {name}"
+    return DEFAULT_MODE, "default"
+
+
+def mode_reference(mode):
+    return f"references/mode-{mode}.md"
+
+
+def mode_line(doc, name):
+    mode, source = resolve_mode(doc, name)
+    return f"mode: {mode} ({source}); rules: {mode_reference(mode)}"
 
 
 def shell_quote(value):
@@ -272,12 +364,23 @@ def cmd_use(args):
     if args.name not in doc["profiles"]:
         known = ", ".join(sorted(doc["profiles"])) or "none"
         raise ProfileError(f"profile '{args.name}' is not defined in {doc['path']} (known: {known})")
-    var, value, _ = session_key()
-    if not value:
-        raise ProfileError("no session id found (Claude, Codex, Antigravity or ORCA_PANE_KEY); launch with ODD_PROFILE instead")
-    write_json_atomic(session_file(value), {"profile": args.name, "key": var, "updated_at": int(time.time())})
+    # Binding a profile drops a session mode override, so the new profile's own mode applies.
+    var = write_session({"profile": args.name})
     note = " (bound to the Orca pane, not the conversation)" if var == "ORCA_PANE_KEY" else ""
     print(f"profile: {args.name} bound to this session via {var}{note}")
+    print(mode_line(doc, args.name))
+
+
+def cmd_session_mode(args):
+    doc = load_profiles()
+    if not session_key()[1]:
+        raise ProfileError("no session id found (Claude, Codex, Antigravity or ORCA_PANE_KEY); launch with ODD_ORCHESTRATOR_MODE instead")
+    data, _ = read_session()
+    var = write_session({**data, "mode": args.mode})
+    note = " (bound to the Orca pane, not the conversation)" if var == "ORCA_PANE_KEY" else ""
+    print(f"mode: {args.mode} bound to this session via {var}{note}")
+    name, _ = selected_profile(doc)
+    print(mode_line(doc, name))
 
 
 def cmd_clear(_args):
@@ -300,7 +403,8 @@ def cmd_list(_args):
         return
     for name in sorted(doc["profiles"]):
         marker = " (default)" if name == doc["default"] else ""
-        print(f"{name}{marker}: {', '.join(sorted(doc['profiles'][name])) or 'no roles'}")
+        mode = doc["workflow"].get(name, {}).get("orchestratorMode", DEFAULT_MODE)
+        print(f"{name}{marker}: {', '.join(sorted(doc['profiles'][name])) or 'no roles'} | mode: {mode}")
 
 
 def cmd_show(_args):
@@ -308,12 +412,32 @@ def cmd_show(_args):
     var, _, _ = session_key()
     name, source = selected_profile(doc)
     print(f"profile: {name or 'none'} ({source}); session key: {var or 'none'}; agent: {current_agent() or 'unknown'}")
+    print(mode_line(doc, name))
     for role in BASE_ROLES:
         try:
             print("  " + resolve_role(doc, role)["notice"].split(" | ", 1)[1])
         except ProfileError as exc:
             print(f"  {role} -> error: {exc}")
-    print(orca_line())
+    print(orca_line(resolve_mode(doc, name)[0]))
+
+
+def cmd_mode(args):
+    # The override is the first source, so it answers even when the profiles file is invalid.
+    override = env_mode()
+    if override:
+        mode, source = override
+        try:
+            name, _ = selected_profile(load_profiles())
+        except ProfileError:
+            name = None  # an invalid file must not hide the override
+    else:
+        doc = load_profiles()
+        name, _ = selected_profile(doc)
+        mode, source = resolve_mode(doc, name)
+    if args.json:
+        print(json.dumps({"mode": mode, "source": source, "profile": name, "rules": mode_reference(mode)}))
+    else:
+        print(f"mode: {mode} ({source}); rules: {mode_reference(mode)}")
 
 
 def orca_agents():
@@ -439,6 +563,14 @@ def format_doc(doc):
     items = list(doc.items())
     for i, (key, value) in enumerate(items):
         comma = "," if i < len(items) - 1 else ""
+        if key == "workflow" and isinstance(value, dict) and value:
+            lines.append('  "workflow": {')
+            entries = list(value.items())
+            for k, (name, entry) in enumerate(entries):
+                wcomma = "," if k < len(entries) - 1 else ""
+                lines.append(f"    {dumps(name)}: {inline(entry)}{wcomma}")
+            lines.append(f"  }}{comma}")
+            continue
         if key != "profiles" or not isinstance(value, dict) or not value:
             body = dumps(value, indent=2).replace("\n", "\n  ")
             lines.append(f"  {dumps(key)}: {body}{comma}")
@@ -543,6 +675,35 @@ def cmd_default(args):
         print(f"default profile: {args.name}")
 
 
+def cmd_set_mode(args):
+    text, doc = read_raw()
+    view = validate_doc(doc, profiles_path()) if doc is not None else {"profiles": {}, "workflow": {}}
+    if args.name not in view["profiles"]:
+        known = ", ".join(sorted(view["profiles"])) or "none"
+        raise ProfileError(f"profile '{args.name}' is not defined in {profiles_path()} (known: {known})")
+    current = view["workflow"].get(args.name, {}).get("orchestratorMode", DEFAULT_MODE)
+    if current == args.mode:
+        print(f"profile '{args.name}' is already {args.mode}; nothing written")
+        return
+    workflow = {k: dict(v) for k, v in view["workflow"].items()}
+    if args.mode == DEFAULT_MODE:
+        # Organic is the default: drop the entry instead of writing it, and an empty map with it.
+        entry = workflow.pop(args.name, {})
+        entry.pop("orchestratorMode", None)
+        if entry:
+            workflow[args.name] = entry
+    else:
+        workflow.setdefault(args.name, {})["orchestratorMode"] = args.mode
+    # Keep the map in the profiles' order so the diff stays stable.
+    ordered = {name: workflow[name] for name in view["profiles"] if name in workflow}
+    if ordered:
+        doc["workflow"] = ordered
+    else:
+        doc.pop("workflow", None)
+    if write_profiles(text, doc, args.yes):
+        print(f"profile '{args.name}' mode: {args.mode}")
+
+
 def cmd_prune(args):
     folder = os.path.join(home_dir(), "sessions")
     if not os.path.isdir(folder):
@@ -585,6 +746,17 @@ def main(argv=None):
     default.add_argument("name")
     default.add_argument("--yes", action="store_true", help="write the file instead of a dry run")
     default.set_defaults(func=cmd_default)
+    mode = sub.add_parser("mode", help="show the orchestrator mode that applies to this session")
+    mode.add_argument("--json", action="store_true")
+    mode.set_defaults(func=cmd_mode)
+    set_mode = sub.add_parser("set-mode", help="set a profile's orchestrator mode (dry run unless --yes)")
+    set_mode.add_argument("name")
+    set_mode.add_argument("mode", choices=MODES)
+    set_mode.add_argument("--yes", action="store_true", help="write the file instead of a dry run")
+    set_mode.set_defaults(func=cmd_set_mode)
+    session_mode = sub.add_parser("session-mode", help="set the orchestrator mode for this session only")
+    session_mode.add_argument("mode", choices=MODES)
+    session_mode.set_defaults(func=cmd_session_mode)
     prune = sub.add_parser("prune", help="remove old session bindings")
     prune.add_argument("--days", type=int, default=30)
     prune.set_defaults(func=cmd_prune)
