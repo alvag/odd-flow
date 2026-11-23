@@ -46,7 +46,7 @@ The forced baseline hashes and stores every ignored file, including dependency a
 
 A folder containing nested Git repositories is out of scope for shadow checks; dispatch each nested repository as its own Git workspace.
 
-On return, compare `git --git-dir="$G/.git" --work-tree="$folder" status --porcelain --untracked-files=all --ignored` with the writer's surface; every listed path counts against the surface. A file ignored at baseline now shows as ` M` if modified or ` D` if deleted; `!!` lists only ignored files created after the baseline. Build the candidate commit as below with the same Git options; give `verify` the shadow Git directory with both commit pins. The parent removes `G` at close.
+On return, compare `git --git-dir="$G/.git" --work-tree="$folder" status --porcelain --untracked-files=all --ignored` with the writer's surface; every listed path counts against the surface. A file ignored at baseline now shows as ` M` if modified, ` D` if deleted, or ` T` if its type changes (for example, if a symlink replaces the file); `!!` lists only ignored files created after the baseline. Build the candidate commit as below with the same Git options; for a shadow candidate, the parent adds the writer's paths to the temporary index with `git add -A -f -- <paths>` because plain `git add` exits 1 for a deletion inside an ignored directory and for a new `!!` file. Give `verify` the shadow Git directory with both commit pins. The parent removes `G` at close.
 
 ## What the parent passes
 
