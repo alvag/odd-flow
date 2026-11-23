@@ -21,14 +21,16 @@ A trigger names a role, not a runtime. Outside an Orca terminal the role runs as
 
 Every `write` launch carries `## Allowed edit surfaces`:
 
-- repo-relative paths or narrow globs, one per line; never `.`, the repo root or absolute paths;
-- the section ends at the next heading, and every non-empty line inside it is an entry;
+- repo-relative paths or narrow globs, one per line; never `.`, `./`, the repo root, an absolute path, a drive-qualified path, a `~` path, or a path with a `..` segment;
+- no wildcard in the first path segment, no unfilled template placeholder, and no empty entries or sections;
+- one optional `- ` or `* ` bullet and one pair of surrounding backticks are stripped; any remaining backtick, dollar sign, brace, comma, leading list marker or quote marker is rejected;
+- outside fenced code blocks, the section ends at the next heading and every non-empty line inside it is an entry; all declarations are checked;
 - pre-existing untracked targets listed explicitly; directories for new files only when the task needs them;
 - nothing wider than the task.
 
 A writer that needs another path returns it with a reason. Add it yourself when it serves the authorized objective; ask the user only for new scope, another repository or a destructive operation. Parallel writers in one worktree must have disjoint surfaces; units that need the same file run in order or in separate worktrees.
 
-This is a prompt rule: nothing enforces it at write time. After each writer returns, compare `git diff --name-only` against its surface and reject out-of-surface edits.
+In Claude Code, the `PreToolUse` hook checks that the surface is present and well-formed when a writer launches, in either mode. In other runtimes the rule is prompt-only; to check a spec manually, run `python3 -I skills/odd-flow/scripts/surface.py check <spec-file>` from the plugin root. The hook does not constrain what the writer edits. After each writer returns, compare `git diff --name-only` against its surface and reject out-of-surface edits.
 
 ## What the parent passes
 

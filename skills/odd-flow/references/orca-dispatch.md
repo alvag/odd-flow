@@ -10,7 +10,7 @@
 1. Resolve the role:
    `python3 <skill-dir>/scripts/profile.py resolve <role> --json`
    Use its `flags` exactly and print its `notice`. On a non-zero exit, stop and report the error; do not launch with guessed flags.
-2. Build the spec from `assets/spec-template.md` and `assets/roles/<role>.md`. Write it with the file tool to a scratch file outside the worktree (for example `$TMPDIR/odd-flow/<session>/<task-id>.md`). Never use heredocs.
+2. Build the spec from `assets/spec-template.md` and `assets/roles/<role>.md`. Write it with the file tool to a scratch file outside the worktree (for example `$TMPDIR/odd-flow/<session>/<task-id>.md`). Never use heredocs. In `task-create` and `worker-start`, pass the resolved literal path to `--spec-file`, quoted if needed, not a variable (such as `$SPEC`), command substitution, or glob. In Claude Code, a guard denial means the launch did not run: fix the spec or pass a readable literal path and retry; do not bypass the guard. The hook checks the declaration at launch, not subsequent edits.
 3. Choose a placement before starting the worker:
    `python3 <skill-dir>/scripts/pane.py open --role <role> --title "<T# role: short title>" --json`
    On a non-zero exit, report the error and do not launch. If the split reply cannot be parsed or has no handle, a pane may have opened; check `terminal list` and close it. Report any `title_error`, but continue with the opened pane.

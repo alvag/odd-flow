@@ -7,9 +7,10 @@ Claude Code plugin for Organic Driven Development (ODD): Engram memory disciplin
 | Path | Purpose |
 |---|---|
 | `skills/odd-flow/` | The `odd-flow` skill (progressive disclosure: `SKILL.md` plus references and assets) |
-| `hooks/hooks.json` | `SessionStart` hook on startup, resume, clear and compact; `UserPromptSubmit` hook |
+| `hooks/hooks.json` | `SessionStart` hook on startup, resume, clear and compact; `UserPromptSubmit` and `PreToolUse` hooks |
 | `scripts/session-start.py` | Injects the core block of the session's mode (`assets/core-block.md` or `assets/core-block-full-delegation.md`) and the active profile into the session |
 | `scripts/prompt-submit.py` | Restates the mode on each prompt of a full delegation session; prints nothing in organic mode |
+| `scripts/pre-tool-use.py` | Checks the presence and shape of writer edit surface declarations at launch in both modes; does not police later edits |
 | `.claude-plugin/` | Plugin manifest and a local marketplace |
 
 ## Install (Claude Code)
@@ -31,7 +32,7 @@ File at `~/.config/odd-flow/profiles.json`, edited by hand or through the profil
 
 ## Other runtimes
 
-Codex and Antigravity packaging is not done yet. Until then, `skills/odd-flow/scripts/init.py` can write the core block into their global instructions file (see `skills/odd-flow/references/init.md`).
+Codex and Antigravity packaging is not done yet. Until then, `skills/odd-flow/scripts/init.py` can write the core block into their global instructions file (see `skills/odd-flow/references/init.md`). To validate a writer spec without the Claude Code hook, run `python3 -I skills/odd-flow/scripts/surface.py check <spec-file>`.
 
 ## Checks
 

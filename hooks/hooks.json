@@ -1,5 +1,5 @@
 {
-  "description": "odd-flow: inject the always-on ODD core for the session's orchestrator mode and the active profile at session start, resume, clear and after compaction; restate the mode on each prompt of a full delegation session.",
+  "description": "odd-flow: inject the always-on ODD core for the session's orchestrator mode and the active profile at session start, resume, clear and after compaction; restate the mode on each prompt of a full delegation session; validate writer edit surface declarations at launch, not subsequent edits.",
   "hooks": {
     "SessionStart": [
       {
@@ -19,6 +19,18 @@
           {
             "type": "command",
             "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/scripts/prompt-submit.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Agent|Task|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-tool-use.py\"",
             "timeout": 10
           }
         ]
