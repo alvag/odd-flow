@@ -36,22 +36,65 @@ printf '%s\n' \
 chmod +x "$T/orca"
 printf '%s\n' '{"default":"test","profiles":{"test":{"verify":{"agent":"claude"},"write":{"agent":"antigravity"}}}}' >"$T/profiles.json"
 
+# Test-only seam: replace the TTY sampler and clock, but run the real CLI and
+# pane lock against the same fake Orca as the fixed-width cases.
+printf '%s\n' \
+  'import fcntl, os, sys' \
+  'from pathlib import Path' \
+  'from types import SimpleNamespace' \
+  'sys.dont_write_bytecode = True' \
+  'script, widths, *args = sys.argv[1:]' \
+  'sys.path.insert(0, str(Path(script).parent))' \
+  'import pane' \
+  'samples = iter(widths.split())' \
+  'now = 0' \
+  'def sleep(seconds):' \
+  '    global now' \
+  '    now += seconds' \
+  'def sample():' \
+  '    lock = Path(os.environ["TMPDIR"]) / "odd-flow-pane-term_parent.lock"' \
+  '    locked = False' \
+  '    if lock.exists():' \
+  '        with lock.open() as fd:' \
+  '            try:' \
+  '                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)' \
+  '            except BlockingIOError:' \
+  '                locked = True' \
+  '    with open(os.environ["ORCA_LOG"] + ".samples", "a") as log:' \
+  '        print(round(now * 1000), locked, file=log)' \
+  '    width = next(samples)' \
+  '    return None if width == "unknown" else int(width)' \
+  'pane.parent_cols = sample' \
+  'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep)' \
+  'sys.argv = [script, *args]' \
+  'sys.exit(pane.main())' >"$T/sample.py"
+
 leaf() { printf '{"type":"terminal","handle":"%s"}' "$1"; }
 split() { printf '{"type":"pane-split","direction":"%s","first":%s,"second":%s}' "$1" "$2" "$3"; }
 layout() {
   printf '{"ok":true,"result":{"visualLayouts":[{"root":{"type":"group","tabs":[]}},{"root":{"type":"split","first":{"type":"group","tabs":[]},"second":{"type":"group","tabs":[{"panes":%s}]}}}]}}\n' "$1" >"$T/layout"
 }
 open_pane() {
+  local command=(python3 -I "$P")
+  if [[ -n "${widths+x}" ]]; then
+    command=(python3 -I "$T/sample.py" "$P" "$widths")
+  fi
   : >"$T/argv"
+  : >"$T/argv.samples"
   env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" \
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
-    python3 -I "$P" open --title 'T1 verify: example' --json "$@" 2>&1
+    ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} \
+    "${command[@]}" open --title 'T1 verify: example' --json "$@" 2>&1
 }
 calls() {
   printf '\nargv:\n'
   cat "$T/argv"
   printf '\nend argv'
+  if [[ -s "$T/argv.samples" ]]; then
+    printf '\nsamples:\n'
+    cat "$T/argv.samples"
+  fi
 }
 
 p=$(leaf term_parent); r1=$(leaf term_r1); r2=$(leaf term_r2); r3=$(leaf term_r3)
@@ -60,19 +103,56 @@ right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
 
 layout "$p"
+out=$(widths='81 165' settle_ms=100 open_pane --role verify); ec=$?
+expect "width settles under lock: split right using the new width" 0 "$ec" \
+  '"cols": 165, "min_cols": 160' "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\n0 True\n100 True'
+
+out=$(widths='80 81 82' settle_ms=200 open_pane --role verify); ec=$?
+expect "width stays narrow: tab at the bound using the last width" 0 "$ec" \
+  '"cols": 82, "min_cols": 160, "reason": "parent terminal is 82 columns wide (minimum 160)"' \
+  "$list_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
+
+out=$(widths='unknown' settle_ms=1000 open_pane --role verify); ec=$?
+expect "unknown first width: tab without retrying" 0 "$ec" \
+  '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
+  "$list_call"$'\n\nend argv\nsamples:\n0 True'
+
+out=$(widths='81' settle_ms=1000 open_pane --role write); ec=$?
+expect "no split command: one sample and no Orca call" 0 "$ec" \
+  '"reason": "no split command for antigravity"' $'\nargv:\n\nend argv\nsamples:\n0 True'
+
+out=$(widths='80 80 80' settle_ms=150 open_pane --role verify); ec=$?
+expect "partial last step stays within the bound" 0 "$ec" \
+  '"cols": 80' "$list_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n150 True'
+
+out=$(widths='80 unknown' settle_ms=500 open_pane --role verify); ec=$?
+expect "width lost mid-wait: tab with unknown width" 0 "$ec" \
+  '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
+  "$list_call"$'\n\nend argv\nsamples:\n0 True\n100 True'
+
+for value in -1 invalid; do
+  out=$(settle_ms=$value open_pane --role verify --cols 160); ec=$?
+  expect "invalid settle bound ($value) fails before Orca calls" 2 "$ec" \
+    'odd-flow: ODD_FLOW_SPLIT_SETTLE_MS must be a non-negative integer' $'\nargv:\n\nend argv'
+done
+
+out=$(widths='160' settle_ms=100 open_pane --role verify); ec=$?
+expect "first width is wide: split right without retrying" 0 "$ec" \
+  '"placement": "split-right", "handle": "term_new"' "$list_call$right_call$title_call"
+
 out=$(open_pane --role verify --cols 160); ec=$?
 expect "wide parent: split right and set title" 0 "$ec" '"placement": "split-right", "handle": "term_new"' \
   "$list_call$right_call$title_call"$'\n\nend argv'
 
-out=$(open_pane --role verify --cols 159); ec=$?
-expect "narrow parent: tab without splitting" 0 "$ec" '"placement": "tab", "handle": null' "$list_call"$'\n\nend argv'
+out=$(widths='' settle_ms=100 open_pane --role verify --cols 159); ec=$?
+expect "fixed narrow width: tab without sampling" 0 "$ec" '"placement": "tab", "handle": null' "$list_call"$'\n\nend argv'
 
 out=$(min_cols=159 open_pane --role verify --cols 159); ec=$?
 expect "override makes the narrow parent split" 0 "$ec" '"placement": "split-right"'
 
 layout "$(split vertical "$p" "$r1")"
-out=$(open_pane --role verify --cols 80); ec=$?
-expect "existing column: split below despite width" 0 "$ec" '"placement": "split-below"' \
+out=$(widths='80' settle_ms=100 open_pane --role verify); ec=$?
+expect "existing column: split below without retrying" 0 "$ec" '"placement": "split-below"' \
   $'\nsplit\n--terminal\nterm_r1\n--direction\nhorizontal\n'
 
 layout "$(split vertical "$p" "$(split horizontal "$r1" "$(split horizontal "$r2" "$r3")")")"

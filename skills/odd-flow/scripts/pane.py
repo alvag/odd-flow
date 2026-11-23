@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import termios
+import time
 
 # Isolated mode omits the script directory. Always import the bundled profile.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -148,21 +149,38 @@ def open_pane(args):
             raise ValueError
     except ValueError as exc:
         raise ProfileError("ODD_FLOW_SPLIT_MIN_COLS must be a positive integer") from exc
-
-    cols = args.cols if args.cols is not None else parent_cols()
-    result = dict(placement="tab", handle=None, parent=parent, target=None,
-                  cols=cols, min_cols=min_cols, reason=None, title_error=None)
+    try:
+        settle_ms = int(os.environ.get("ODD_FLOW_SPLIT_SETTLE_MS", "1000"))
+        if settle_ms < 0:
+            raise ValueError
+    except ValueError as exc:
+        raise ProfileError("ODD_FLOW_SPLIT_SETTLE_MS must be a non-negative integer") from exc
     command = role["split_command"]
-    if command is None:
-        result["reason"] = f"no split command for {role['agent']}"
-        return result
 
     lock_path = os.path.join(tempfile.gettempdir(), f"odd-flow-pane-{parent}.lock")
     lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "r") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        layout = terminal("list", "--include-visual-layouts")
-        target = layout_target(layout, parent)
+        target = None
+        if command is not None:
+            layout = terminal("list", "--include-visual-layouts")
+            target = layout_target(layout, parent)
+        cols = args.cols if args.cols is not None else parent_cols()
+        if command is not None and target is None and args.cols is None and settle_ms:
+            # The layout can lose its right column before the TTY grows.
+            deadline = time.monotonic_ns() + settle_ms * 1_000_000
+            while cols is not None and cols < min_cols:
+                remaining = deadline - time.monotonic_ns()
+                if remaining <= 0:
+                    break
+                time.sleep(min(100_000_000, remaining) / 1_000_000_000)
+                cols = parent_cols()
+
+        result = dict(placement="tab", handle=None, parent=parent, target=None,
+                      cols=cols, min_cols=min_cols, reason=None, title_error=None)
+        if command is None:
+            result["reason"] = f"no split command for {role['agent']}"
+            return result
         if target:
             result.update(placement="split-below", target=target, reason="right column exists")
             direction = "horizontal"

@@ -13,9 +13,12 @@ Not loaded by the plugin. Decisions and open items for the next iteration.
 - Profiles are resolved by `scripts/profile.py` before every launch so a choice survives compaction.
 - A failed launch never switches model or agent silently.
 
+## Resolved
+
+- Pane-width race (2026-11-23): After the verifier's right-column pane closed, `pane.py open` read 81 columns and chose a tab; the parent measured 165 moments later. The suspected Orca reflow race was not reproduced live. `pane.py open` now reads the parent TTY under the pane lock. With no right column and a known width below the split minimum, it retries every 100 ms for up to `ODD_FLOW_SPLIT_SETTLE_MS` (default 1000; 0 disables retries). An existing right column, a wide first sample, an unreadable TTY, and a fixed `--cols` value do not trigger retries.
+
 ## Open items
 
-- Follow-up (2026-11-23, not fixed): T3 of `edit-surface-guard` opened as a tab after `pane.py open` read 81 columns just after the parent closed the verifier's right-column pane. The parent measured 165 columns moments later. The TTY read may have preceded Orca's reflow; this is inferred, not reproduced. Possible fixes: wait for the TTY width to stabilize when there is no right column, or read the width from Orca's layout instead of the TTY.
 - Tested 2026-11-23 with profile `claude-gpt`: Orca accepts `--agent`, `--model` and `--effort` for `claude` and `codex` (flags seen in each worker's argv). Claude workers report normally. A Codex worker started by `worker-start --agent codex` cannot report: `orca orchestration send` fails with `runtime_access_denied` (EPERM) from the Codex sandbox. Fixed by the `terminal` launch path (`scripts/codex-worker.sh`, `-c sandbox_workspace_write.network_access=true`); verified with one Codex worker that sent `worker_done`. Codex plugin manifests cannot set config or sandbox, so this cannot be done at install time. Antigravity model ids and effort are still untested.
 - `scripts/codex-worker.sh` runs the `codex` binary directly, not Orca's shell `codex` function. It always passes `--no-daemon` (Codex 0.155 and older exit 2 on it; 0.171 is installed) and drops Orca's KITTY_WINDOW_ID, remote-viewer SSH_CONNECTION and WSL hook handling. It does not pin `--sandbox`: a Codex config with `sandbox_mode = "read-only"` makes the network override useless and the worker cannot report again.
 - Codex workers on the `terminal` path have outbound network open in their sandbox. A narrower allowance (Codex `permissions.<name>.network.unix_sockets`) works through Codex's network proxy and is untested.
