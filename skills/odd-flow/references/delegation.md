@@ -40,11 +40,13 @@ In both modes, only the parent may write a file outside the workspace: the user 
 
 ## Shadow snapshots
 
-In either mode, before launching a writer for a project folder without Git, set `folder` to its real path and create `G=$(mktemp -d)` outside the folder. Run `git --git-dir="$G/.git" --work-tree="$folder" init -q`, then with the same Git options run `add -A` and `commit --allow-empty -m "Writer baseline"` (add `-c user.name=... -c user.email=...` before `commit` if identity is missing). Use that commit as the writer's base.
+In either mode, before launching a writer for a project folder without Git, set `folder` to its real path and create `G=$(mktemp -d)` outside the folder. Run `git --git-dir="$G/.git" --work-tree="$folder" init -q`, then with the same Git options run `add -A -f` and `commit --allow-empty -m "Writer baseline"` (add `-c user.name=... -c user.email=...` before `commit` if identity is missing). Use that commit as the writer's base.
+
+The forced baseline hashes and stores every ignored file, including dependency and build files, which can be slow and take up substantial space; it also copies ignored secrets such as `.env` into the scratch Git directory that the parent removes at close.
 
 A folder containing nested Git repositories is out of scope for shadow checks; dispatch each nested repository as its own Git workspace.
 
-On return, compare `git --git-dir="$G/.git" --work-tree="$folder" status --porcelain --untracked-files=all --ignored` with the writer's surface; ignored paths count against the surface. Build the candidate commit as below with the same Git options; give `verify` the shadow Git directory with both commit pins. The parent removes `G` at close.
+On return, compare `git --git-dir="$G/.git" --work-tree="$folder" status --porcelain --untracked-files=all --ignored` with the writer's surface; every listed path counts against the surface. A file ignored at baseline now shows as ` M` if modified or ` D` if deleted; `!!` lists only ignored files created after the baseline. Build the candidate commit as below with the same Git options; give `verify` the shadow Git directory with both commit pins. The parent removes `G` at close.
 
 ## What the parent passes
 
