@@ -30,11 +30,36 @@ out=$(run apply --target "$u"); [[ $? == 2 && "$out" == *"unbalanced"* ]] && ok 
 ln -s "$g" "$T/link.md"
 out=$(run apply --target "$T/link.md"); [[ $? == 2 && "$out" == *"symlink"* ]] && ok "symlink target refused" || ko "symlink" "$out"
 
+chmod 600 "$g"
+cp "$g" "$T/before-remove"
+ln "$g" "$T/remove-link"
 out=$(run remove --target "$g"); [[ $? == 0 && $(grep -c 'odd-flow:core' "$g") == 0 && $(grep -c 'Keep this line.' "$g") == 1 && $(grep -c 'Trailing user text.' "$g") == 1 ]] && ok "remove deletes only the block" || ko "remove" "$out"
+if ! cmp -s "$T/before-remove" "$T/remove-link"; then
+    ko "remove uses atomic replacement" "the hard link's content changed"
+elif [[ $(grep -c 'odd-flow:core' "$g") != 0 ]]; then
+    ko "remove uses atomic replacement" "the target still has the block"
+elif [[ $(python3 -I -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$g") != 0o600 ]]; then
+    ko "remove uses atomic replacement" "the target mode changed"
+elif [[ -n $(find "$T" -name '.odd-flow-*' -print) ]]; then
+    ko "remove uses atomic replacement" "a temporary file remains"
+else
+    ok "remove replaces the inode, preserves mode and leaves no temporary files"
+fi
 
 out=$(env -i HOME="$HOME" PATH="$PATH" python3 -I "$I" plan 2>&1); [[ $? == 2 && "$out" == *"cannot detect the agent runtime"* ]] && ok "no runtime detected: refuses" || ko "detect" "$out"
 out=$(env -i HOME="$T/home" PATH="$PATH" CODEX_THREAD_ID=x python3 -I "$I" plan 2>&1); [[ "$out" == *"$T/home/.codex/AGENTS.md"* ]] && ok "codex detected from session var" || ko "codex detect" "$out"
 out=$(env -i HOME="$T/home" PATH="$PATH" ANTIGRAVITY_CONVERSATION_ID=x python3 -I "$I" plan 2>&1); [[ "$out" == *"$T/home/.gemini/GEMINI.md"* ]] && ok "antigravity detected from session var" || ko "agy detect" "$out"
 
+# failure during the atomic write must leave the target intact and no temp (append to tests/init-check.sh before the summary)
+h="$T/fail.md"; printf 'x\n<!-- odd-flow:core -->\nold\n<!-- /odd-flow:core -->\n' > "$h"; cp "$h" "$T/fail.orig"
+out=$(python3 -I -c 'import sys,os; sys.path.insert(0,os.path.dirname(sys.argv[1])); import init
+def boom(*a,**k): raise OSError(28,"injected")
+init.os.replace=boom; sys.exit(init.main(["remove","--target",sys.argv[2]]))' "$I" "$h" 2>&1)
+[[ $? == 2 && "$out" == *"injected"* ]] && cmp -s "$h" "$T/fail.orig" && [[ -z $(find "$T" -name '.odd-flow-*' -print) ]] && ok "failed write keeps the target and leaves no temp" || ko "failed write" "$out"
+# a block-only file is emptied, mode kept
+o="$T/only.md"; python3 -I "$I" apply --target "$o" >/dev/null; chmod 640 "$o"
+out=$(run remove --target "$o"); [[ $? == 0 && ! -s "$o" && $(stat -f %Lp "$o" 2>/dev/null || stat -c %a "$o") == 640 ]] && ok "block-only file emptied, mode kept" || ko "block-only" "$out"
+
 echo "passed=$pass failed=$fail"
 rm -rf "$T"
+[[ $fail == 0 ]]

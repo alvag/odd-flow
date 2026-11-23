@@ -3,6 +3,7 @@
 
 `plan` prints the target file and a unified diff without writing.
 `apply` writes the block, after backing up the existing file.
+`remove` removes the block, after backing up the existing file.
 Only text between the odd-flow markers is ever changed.
 """
 
@@ -104,6 +105,21 @@ def cmd_plan(args):
     sys.stdout.writelines(diff)
 
 
+def write_atomic(path, text):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".odd-flow-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        if os.path.exists(path):
+            shutil.copymode(path, tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
 def cmd_apply(args):
     path = target_path(args.runtime, args.target)
     current = read_current(path)
@@ -115,18 +131,7 @@ def cmd_apply(args):
     if os.path.exists(path):
         backup = f"{path}.bak-odd-flow-{time.strftime('%Y%m%d-%H%M%S')}"
         shutil.copy2(path, backup)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".odd-flow-")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(new)
-        if os.path.exists(path):
-            shutil.copymode(path, tmp)
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    write_atomic(path, new)
     print(f"{path}: odd-flow block written" + (f"; backup: {backup}" if backup else " (new file)"))
 
 
@@ -140,8 +145,7 @@ def cmd_remove(args):
     new = BLOCK_RE.sub("", current, count=1)
     backup = f"{path}.bak-odd-flow-{time.strftime('%Y%m%d-%H%M%S')}"
     shutil.copy2(path, backup)
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(new.rstrip("\n") + "\n" if new.strip() else "")
+    write_atomic(path, new.rstrip("\n") + "\n" if new.strip() else "")
     print(f"{path}: odd-flow block removed; backup: {backup}")
 
 
