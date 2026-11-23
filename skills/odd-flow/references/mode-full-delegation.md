@@ -16,6 +16,14 @@ You are a coordinator: you never implement.
 - Fixes within a worker's correction bound continue the same worker (an Orca reply, or a message to the same subagent), never a new worker per fix.
 - Reading that prepares a writer belongs in that writer's spec, not in your context.
 
+## Parent edit guard
+
+In Claude Code, the guard checks the parent's `Edit`, `Write` and `NotebookEdit` targets in full delegation only. After resolving symlinks, it allows workspace Markdown files directly under `odd/tasks/` and denies other workspace targets. It leaves targets in system temp directories outside the workspace alone and asks for confirmation on any other external target. The confirmation rule above still applies.
+
+Native subagent calls and marked worker sessions are exempt. The prompt hook records a worker only when the first prompt it sees for that session starts with a known Orca dispatch preamble or a recognized `# Role:` header. It stores that decision under `CLAUDE_PLUGIN_DATA`. If Orca changes its preamble and no recognized role header starts the prompt, a Claude worker is treated as the parent.
+
+The guard does not cover writes through `Bash`, including `sed -i` and shell redirection. Whether it runs for Code Mode REPL calls is unverified.
+
 ## Writer spec
 
 - Pass the user's request verbatim, or `Spec: odd/tasks/<feature>.md, T<n>, S<a>-S<b>`, as `delegation.md` (What the parent passes) says.

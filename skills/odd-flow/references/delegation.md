@@ -32,6 +32,8 @@ A writer that needs another path returns it with a reason. Add it yourself when 
 
 In Claude Code, the `PreToolUse` hook checks that the surface is present and well-formed when a writer launches, in either mode. In other runtimes the rule is prompt-only; to check a spec manually, run `python3 -I skills/odd-flow/scripts/surface.py check <spec-file>` from the plugin root. The hook does not constrain what the writer edits. After each writer returns, compare `git diff --name-only` (or the shadow status below) against its surface and reject out-of-surface edits.
 
+The separate [parent edit guard](mode-full-delegation.md#parent-edit-guard) checks `Edit`, `Write` and `NotebookEdit` only in Claude Code full delegation. It does not cover `Bash` writes. If Orca changes its preamble and the first prompt does not start with a recognized `# Role:` header, a Claude worker is treated as the parent. Whether the hook runs for Code Mode REPL calls is unverified.
+
 ## Files outside the workspace
 
 In both modes, only the parent may write a file outside the workspace: the user must name the file, see the exact diff and confirm it before the write. Never delegate it. The workspace root is the Git top level, or the session's project directory without Git. Surfaces are workspace-relative; the guard rejects absolute and `~` paths by design. Auto-approved Codex escalation can permit writes outside the workspace, so the user's confirmation is the control.

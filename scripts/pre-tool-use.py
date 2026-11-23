@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Code PreToolUse hook: check the declared surface before a writer launch."""
+"""Claude Code PreToolUse hook: check writer launches and full-delegation parent edits."""
 
 import glob
 import importlib.util
@@ -11,6 +11,7 @@ import sys
 
 PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).resolve().parents[1])
 SURFACE_SCRIPT = PLUGIN_ROOT / "skills" / "odd-flow" / "scripts" / "surface.py"
+EDIT_PATH_FIELDS = {"Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path"}
 LAUNCHES = {"task-create", "worker-start"}
 RAW_LAUNCH = re.compile(r"(?<![\w-])orchestration(?:\s|\\\n)+(?:task-create|worker-start)(?![\w-])")
 SPEC_FLAGS = {"--spec", "--spec-file", "--task"}
@@ -174,6 +175,92 @@ def load_surface():
     return module
 
 
+def load_prompt_hook():
+    # The hook runs with -I, so the scripts directory is not on sys.path.
+    sys.dont_write_bytecode = True
+    script = Path(__file__).with_name("prompt-submit.py")
+    spec = importlib.util.spec_from_file_location("odd_flow_prompt_submit", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def workspace_root(cwd):
+    import subprocess
+
+    git = subprocess.run(
+        ["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, timeout=2, check=False,
+    )
+    if git.returncode == 0:
+        return Path(git.stdout.rstrip("\n")).resolve()
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR") or cwd).resolve()
+
+
+def workspace_spelling(target, root):
+    """Use the root's spelling for filesystem aliases, such as case on macOS."""
+    depth = len(root.parts)
+    if len(target.parts) >= depth and not target.is_relative_to(root):
+        prefix = Path(*target.parts[:depth])
+        try:
+            if prefix.samefile(root):
+                return root.joinpath(*target.parts[depth:])
+        except (FileNotFoundError, NotADirectoryError):
+            pass
+    return target
+
+
+def path_decision(target, root, temp_roots):
+    """Classify a resolved target; workspace rules take precedence over temp."""
+    if target.is_relative_to(root):
+        if target.parent == root / "odd" / "tasks" and target.name.endswith(".md"):
+            return None
+        return "deny"
+    if any(target.is_relative_to(temp_root) for temp_root in temp_roots):
+        return None
+    return "ask"
+
+
+def parent_edit_decision(payload, field):
+    if payload.get("agent_id"):
+        return None, None
+    session_id = payload.get("session_id")
+    prompt_hook = load_prompt_hook()
+    if prompt_hook.is_worker_session(session_id):
+        return None, None
+    if prompt_hook.mode_state(session_id).get("mode") != "full-delegation":
+        return None, None
+
+    target = None
+    delegate = "Full delegation sends workspace changes to a bounded writer."
+    try:
+        import tempfile
+
+        tool_input = payload.get("tool_input")
+        target = tool_input.get(field) if isinstance(tool_input, dict) else None
+        if not isinstance(target, str) or not target:
+            return "deny", f"Missing or invalid {field}: {target!r}. {delegate}"
+        cwd = Path(payload.get("cwd") or os.getcwd())
+        resolved = (cwd / target).resolve()
+        root = workspace_root(cwd)
+        temp_roots = [
+            Path(path).resolve()
+            for path in (tempfile.gettempdir(), os.environ.get("TMPDIR"), "/tmp", "/private/tmp")
+            if path
+        ]
+        decision = path_decision(workspace_spelling(resolved, root), root, temp_roots)
+    except Exception:
+        return "deny", f"Could not verify the edit target {target!r}. {delegate}"
+    if decision == "deny":
+        return decision, f"Parent edit denied for {target!r}. {delegate}"
+    if decision == "ask":
+        return decision, (
+            f"Parent edit to {target!r} outside the workspace requires confirmation. "
+            "The parent writes it only after the user named the file and confirmed the exact diff."
+        )
+    return None, None
+
+
 def denial_reason(payload):
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
@@ -237,11 +324,16 @@ def denial_reason(payload):
 
 
 def main():
-    reason = denial_reason(json.load(sys.stdin))
+    payload = json.load(sys.stdin)
+    field = EDIT_PATH_FIELDS.get(payload.get("tool_name"))
+    if field:
+        decision, reason = parent_edit_decision(payload, field)
+    else:
+        decision, reason = "deny", denial_reason(payload)
     if reason:
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
+            "permissionDecision": decision,
             "permissionDecisionReason": f"odd-flow: {reason}",
         }}))
 
