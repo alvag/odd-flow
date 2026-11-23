@@ -6,12 +6,22 @@ No trigger holds by default. When in doubt, work inline. Each trigger is mandato
 |---|---|---|
 | Mapping | Understanding needs more than the inline budget (3 calls, ~10k tokens) or more than ~5 sequential lookups | `explore` |
 | Writer: parallel | Two or more independent units with disjoint edit surfaces, each several minutes of work (several files or ~100+ changed lines), launched together in one turn | `write`, one per unit |
-| Writer: context | The parent context is near ~150k tokens; delegate the next bounded unit | `write` |
+| Writer: context | `scripts/context.py` reports `holds` (the parent context is at 150k tokens or more); delegate the next bounded unit | `write` |
 | Verification | The change's Risk line names a high-risk item | `verify` |
 | Review | The user asks for review, or verification passed on a change that names a high-risk item and the user accepted the review forecast | `review`, `refute` |
 | Named agent | The user explicitly asks for another agent ("have Codex check this") | role that matches the request |
 
 Never delegate for size, file count, a large task alone, or price. Units of ~100 changed lines or less run inline.
+
+## Measuring context
+
+Run `python3 <skill-dir>/scripts/context.py` before the first write of each implementation unit, and quote its line in the one-line reason. Never estimate the context from the conversation's length when the script reports a number.
+
+- Claude Code: tokens of the last main-thread reply in the session transcript (input, cache creation and cache read).
+- Codex: input tokens of the last `token_count` event in the session rollout, with the model's context window.
+- `unknown` (Antigravity, a missing file, no session id): judge the trigger yourself and say that the number was unavailable.
+
+The trigger holds from 150k tokens whatever the model's window: a long parent context degrades its attention to the specs before it runs out.
 
 ## Units
 

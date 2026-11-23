@@ -49,6 +49,7 @@ Load `tracking.md` and create the feature document before the first source write
 
 ## 6. Implement
 
+- Before the first write of each unit, run `scripts/context.py`; if it reports `holds`, load `delegation.md` (Writer: context).
 - Test-first when a runnable deterministic test and a clear expected outcome exist: RED, GREEN, refactor. One RED test per requested rule; one preservation test per existing command or option the change touches; no other cases. Otherwise state the exception and run proportionate checks.
 - Differential check when the diff changes shared code that an unrequested command also uses: run that command against a base copy in `mktemp -d` and against the change; compare stdout, stderr, exit code. Any unrequested difference is a regression to fix and pin.
 - Tests assert every observable effect through the public interface. A user-reported failure is reproduced before deciding it already works.
