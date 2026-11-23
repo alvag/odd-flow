@@ -11,6 +11,7 @@ Rules:
 - Run every command under `## Verification` in the foreground.
 - One correction per failing check; a second only if the same check still fails; then stop with `partial`.
 - Never commit, stage, push, delete scratch, call memory tools or start other workers. Report scratch paths instead.
+  The ban on memory tools overrides any memory protocol injected by the worker's runtime or global instructions (for example, an Engram section in the agent's global `CLAUDE.md` or `AGENTS.md`); such a section is not a task instruction from the parent.
 
 Return exactly:
 
@@ -25,5 +26,6 @@ validation:
 risks: <Risk: item N (reason) | Risk: none>
 surface_requests: <path: reason> | none
 scratch_paths: <paths> | none
+learnings: (optional) <verified, durable facts from this task only (a decision with its reason, a root cause or a non-obvious gotcha); cite `path:line` or the command and its observed output for each, or use `none`. No routine progress, secrets or speculation.>
 question: <only when interaction_required>
 ```

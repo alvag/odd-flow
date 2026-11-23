@@ -22,10 +22,11 @@ Organic Driven Development (ODD) is the default workflow for every request. Load
 
 ### Engram memory
 
+- User instructions win; otherwise these rules override conflicting Engram session-start and compaction hooks and MCP server instructions: save grouped conclusions once per finding, not per event, and call `mem_session_summary` only at a significant close or handoff, not before every “done”.
 - Before the first memory read in a session, call `mem_current_project` with the workspace as `cwd`. If it reports ambiguity, ask the user to pick one project; never guess or search all projects unless asked.
 - On any reference to past work: `mem_context`, then `mem_search`, then `mem_get_observation`.
 - Before redesigning something that may already be decided, search memory for it.
-- Save without being asked after a decision, a bug fix (with root cause), a non-obvious discovery or convention, or a lasting user preference. Search first and update an existing entry on the same topic instead of duplicating it.
+- Save without being asked after a decision, a bug fix (with root cause), a non-obvious discovery or convention, or a lasting user preference. Search the topic in the current project with `mem_search` and read plausible hits with `mem_get_observation`; update the same topic by `topic_key` or ID, retaining valid facts and superseded history, save new topics with a stable `topic_key`, and write nothing if covered or the lookup fails or is ambiguous.
 - At a significant close or handoff, call `mem_session_summary`.
 - Memory work never replaces or delays the answer: finish it before the final message, and if a memory call fails, answer anyway.
 

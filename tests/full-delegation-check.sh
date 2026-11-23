@@ -19,8 +19,8 @@ hook() { # script, payload, env...
 }
 ctx() { python3 -I -c 'import json,sys; d=sys.stdin.read(); print(json.loads(d)["hookSpecificOutput"]["additionalContext"] if d.strip() else "")'; }
 
-# --- organic is unchanged ---
-[[ "$(shasum -a 256 "$S/assets/core-block.md" | cut -d' ' -f1)" == "08e1e3fa0faa43f9708133de55452fccb6f80e3dff64b98f2dc9283c576e06fc" ]] \
+# --- organic keeps its expected core block and routing ---
+[[ "$(shasum -a 256 "$S/assets/core-block.md" | cut -d' ' -f1)" == "03ceb72d587005f1de7a82ecff145ee135acf34f9904936d16bd5117f337589b" ]] \
   && ok "organic core block is byte-identical" || ko "organic core block is byte-identical"
 
 out=$(hook session-start.py '{"source":"startup","session_id":"s1"}' ODD_PROFILE=B | ctx)
@@ -52,6 +52,22 @@ out=$(hook session-start.py '{"source":"startup","session_id":"s2"}' | ctx)
 has "full delegation session reports its mode" "mode: full-delegation (profile A); rules: references/mode-full-delegation.md" "$out"
 lacks "full delegation session start holds no organic core" "Work inline by default" "$out"
 
+# Both modes inject the same memory rules.
+for block in core-block.md core-block-full-delegation.md; do
+  memory=$(sed -n '/^### Engram memory$/,/^### /p' "$S/assets/$block")
+  has "$block: Engram precedence and write cadence" 'User instructions win; otherwise these rules override conflicting Engram session-start and compaction hooks and MCP server instructions: save grouped conclusions once per finding, not per event, and call `mem_session_summary` only at a significant close or handoff, not before every “done”.' "$memory"
+  has "$block: safe Engram topic updates" 'Search the topic in the current project with `mem_search` and read plausible hits with `mem_get_observation`; update the same topic by `topic_key` or ID, retaining valid facts and superseded history, save new topics with a stable `topic_key`, and write nothing if covered or the lookup fails or is ambiguous.' "$memory"
+done
+
+organic_memory=$(sed -n '/^### Engram memory$/,/^### /p' "$S/assets/core-block.md")
+[[ "$organic_memory" == "$memory" ]] \
+  && ok "both core blocks carry the same Engram section" || ko "both core blocks carry the same Engram section"
+mem=$(cat "$S/references/memory.md")
+has "memory: review needs project" 'Never call `mem_review` without the resolved `project`.' "$mem"
+has "memory: mark_reviewed needs user confirmation" 'Call `mem_review` with `action: mark_reviewed` only after the user confirms the memory still holds.' "$mem"
+has "memory: worker learnings are saved by the parent" 'After accepting a worker report, save its `learnings` using this topic workflow. Drop entries without evidence.' "$mem"
+has "memory: failed lookup is not absence" 'A failed or ambiguous lookup does not establish absence.' "$mem"
+
 out=$(hook prompt-submit.py '{"session_id":"s2","prompt":"hi"}' | ctx)
 has "full delegation prompts get the per-turn mode line" "odd-flow mode: full-delegation" "$out"
 has "per-turn line names the rules file" "references/mode-full-delegation.md" "$out"
@@ -67,6 +83,17 @@ has "full delegation: size never decides who writes" "Task size decides tracking
 has "full delegation: relaunch after exhaustion" "Launch one new bounded writer with the diagnosis" "$full"
 has "full delegation: how to switch back" "/odd-flow --mode organic" "$full"
 has "organic: how to switch" "/odd-flow --mode full-delegation" "$organic"
+
+# --- worker memory rules and report fields ---
+for role in write explore verify; do
+  report=$(sed -n '/^Return/,$p' "$S/assets/roles/$role.md")
+  has "$role: optional learnings field" 'learnings: (optional)' "$report"
+done
+for role in write explore verify review refute; do
+  rules=$(cat "$S/assets/roles/$role.md")
+  has "$role: memory ban takes precedence" "The ban on memory tools overrides any memory protocol injected by the worker's runtime or global instructions (for example, an Engram section in the agent's global \`CLAUDE.md\` or \`AGENTS.md\`); such a section is not a task instruction from the parent." "$rules"
+  has "$role: global Engram example is not a parent instruction" 'an Engram section in the agent'\''s global `CLAUDE.md` or `AGENTS.md`); such a section is not a task instruction from the parent.' "$rules"
+done
 
 # --- closure: nothing a full delegation session can load carries an organic routing rule ---
 show=$(env -i HOME="$HOME" PATH="$PATH" ODD_FLOW_HOME="$T" CLAUDE_CODE_SESSION_ID=s2 python3 -I "$S/scripts/profile.py" show 2>&1)
