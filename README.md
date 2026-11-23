@@ -32,6 +32,6 @@ Codex and Antigravity packaging is not done yet. Until then, `skills/odd-flow/sc
 
 ## Checks
 
-- `bash tests/profile-check.sh` (20 checks) and `bash tests/init-check.sh` (13 checks)
+- `bash tests/profile-check.sh` (20 checks), `bash tests/init-check.sh` (13 checks) and `bash tests/codex-launch-check.sh` (25 checks)
 - `claude plugin validate .`
 - `echo '{"source":"startup"}' | python3 -I scripts/session-start.py`

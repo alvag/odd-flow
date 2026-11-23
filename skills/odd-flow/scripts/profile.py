@@ -19,6 +19,7 @@ BASE_ROLES = ("explore", "write", "verify", "review", "refute")
 LENSES = ("risk", "resilience", "readability", "reliability")
 ROLES = BASE_ROLES + tuple(f"review-{lens}" for lens in LENSES)
 ENTRY_FIELDS = ("agent", "model", "effort")
+CODEX_LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-worker.sh")
 
 # First present variable wins. The agent column is the Orca agent id of the
 # runtime that sets the variable; the pane key identifies no agent.
@@ -152,6 +153,24 @@ def selected_profile(doc):
     return name, source
 
 
+def shell_quote(value):
+    """Single-quote a value for a POSIX shell, always, so the command reads the same everywhere."""
+    return "'" + value.replace("'", "'\\''") + "'"
+
+
+def terminal_command(agent, model, effort):
+    """Command for `orca terminal create` when the agent cannot use `worker-start --agent`.
+
+    Codex started by `worker-start --agent codex` runs in a sandbox that blocks the
+    connection to Orca, so its worker could never report; scripts/codex-worker.sh
+    starts it with the one override that lets it reach Orca.
+    """
+    if agent != "codex":
+        return None
+    args = [shell_quote(arg) for arg in (model, effort) if arg]
+    return " ".join(["sh", shell_quote(CODEX_LAUNCHER)] + args)
+
+
 def resolve_role(doc, role):
     if role not in ROLES:
         raise ProfileError(f"unknown role '{role}' (known: {', '.join(ROLES)})")
@@ -173,6 +192,7 @@ def resolve_role(doc, role):
         if entry.get("effort"):
             flags += ["--effort", entry["effort"]]
     from_profile = bool(entry)
+    command = terminal_command(agent, entry.get("model"), entry.get("effort") if entry.get("model") else None)
     parts = [agent, entry.get("model") or "agent default model"]
     if entry.get("effort"):
         parts.append(f"effort {entry['effort']}")
@@ -190,6 +210,8 @@ def resolve_role(doc, role):
         "effort": entry.get("effort"),
         "flags": flags,
         "notice": notice,
+        "launch": "terminal" if command else "worker-start",
+        "terminal_command": command,
     }
 
 
@@ -200,6 +222,8 @@ def cmd_resolve(args):
     else:
         print(result["notice"])
         print(" ".join(result["flags"]))
+        if result["terminal_command"]:
+            print(f"launch: terminal ({result['terminal_command']})")
 
 
 def cmd_use(args):

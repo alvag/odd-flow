@@ -15,17 +15,7 @@ Load before creating, amending or proposing a commit. Only the parent commits (H
 3. Read `git log --oneline -5` and follow the repository's style when it has history.
 4. Compose the message (format below).
 5. Show the staged files and the proposed message, and ask for confirmation. Commit only after approval. When the user already approved this commit ("commit directly"), show the summary and commit without asking again.
-6. Commit through a heredoc so a multi-line body survives intact. Verify with `git log -1 --format='%h %s'` and `git status --porcelain`, and report the hash.
-
-```sh
-git commit -m "$(cat <<'EOF'
-type(SCOPE): subject
-
-- First change
-- Second change
-EOF
-)"
-```
+6. Write the message with the file tool to a scratch file outside the worktree, then run `git commit -F <file>`. Never pass a multi-line message through a heredoc or here-string: some agent shells and Orca terminals hang on them, and a delimiter inside the text ends them early. Verify with `git log -1 --format='%h %s'` and `git status --porcelain`, and report the hash.
 
 ## Message format
 
@@ -44,7 +34,7 @@ EOF
 ## Amend
 
 - First check whether `HEAD` is published: `git branch -r --contains HEAD`. Non-empty output means amending rewrites shared history; warn and get explicit confirmation.
-- `--amend`: read `git log -1 --format=%B` and `git diff --staged`, propose a message that covers the old and new changes, confirm, then amend through a heredoc.
+- `--amend`: read `git log -1 --format=%B` and `git diff --staged`, propose a message that covers the old and new changes, confirm, then write it to a scratch file and run `git commit --amend -F <file>`.
 - `--amend --no-edit`: show the staged files and the current message, confirm, then run `git commit --amend --no-edit`.
 
 ## Scope of this file
