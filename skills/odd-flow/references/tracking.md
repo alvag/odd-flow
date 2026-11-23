@@ -27,4 +27,5 @@ Mirror the full document plus its repo-relative path to Engram with `topic_key: 
 - Commit reviewable work units of about 400 authored changed lines with their tests and docs, as Conventional Commits that follow the repository's own rules. This is a heuristic, not a gate.
 - A unit whose Risk line names a high-risk item gets its own commit.
 - Record each task's commit in the document.
+- Load `commit.md` for the commit procedure itself.
 - Push, pull requests and merge stay with the user.

@@ -34,6 +34,7 @@ metadata:
 | Profile command, unknown profile, resolve error | `references/profiles.md` |
 | Past work, a decision worth keeping, resume, compaction | `references/memory.md` |
 | Risk line names an item, or the user asks for review | `references/review.md` |
+| About to commit or amend | `references/commit.md` |
 | `/odd-flow init` | `references/init.md` |
 
 ## Execution Steps
@@ -52,7 +53,8 @@ Close every request with: verified outcome; every failed, skipped or pending che
 - `references/delegation.md` — triggers, units, edit surfaces, correction bounds.
 - `references/orca-dispatch.md` — launch, wait and collect Orca workers.
 - `references/profiles.md` — profile file, session binding, commands.
-- `references/tracking.md` — feature document and commits.
+- `references/tracking.md` — feature document and commit units.
+- `references/commit.md` — commit procedure, message format, failures and amend.
 - `references/memory.md` — Engram reads and writes.
 - `references/review.md` — lenses, refuter, one bounded correction.
 - `references/init.md` — fallback: install the core block where the plugin hook does not run.
