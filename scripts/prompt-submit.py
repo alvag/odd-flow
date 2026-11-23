@@ -35,8 +35,8 @@ def main():
     if state.get("mode") != "full-delegation":
         return 0
     line = (
-        f"odd-flow mode: full-delegation ({state.get('source')}). In this mode the parent coordinates and "
-        f"does not edit repository files; bounded writers make every change. "
+        f"odd-flow mode: full-delegation ({state.get('source')}). The parent coordinates and writes "
+        "only what the mode file lists; bounded writers make all other workspace changes. "
         f"Rules: skills/odd-flow/{state.get('rules')}."
     )
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": line}}))

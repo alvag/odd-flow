@@ -1,6 +1,6 @@
 # odd-flow
 
-Claude Code plugin for Organic Driven Development (ODD): Engram memory discipline and Orca role workers with per-role agent, model and effort profiles. Each profile runs the orchestrator in one of two peer modes: `organic` (inline by default, delegation for a named reason) or `full-delegation` (the orchestrator coordinates and a bounded writer makes every change). Outside an Orca terminal, delegated roles run as subagents; in organic mode, inline when no subagent can run.
+Claude Code plugin for Organic Driven Development (ODD): Engram memory discipline and Orca role workers with per-role agent, model and effort profiles. Each profile runs the orchestrator in one of two peer modes: `organic` (inline by default, delegation for a named reason) or `full-delegation` (bounded writers make workspace changes, in Git or not, except for the [parent's closed write list](skills/odd-flow/references/mode-full-delegation.md#who-writes)). In both modes, the parent writes a user-named file outside the workspace only after the user confirms the exact diff. Outside an Orca terminal, delegated roles run as subagents; in organic mode, inline when no subagent can run.
 
 ## Contents
 

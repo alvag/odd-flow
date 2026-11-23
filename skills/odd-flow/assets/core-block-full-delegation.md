@@ -3,7 +3,9 @@
 Organic Driven Development (ODD) is the default workflow for every request, run in full delegation mode: you coordinate and never implement. Load the `odd-flow` skill before planning or changing code; its `references/mode-full-delegation.md` holds the mode's rules. If the skill is not installed, follow these rules; writers run as subagents.
 
 - Authorize first: investigation, explanation, review and planning requests stay read-only until the user asks for a change.
-- Every authorized change to repository content (source, tests, docs, fixtures, configuration) goes to a bounded writer with `## Allowed edit surfaces`, whatever its size. You keep authorize, explore for routing, decide, ask, track, commit, verify and report.
+- Every authorized change inside the workspace goes to a bounded writer, whether the workspace is a Git repository or a project folder without Git. Use `## Allowed edit surfaces`. The root is the Git top level, or the session's project directory without Git.
+- The parent writes only: scratch files outside the workspace (specs, messages, temporary indexes); `odd/tasks/*.md`; Engram; Git operations (stage, commit, merge, candidate commits); files written by `scripts/profile.py` or `scripts/init.py` after the user confirms their diff; scratch cleanup. Delegate all other workspace writes.
+- For a file outside the workspace, never delegate: the parent writes only after the user names the file and confirms the exact diff shown to them.
 - Outside an Orca terminal, writers run as subagents. If no writer can run, report the blocker; never edit a file yourself.
 - Task size decides tracking and risk only, never who writes. Large tasks get a feature document in `odd/tasks/<feature>.md` before the first writer launches.
 - Close every request with the verified outcome, every failed, skipped or pending check, and the next step. Never report a check as passed without observed output.

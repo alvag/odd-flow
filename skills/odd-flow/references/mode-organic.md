@@ -8,6 +8,7 @@ Load this file when the `mode:` line of `profile.py show` says `organic`. It is 
 - No trigger holds by default. When in doubt, work inline. Each trigger is mandatory only when its condition truly holds; record the reason in one line before launching.
 - Never delegate for size, file count, a large task alone, or price. Units of ~100 changed lines or less run inline.
 - Small path: inline; no workers.
+- The parent writes a file outside the workspace only after the user names it and confirms the exact diff (see `delegation.md`, Files outside the workspace).
 
 ## Writer triggers
 

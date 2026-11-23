@@ -21,7 +21,7 @@ A trigger names a role, not a runtime. Outside an Orca terminal the role runs as
 
 Every `write` launch carries `## Allowed edit surfaces`:
 
-- repo-relative paths or narrow globs, one per line; never `.`, `./`, the repo root, an absolute path, a drive-qualified path, a `~` path, or a path with a `..` segment;
+- paths or narrow globs relative to the workspace root, one per line; never `.`, `./`, the repo root or non-Git folder root, an absolute path, a drive-qualified path, a `~` path, or a path with a `..` segment;
 - no wildcard in the first path segment, no unfilled template placeholder, and no empty entries or sections;
 - one optional `- ` or `* ` bullet and one pair of surrounding backticks are stripped; any remaining backtick, dollar sign, brace, comma, leading list marker or quote marker is rejected;
 - outside fenced code blocks, the section ends at the next heading and every non-empty line inside it is an entry; all declarations are checked;
@@ -30,7 +30,19 @@ Every `write` launch carries `## Allowed edit surfaces`:
 
 A writer that needs another path returns it with a reason. Add it yourself when it serves the authorized objective; ask the user only for new scope, another repository or a destructive operation. Parallel writers in one worktree must have disjoint surfaces; units that need the same file run in order or in separate worktrees.
 
-In Claude Code, the `PreToolUse` hook checks that the surface is present and well-formed when a writer launches, in either mode. In other runtimes the rule is prompt-only; to check a spec manually, run `python3 -I skills/odd-flow/scripts/surface.py check <spec-file>` from the plugin root. The hook does not constrain what the writer edits. After each writer returns, compare `git diff --name-only` against its surface and reject out-of-surface edits.
+In Claude Code, the `PreToolUse` hook checks that the surface is present and well-formed when a writer launches, in either mode. In other runtimes the rule is prompt-only; to check a spec manually, run `python3 -I skills/odd-flow/scripts/surface.py check <spec-file>` from the plugin root. The hook does not constrain what the writer edits. After each writer returns, compare `git diff --name-only` (or the shadow status below) against its surface and reject out-of-surface edits.
+
+## Files outside the workspace
+
+In both modes, only the parent may write a file outside the workspace: the user must name the file, see the exact diff and confirm it before the write. Never delegate it. The workspace root is the Git top level, or the session's project directory without Git. Surfaces are workspace-relative; the guard rejects absolute and `~` paths by design. Auto-approved Codex escalation can permit writes outside the workspace, so the user's confirmation is the control.
+
+## Shadow snapshots
+
+In either mode, before launching a writer for a project folder without Git, set `folder` to its real path and create `G=$(mktemp -d)` outside the folder. Run `git --git-dir="$G/.git" --work-tree="$folder" init -q`, then with the same Git options run `add -A` and `commit --allow-empty -m "Writer baseline"` (add `-c user.name=... -c user.email=...` before `commit` if identity is missing). Use that commit as the writer's base.
+
+A folder containing nested Git repositories is out of scope for shadow checks; dispatch each nested repository as its own Git workspace.
+
+On return, compare `git --git-dir="$G/.git" --work-tree="$folder" status --porcelain --untracked-files=all --ignored` with the writer's surface; ignored paths count against the surface. Build the candidate commit as below with the same Git options; give `verify` the shadow Git directory with both commit pins. The parent removes `G` at close.
 
 ## What the parent passes
 

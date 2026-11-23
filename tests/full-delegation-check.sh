@@ -20,8 +20,8 @@ hook() { # script, payload, env...
 ctx() { python3 -I -c 'import json,sys; d=sys.stdin.read(); print(json.loads(d)["hookSpecificOutput"]["additionalContext"] if d.strip() else "")'; }
 
 # --- organic keeps its expected core block and routing ---
-[[ "$(shasum -a 256 "$S/assets/core-block.md" | cut -d' ' -f1)" == "03ceb72d587005f1de7a82ecff145ee135acf34f9904936d16bd5117f337589b" ]] \
-  && ok "organic core block is byte-identical" || ko "organic core block is byte-identical"
+[[ "$(shasum -a 256 "$S/assets/core-block.md" | cut -d' ' -f1)" == "1b229fb0afb4c750ccd0989fce1e3e61b16c906c78fcac8c12ecd83a4c765690" ]] \
+  && ok "organic core block matches expected bytes" || ko "organic core block matches expected bytes"
 
 out=$(hook session-start.py '{"source":"startup","session_id":"s1"}' ODD_PROFILE=B | ctx)
 [[ "$out" == "$(cat "$S/assets/core-block.md")"* ]] && ok "organic session starts with the organic core block" || ko "organic session starts with the organic core block" "${out:0:200}"
@@ -71,6 +71,7 @@ has "memory: failed lookup is not absence" 'A failed or ambiguous lookup does no
 out=$(hook prompt-submit.py '{"session_id":"s2","prompt":"hi"}' | ctx)
 has "full delegation prompts get the per-turn mode line" "odd-flow mode: full-delegation" "$out"
 has "per-turn line names the rules file" "references/mode-full-delegation.md" "$out"
+has "per-turn line keeps parent writes to the closed list" "The parent coordinates and writes only what the mode file lists; bounded writers make all other workspace changes." "$out"
 
 out=$(hook session-start.py '{"source":"startup","session_id":"s3"}' ODD_ORCHESTRATOR_MODE=bogus | ctx)
 has "unresolved mode falls back to organic and says so" "mode unresolved" "$out"
@@ -78,6 +79,19 @@ out=$(hook prompt-submit.py '{"session_id":"s3"}' ODD_ORCHESTRATOR_MODE=bogus); 
 [[ $ec == 0 ]] && ok "prompt hook never fails the prompt" || ko "prompt hook never fails the prompt" "exit $ec: $out"
 
 full=$(cat "$S/references/mode-full-delegation.md" 2>/dev/null)
+core=$(cat "$S/assets/core-block-full-delegation.md")
+scope='Every authorized change inside the workspace goes to a bounded writer, whether the workspace is a Git repository or a project folder without Git.'
+[[ "$full" == *"$scope"* && "$core" == *"$scope"* ]] \
+  && ok "full delegation: workspace scope in both prompts" || ko "full delegation: workspace scope in both prompts" "missing from mode or core: $scope"
+parent_writes='The parent writes only: scratch files outside the workspace (specs, messages, temporary indexes); `odd/tasks/*.md`; Engram; Git operations (stage, commit, merge, candidate commits); files written by `scripts/profile.py` or `scripts/init.py` after the user confirms their diff; scratch cleanup.'
+[[ "$full" == *"$parent_writes"* && "$core" == *"$parent_writes"* ]] \
+  && ok "full delegation: closed parent write list in both prompts" || ko "full delegation: closed parent write list in both prompts" "missing from mode or core: $parent_writes"
+delegation=$(cat "$S/references/delegation.md")
+has "non-Git writers: shadow snapshot command" 'git --git-dir="$G/.git" --work-tree="$folder" init -q' "$delegation"
+has "both modes: external file confirmation" 'In both modes, only the parent may write a file outside the workspace: the user must name the file, see the exact diff and confirm it before the write. Never delegate it.' "$delegation"
+organic_core=$(cat "$S/assets/core-block.md")
+[[ "$organic" == *"outside the workspace"*"confirms the exact diff"* && "$organic_core" == *"outside the workspace"*"confirms the exact diff"* ]] \
+  && ok "organic: external file confirmation reachable" || ko "organic: external file confirmation reachable" "missing from mode-organic.md or core-block.md"
 has "full delegation: the parent never edits" "never edit a file yourself" "$full"
 has "full delegation: size never decides who writes" "Task size decides tracking and risk only, never who writes." "$full"
 has "full delegation: relaunch after exhaustion" "Launch one new bounded writer with the diagnosis" "$full"

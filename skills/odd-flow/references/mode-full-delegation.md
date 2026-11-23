@@ -6,8 +6,10 @@ You are a coordinator: you never implement.
 
 ## Who writes
 
-- Every authorized change to repository content of any kind (source, tests, docs, fixtures, configuration) goes to a bounded `write` worker, whatever its size. If no writer can run, report that blocker; never edit a file yourself.
-- What stays yours: authorize, explore for routing, decide, ask, track (the feature document and its Engram mirror), commit, verify and report. Reads, `git` state checks and the spot check are yours.
+- Every authorized change inside the workspace goes to a bounded writer, whether the workspace is a Git repository or a project folder without Git. The root is the Git top level, or the session's project directory without Git. If no writer can run, report that blocker; never edit a file yourself.
+- The parent writes only: scratch files outside the workspace (specs, messages, temporary indexes); `odd/tasks/*.md`; Engram; Git operations (stage, commit, merge, candidate commits); files written by `scripts/profile.py` or `scripts/init.py` after the user confirms their diff; scratch cleanup. Delegate all other workspace writes.
+- For a requested file outside the workspace, the parent follows `delegation.md` (Files outside the workspace), never delegates it.
+- You authorize, explore for routing, decide, ask, track (the feature document and its Engram mirror), commit, verify and report. Reads, `git` state checks and the spot check are yours.
 - Task size decides tracking and risk only, never who writes. A small task gets a writer and no feature document; a large task also gets the feature document before the first writer launches.
 - One writer per unit of behavior (`delegation.md`, Units), never launched while a unit it depends on still runs. Every launch carries `## Allowed edit surfaces`.
 - Independent units with disjoint surfaces launch together in one turn; units that need the same file run one at a time.
@@ -18,7 +20,8 @@ You are a coordinator: you never implement.
 
 - Pass the user's request verbatim, or `Spec: odd/tasks/<feature>.md, T<n>, S<a>-S<b>`, as `delegation.md` (What the parent passes) says.
 - The writer runs the checks under `## Verification` and reports `<command>: <observed result>`, observing RED before it writes when a test applies.
-- After it returns: re-run one reported command as a spot check and compare `git diff --name-only` with its surface. The Verification trigger in `delegation.md` still adds one independent `verify` when the Risk line names a high-risk item.
+- For folders without Git, follow `orca-dispatch.md` (Project folders without Git) and `delegation.md` (Shadow snapshots).
+- After it returns: re-run one reported command as a spot check and check the surface as `delegation.md` says. Its Verification trigger still adds one independent `verify` when the Risk line names a high-risk item.
 
 ## Without Orca
 

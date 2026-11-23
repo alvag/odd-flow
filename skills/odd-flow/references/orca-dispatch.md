@@ -11,7 +11,7 @@
    `python3 <skill-dir>/scripts/profile.py resolve <role> --json`
    Use its `flags` exactly and print its `notice`. On a non-zero exit, stop and report the error; do not launch with guessed flags.
 2. Build the spec from `assets/spec-template.md` and `assets/roles/<role>.md`. Write it with the file tool to a scratch file outside the worktree (for example `$TMPDIR/odd-flow/<session>/<task-id>.md`). Never use heredocs. In `task-create` and `worker-start`, pass the resolved literal path to `--spec-file`, quoted if needed, not a variable (such as `$SPEC`), command substitution, or glob. In Claude Code, a guard denial means the launch did not run: fix the spec or pass a readable literal path and retry; do not bypass the guard. The hook checks the declaration at launch, not subsequent edits.
-3. Choose a placement before starting the worker:
+3. For a writer in a folder without Git, use Project folders without Git below. Otherwise choose a placement:
    `python3 <skill-dir>/scripts/pane.py open --role <role> --title "<T# role: short title>" --json`
    On a non-zero exit, report the error and do not launch. If the split reply cannot be parsed or has no handle, a pane may have opened; check `terminal list` and close it. Report any `title_error`, but continue with the opened pane.
    - `split-right` or `split-below`: keep the returned `handle` and run terminal steps 1, 3 and 4 below. Skip `terminal create`. Use this path for both Claude and Codex.
@@ -27,6 +27,12 @@
      4. `ORCA orchestration worker-start --environment local --task <taskId> --terminal <handle> --json`, without `flags`.
      If a step fails, close the pane or terminal you opened (`ORCA terminal close --terminal <handle>`) and report the error with the `taskId` if one exists. The task stays unassigned for a retry with `worker-start --task`; never fall back to `worker-start --agent codex`.
 4. End the turn. Orca wakes you; never poll.
+
+## Project folders without Git
+
+In either mode, get the folder's real path (`pwd -P` in the folder). Register it once with `orca repo add --path "$folder" --kind folder`; tell the user the entry can only be removed in Orca's UI. Take the pre-launch snapshot in `delegation.md` (Shadow snapshots).
+
+Skip pane placement: a split runs in the parent's workspace. For Codex use terminal step 2 with `--worktree "path:$folder"` instead of `--worktree current`. For other agents replace that step with `ORCA agent launch --surface terminal --worktree "path:$folder" <flags> --json` and keep `outcome.handle`. Use the other terminal steps unchanged.
 
 ## Several workers
 
@@ -59,7 +65,7 @@ A launch that fails because of the agent or the model is not an Orca outage: rep
 ## Limits
 
 - `--effort` requires `--model`; neither combines with `--terminal`. A role with only `effort` is invalid.
-- Codex workers run with outbound network enabled in their sandbox (`-c sandbox_workspace_write.network_access=true` in `scripts/codex-worker.sh`); that is the only change, and the user's Codex config stays untouched.
+- `scripts/codex-worker.sh` pins `--sandbox workspace-write` and `-c sandbox_workspace_write.network_access=true`, even in untrusted folders or with a configured read-only sandbox. It overrides no other Codex config and leaves the config file untouched.
 - OpenCode takes no effort; agents outside Claude, Codex, Cursor, Antigravity, Grok, Muse, OMP and Pi use their own configured model.
 - Workers in `--worktree current` share your tree: give parallel writers disjoint surfaces or use `--worktree new-child`.
 - Never equalize pane heights from the skill: Orca has no command for it. Use Orca's “Equalize pane sizes” by hand.
