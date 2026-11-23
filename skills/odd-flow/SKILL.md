@@ -9,7 +9,7 @@ metadata:
 
 ## Activation Contract
 
-- Load on `/odd-flow`, `/odd-flow <profile>`, `/odd-flow profiles`, `/odd-flow init`, or a request to work in ODD or to run role workers through Orca.
+- Load on `/odd-flow` (in Claude Code, `/odd-flow:odd-flow`) with no argument, `--profile <p>`, `--profile-default <p>`, `--profiles`, `--create-profile <p>` or `init`, or on a request to work in ODD, manage profiles or run role workers through Orca.
 - Once loaded, ODD governs every later request of this session.
 
 ## Hard Rules
@@ -21,7 +21,7 @@ metadata:
 5. Quote user requirements verbatim; hand work to workers by reference, never by paraphrase.
 6. The parent owns git, commits and scratch cleanup. Workers never commit, stage, delete scratch or launch workers.
 7. Never report a check as passed without observed output; list failed, skipped and pending checks.
-8. `/odd-flow init` never writes before the user confirms the diff it showed.
+8. `/odd-flow init`, `--profile-default` and `--create-profile` never write before the user confirms the diff they showed. Only `scripts/profile.py` writes the profiles file.
 
 ## Decision Gates
 
@@ -39,7 +39,7 @@ metadata:
 
 ## Execution Steps
 
-1. On activation, run `python3 <skill-dir>/scripts/profile.py use <profile>` when a profile was given, `list` for `/odd-flow profiles`, else `show`. Report the profile line in one sentence.
+1. On activation with a profile command (`--profile`, `--profile-default`, `--profiles`, `--create-profile`), load `references/profiles.md` and follow its Commands section. Otherwise run `python3 <skill-dir>/scripts/profile.py show`. Report the profile line in one sentence.
 2. Run each request through ODD: Authorize, Explore, Resolve uncertainty, Classify, Track (large only), Implement, Close.
 3. Load only the references the Decision Gates name for the current step.
 

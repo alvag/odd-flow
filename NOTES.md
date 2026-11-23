@@ -7,7 +7,7 @@ Not loaded by the plugin. Decisions and open items for the next iteration.
 - Methodology replicated from Gentle Shell v5 (ODD, verify, review core); topology uses Orca workers, not in-process subagents.
 - Work inline by default; Orca workers only on named triggers (mapping, parallel writers, context backstop, named high-risk verify, review, user-named agent).
 - Progressive disclosure: `SKILL.md` holds rules and the gate table; everything else loads by condition.
-- Profiles: one hand-written file at `~/.config/odd-flow/profiles.json`, shared by every agent runtime. No Gentle Shell dependency, no import, no wizard.
+- Profiles: one file at `~/.config/odd-flow/profiles.json`, shared by every agent runtime. No Gentle Shell dependency, no import. Revised 2026-11-23: the user asked for profile commands and a guided creation flow; `profile.py` stays the only writer (`save`, `default`, dry run unless `--yes`), and the skill shows the diff before every write.
 - Profile precedence: session binding, then `ODD_PROFILE`, then file `default`, then none (current agent, its own model).
 - Session binding key: agent session id first (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`/`CODEX_SESSION_ID`, `ANTIGRAVITY_CONVERSATION_ID`), `ORCA_PANE_KEY` as fallback. Verified on 2026-11-23 that all three agents expose their variable to shell commands (Codex and Antigravity in non-interactive mode only).
 - Profiles are resolved by `scripts/profile.py` before every launch so a choice survives compaction.

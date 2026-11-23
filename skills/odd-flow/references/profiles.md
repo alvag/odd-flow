@@ -4,7 +4,7 @@ A profile maps roles to an Orca agent, model and effort. Profiles live in one fi
 
 `~/.config/odd-flow/profiles.json` (override the directory with `ODD_FLOW_HOME`).
 
-Template: `assets/profiles.example.json`. The user writes it by hand; the skill never creates it without being asked.
+Template: `assets/profiles.example.json`. The user may edit it by hand or through `--create-profile` and `--profile-default`; the skill never writes it without being asked, and only through `scripts/profile.py`.
 
 ## Format
 
@@ -29,7 +29,7 @@ Template: `assets/profiles.example.json`. The user writes it by hand; the skill 
 
 `profile.py` resolves it again on every call, in this order:
 
-1. Session binding written by `/odd-flow <profile>`.
+1. Session binding written by `/odd-flow --profile <p>`.
 2. `ODD_PROFILE` in the environment.
 3. `default` in the file.
 4. None: every role uses the current agent and its own model.
@@ -45,13 +45,28 @@ With none present, `use` fails; pass `ODD_PROFILE` at launch instead.
 
 ## Commands
 
-| User says | Run |
+| User says | Do |
 |---|---|
-| `/odd-flow B` | `profile.py use B` |
-| `/odd-flow profiles` | `profile.py list`, then `profile.py show` |
+| `/odd-flow --profile B` | `profile.py use B`; report the bound line |
+| `/odd-flow --profile-default B` | `profile.py default B` (dry run), show its diff, ask to confirm; on yes, `profile.py default B --yes` |
+| `/odd-flow --profiles` | `profile.py list` and `profile.py show`; then ask one question: which profile, and whether for this session (`use`), as the default (the `--profile-default` flow), or neither |
+| `/odd-flow --create-profile B` | the creation flow below |
 | "back to the default profile" | `profile.py clear` |
 | check agents exist in Orca | `profile.py check` |
 | remove old session bindings | `profile.py prune --days 30` |
+
+A bare profile name (`/odd-flow B`) is not a command: ask whether the user meant `--profile B`.
+
+In Claude Code the plugin skill is invoked as `/odd-flow:odd-flow <command>`. In a headless session (2026-11-23) a plain `/odd-flow <command>` was not expanded as a skill call and reached the model as text; interactive sessions are unchecked. When such text arrives, treat it as the matching command.
+
+## Creating a profile
+
+1. Run `profile.py discover --json`. Use only the agents and models it reports. A model from a source with `verified: false` is a suggestion; say so. An agent with no models runs with its own configured model (no `model`, no `effort`).
+2. Ask role by role, one question per role, in this order: `explore`, `write`, `verify`, `review`, `refute`. Each question lists the discovered agent and model options with their efforts and marks one suggested value as recommended: `explore` on a fast, low-cost model with low or medium effort; `write` on a capable mid-cost model with medium effort; `verify`, `review` and `refute` on the strongest model with high effort. Prefer an agent for `verify` that differs from `write` when more than one is available, so the verifier is independent. Offer the four `review-<lens>` overrides only if the user asks.
+3. Never write a model the discovery did not list without saying it is unverified. Before saving, show the accepted roles in one table.
+4. Write the accepted roles with the file tool to a scratch file outside the worktree, as a JSON object of role -> `{ "agent", "model", "effort" }`.
+5. Run `profile.py save B --roles-file <file>` (dry run) and show the diff. If the profile exists, ask before adding `--replace`.
+6. On confirmation, run the same command with `--yes`. Then offer `--profile B` for this session or `--profile-default B`.
 
 ## Errors
 

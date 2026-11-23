@@ -7,6 +7,7 @@ keyed by the agent's own session id, or by the Orca pane as a fallback.
 """
 
 import argparse
+import difflib
 import json
 import os
 import re
@@ -19,6 +20,9 @@ BASE_ROLES = ("explore", "write", "verify", "review", "refute")
 LENSES = ("risk", "resilience", "readability", "reliability")
 ROLES = BASE_ROLES + tuple(f"review-{lens}" for lens in LENSES)
 ENTRY_FIELDS = ("agent", "model", "effort")
+# Claude Code exposes no model list; these ids are suggestions, reported as unverified.
+CLAUDE_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
+CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 CODEX_LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-worker.sh")
 
 # First present variable wins. The agent column is the Orca agent id of the
@@ -80,16 +84,30 @@ def write_json_atomic(path, data):
         raise
 
 
+def read_raw():
+    """Return (text, document) of the profiles file; ("", None) when it does not exist."""
+    path = profiles_path()
+    if not os.path.exists(path):
+        return "", None
+    with open(path, encoding="utf-8") as handle:
+        text = handle.read()
+    try:
+        return text, json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ProfileError(f"{path}: invalid JSON: {exc}") from exc
+
+
 def load_profiles():
     """Return the validated profile document, or an empty one when no file exists."""
     path = profiles_path()
-    if not os.path.exists(path):
+    _, doc = read_raw()
+    if doc is None:
         return {"default": None, "profiles": {}, "path": path, "exists": False}
-    try:
-        with open(path, encoding="utf-8") as handle:
-            doc = json.load(handle)
-    except json.JSONDecodeError as exc:
-        raise ProfileError(f"{path}: invalid JSON: {exc}") from exc
+    return validate_doc(doc, path)
+
+
+def validate_doc(doc, path):
+    """Validate a raw profile document; return its normalized view."""
     if not isinstance(doc, dict):
         raise ProfileError(f"{path}: top level must be an object")
     profiles = doc.get("profiles", {})
@@ -274,8 +292,8 @@ def cmd_show(_args):
             print(f"  {role} -> error: {exc}")
 
 
-def cmd_check(_args):
-    doc = load_profiles()
+def orca_agents():
+    """Agent ids Orca reports as installed, in Orca's order."""
     try:
         out = subprocess.run(
             [os.environ.get("ORCA_CLI_COMMAND", "orca"), "agent", "installed", "--json"],
@@ -287,7 +305,12 @@ def cmd_check(_args):
     items = data.get("result", data)
     if isinstance(items, dict):
         items = items.get("agents", [])
-    installed = {item.get("id") for item in items if isinstance(item, dict)}
+    return [item["id"] for item in items if isinstance(item, dict) and item.get("id")]
+
+
+def cmd_check(_args):
+    doc = load_profiles()
+    installed = set(orca_agents())
     problems = [
         f"{name}.{role}: agent '{entry['agent']}' is not installed or enabled in Orca"
         for name, roles in sorted(doc["profiles"].items())
@@ -299,6 +322,201 @@ def cmd_check(_args):
         print("\n".join(problems))
         sys.exit(1)
     print("all profile agents are available (models are only checked at launch)")
+
+
+def codex_models():
+    """Listed models and their efforts from Codex's own models cache, or None if unreadable."""
+    path = os.path.join(
+        os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex"),
+        "models_cache.json",
+    )
+    try:
+        with open(path, encoding="utf-8") as handle:
+            cache = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    models = cache.get("models") if isinstance(cache, dict) else None
+    if not isinstance(models, list):
+        return None
+    result = []
+    for model in models:
+        if not isinstance(model, dict) or not isinstance(model.get("slug"), str) or not model["slug"]:
+            continue
+        if model.get("visibility", "list") != "list":
+            continue
+        levels = model.get("supported_reasoning_levels")
+        efforts = [level["effort"] for level in levels if isinstance(level, dict)
+                   and isinstance(level.get("effort"), str) and level["effort"]] if isinstance(levels, list) else []
+        result.append({"id": model["slug"], "efforts": efforts})
+    return result
+
+
+def discover():
+    """Agents Orca can launch and the models each one is known to accept.
+
+    `verified` is true when the models come from the agent's own data, false for the
+    built-in Claude list, and null when there is no source at all.
+    """
+    result = {"agents": []}
+    try:
+        agents = orca_agents()
+    except ProfileError as exc:
+        result["orca_error"] = str(exc)
+        agents = []
+    for agent in agents:
+        entry = {"id": agent, "models": [], "verified": None, "source": None}
+        if agent == "codex":
+            models = codex_models()
+            if models is not None:
+                entry.update(models=models, verified=True, source="codex models cache")
+        elif agent == "claude":
+            entry.update(
+                models=[{"id": model, "efforts": list(CLAUDE_EFFORTS)} for model in CLAUDE_MODELS],
+                verified=False, source="built-in list",
+            )
+        result["agents"].append(entry)
+    return result
+
+
+def cmd_discover(args):
+    result = discover()
+    if args.json:
+        print(json.dumps(result))
+        return
+    if "orca_error" in result:
+        print(f"Orca agents unavailable: {result['orca_error']}")
+    for agent in result["agents"]:
+        if not agent["models"]:
+            print(f"{agent['id']}: agent default model only (no model list found)")
+            continue
+        models = ", ".join(
+            f"{model['id']} ({', '.join(model['efforts'])})" if model["efforts"] else model["id"]
+            for model in agent["models"]
+        )
+        state = "verified" if agent["verified"] else "unverified"
+        print(f"{agent['id']}: {models} [{state}: {agent['source']}]")
+
+
+def inline(value):
+    """One-line JSON for a role entry, in the `{ "agent": "x" }` style of a hand-written file."""
+    if isinstance(value, dict) and value:
+        return "{ " + ", ".join(f"{dumps(k)}: {dumps(v)}" for k, v in value.items()) + " }"
+    return dumps(value)
+
+
+def dumps(value, **kwargs):
+    """JSON text that keeps non-ASCII characters as written, so diffs show only real changes."""
+    return json.dumps(value, ensure_ascii=False, **kwargs)
+
+
+def format_doc(doc):
+    """Serialize the profile document with one line per role, so diffs show only real changes."""
+    lines = ["{"]
+    items = list(doc.items())
+    for i, (key, value) in enumerate(items):
+        comma = "," if i < len(items) - 1 else ""
+        if key != "profiles" or not isinstance(value, dict) or not value:
+            body = dumps(value, indent=2).replace("\n", "\n  ")
+            lines.append(f"  {dumps(key)}: {body}{comma}")
+            continue
+        lines.append('  "profiles": {')
+        profiles = list(value.items())
+        for j, (name, roles) in enumerate(profiles):
+            pcomma = "," if j < len(profiles) - 1 else ""
+            if not isinstance(roles, dict) or not roles:
+                lines.append(f"    {dumps(name)}: {inline(roles)}{pcomma}")
+                continue
+            lines.append(f"    {dumps(name)}: {{")
+            entries = list(roles.items())
+            for k, (role, entry) in enumerate(entries):
+                rcomma = "," if k < len(entries) - 1 else ""
+                lines.append(f"      {dumps(role)}: {inline(entry)}{rcomma}")
+            lines.append(f"    }}{pcomma}")
+        lines.append(f"  }}{comma}")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def write_text_atomic(path, text):
+    """Replace a user-owned file atomically: follow a symlink to its target, keep its mode."""
+    target = os.path.realpath(path)
+    try:
+        mode = os.stat(target).st_mode & 0o7777
+    except FileNotFoundError:
+        mode = 0o644
+    tmp = None
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target), prefix=".tmp-")
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, target)
+    except OSError as exc:
+        if tmp and os.path.exists(tmp):
+            os.unlink(tmp)
+        raise ProfileError(f"cannot write {target}: {exc}") from exc
+
+
+def write_profiles(text_before, doc, yes):
+    """Validate doc, print the diff against the current file, and write it only with yes."""
+    path = profiles_path()
+    validate_doc(doc, path)
+    after = format_doc(doc)
+    if json.loads(after) != doc:
+        raise ProfileError("internal error: formatted profiles do not round-trip; nothing written")
+    diff = "".join(difflib.unified_diff(
+        text_before.splitlines(keepends=True), after.splitlines(keepends=True),
+        fromfile=path, tofile=path,
+    ))
+    if not diff:
+        print("no changes")
+        return False
+    print(diff, end="" if diff.endswith("\n") else "\n")
+    if not yes:
+        print("dry run: nothing written; re-run with --yes to write")
+        return False
+    write_text_atomic(path, after)
+    return True
+
+
+def cmd_save(args):
+    try:
+        with open(args.roles_file, encoding="utf-8") as handle:
+            roles = json.load(handle)
+    except (OSError, ValueError) as exc:  # ValueError covers bad JSON and non-UTF-8 bytes
+        raise ProfileError(f"{args.roles_file}: cannot read roles: {exc}") from exc
+    if not isinstance(roles, dict):
+        raise ProfileError(f"{args.roles_file}: roles must be an object of role -> entry")
+    text, doc = read_raw()
+    doc = doc if doc is not None else {"profiles": {}}
+    if not isinstance(doc, dict) or not isinstance(doc.get("profiles", {}), dict):
+        validate_doc(doc, profiles_path())
+    doc.setdefault("profiles", {})
+    if args.name in doc["profiles"] and not args.replace:
+        raise ProfileError(f"profile '{args.name}' already exists; pass --replace to overwrite it")
+    doc["profiles"][args.name] = roles
+    if write_profiles(text, doc, args.yes):
+        print(f"profile '{args.name}' saved to {profiles_path()}")
+
+
+def cmd_default(args):
+    text, doc = read_raw()
+    view = validate_doc(doc, profiles_path()) if doc is not None else {"profiles": {}}
+    if args.name not in view["profiles"]:
+        known = ", ".join(sorted(view["profiles"])) or "none"
+        raise ProfileError(f"profile '{args.name}' is not defined in {profiles_path()} (known: {known})")
+    if view["default"] == args.name:
+        print(f"'{args.name}' is already the default profile; nothing written")
+        return
+    if "default" in doc:
+        doc["default"] = args.name
+    else:
+        doc = {"default": args.name, **doc}
+    if write_profiles(text, doc, args.yes):
+        print(f"default profile: {args.name}")
 
 
 def cmd_prune(args):
@@ -330,6 +548,19 @@ def main(argv=None):
     sub.add_parser("list", help="list profiles").set_defaults(func=cmd_list)
     sub.add_parser("show", help="show the active profile and every role").set_defaults(func=cmd_show)
     sub.add_parser("check", help="check profile agents against Orca").set_defaults(func=cmd_check)
+    disc = sub.add_parser("discover", help="list Orca agents and the models each one accepts")
+    disc.add_argument("--json", action="store_true")
+    disc.set_defaults(func=cmd_discover)
+    save = sub.add_parser("save", help="add or replace a profile (dry run unless --yes)")
+    save.add_argument("name")
+    save.add_argument("--roles-file", required=True, help="JSON object of role -> {agent, model, effort}")
+    save.add_argument("--replace", action="store_true", help="overwrite an existing profile")
+    save.add_argument("--yes", action="store_true", help="write the file instead of a dry run")
+    save.set_defaults(func=cmd_save)
+    default = sub.add_parser("default", help="set the file's default profile (dry run unless --yes)")
+    default.add_argument("name")
+    default.add_argument("--yes", action="store_true", help="write the file instead of a dry run")
+    default.set_defaults(func=cmd_default)
     prune = sub.add_parser("prune", help="remove old session bindings")
     prune.add_argument("--days", type=int, default=30)
     prune.set_defaults(func=cmd_prune)
