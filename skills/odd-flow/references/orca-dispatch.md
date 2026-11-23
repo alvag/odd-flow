@@ -30,9 +30,11 @@
 
 ## Project folders without Git
 
-In either mode, get the folder's real path (`pwd -P` in the folder). Register it once with `orca repo add --path "$folder" --kind folder`; tell the user the entry can only be removed in Orca's UI. Take the pre-launch snapshot in `delegation.md` (Shadow snapshots).
+In either mode, get the folder's real path (`pwd -P` in the folder). If it is not registered, register it with `orca repo add --path "$folder" --kind folder`. Take the pre-launch snapshot in `delegation.md` (Shadow snapshots).
 
 Skip pane placement: a split runs in the parent's workspace. For Codex use terminal step 2 with `--worktree "path:$folder"` instead of `--worktree current`. For other agents replace that step with `ORCA agent launch --surface terminal --worktree "path:$folder" <flags> --json` and keep `outcome.handle`. Use the other terminal steps unchanged.
+
+At task close, if you registered the folder for this task, wait until the writer's terminal is closed, then run `orca project setup-delete --setup <id> --force` using the setup whose `path` in `orca project setups --json` matches the folder's real path. Leave any pre-existing entry in place.
 
 ## Several workers
 

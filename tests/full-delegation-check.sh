@@ -88,6 +88,8 @@ parent_writes='The parent writes only: scratch files outside the workspace (spec
   && ok "full delegation: closed parent write list in both prompts" || ko "full delegation: closed parent write list in both prompts" "missing from mode or core: $parent_writes"
 delegation=$(cat "$S/references/delegation.md")
 has "non-Git writers: shadow snapshot command" 'git --git-dir="$G/.git" --work-tree="$folder" init -q' "$delegation"
+folders=$(sed -n '/^## Project folders without Git$/,/^## /p' "$S/references/orca-dispatch.md")
+has "non-Git writers: remove only task-registered folders at close" 'At task close, if you registered the folder for this task, wait until the writer'\''s terminal is closed, then run `orca project setup-delete --setup <id> --force` using the setup whose `path` in `orca project setups --json` matches the folder'\''s real path. Leave any pre-existing entry in place.' "$folders"
 has "both modes: external file confirmation" 'In both modes, only the parent may write a file outside the workspace: the user must name the file, see the exact diff and confirm it before the write. Never delegate it.' "$delegation"
 organic_core=$(cat "$S/assets/core-block.md")
 [[ "$organic" == *"outside the workspace"*"confirms the exact diff"* && "$organic_core" == *"outside the workspace"*"confirms the exact diff"* ]] \
