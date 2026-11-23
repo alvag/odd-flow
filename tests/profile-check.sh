@@ -95,3 +95,4 @@ ARGS="list"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
 expect "invalid json rejected" "invalid JSON" "$out" 2 $ec
 
 echo "passed=$pass failed=$fail scratch=$T"
+[ "$fail" -eq 0 ]
