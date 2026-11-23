@@ -13,7 +13,7 @@ Claude Code plugin for Organic Driven Development (ODD): Engram memory disciplin
 | `scripts/pre-tool-use.py` | Checks writer edit surface declarations at launch in both modes; guards the parent's direct Claude Code edits in full delegation |
 | `.claude-plugin/` | Plugin manifest and a local marketplace |
 
-In full delegation, the [parent edit guard](skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) checks `Edit`, `Write` and `NotebookEdit`. It does not guard `Bash` writes. If Orca changes its preamble and no recognized `# Role:` header starts the prompt, a Claude worker is treated as the parent. Whether the hook runs for Code Mode REPL calls is unverified.
+In full delegation, the [parent edit guard](skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) checks `Edit`, `Write` and `NotebookEdit`. It does not guard `Bash` writes. If Orca changes its preamble and no recognized `# Role:` header starts the prompt, a Claude worker is treated as the parent. The guard covers `Edit`, `Write` and `NotebookEdit` with Code Mode on or off. Code Mode REPL `write()` and `edit()` reach the hook as `Write` and `Edit`.
 
 ## Install (Claude Code)
 

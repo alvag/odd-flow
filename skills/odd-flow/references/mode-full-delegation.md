@@ -22,7 +22,7 @@ In Claude Code, the guard checks the parent's `Edit`, `Write` and `NotebookEdit`
 
 Native subagent calls and marked worker sessions are exempt. The prompt hook records a worker only when the first prompt it sees for that session starts with a known Orca dispatch preamble or a recognized `# Role:` header. It stores that decision under `CLAUDE_PLUGIN_DATA`. If Orca changes its preamble and no recognized role header starts the prompt, a Claude worker is treated as the parent.
 
-The guard does not cover writes through `Bash`, including `sed -i` and shell redirection. Whether it runs for Code Mode REPL calls is unverified.
+The guard does not cover writes through `Bash`, including `sed -i` and shell redirection. The guard covers `Edit`, `Write` and `NotebookEdit` with Code Mode on or off. Code Mode REPL `write()` and `edit()` reach the hook as `Write` and `Edit`.
 
 ## Writer spec
 

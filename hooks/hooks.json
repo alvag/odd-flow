@@ -1,5 +1,5 @@
 {
-  "description": "odd-flow: inject the ODD core and active profile at session start, resume, clear and after compaction; restate full delegation on each prompt and identify workers from their first prompt; validate writer edit surfaces at launch; in full delegation, guard parent Edit, Write and NotebookEdit calls. Bash writes are not guarded; a changed Orca preamble without a recognized first-line # Role: header can leave a Claude worker treated as the parent; Code Mode REPL hook coverage is unverified.",
+  "description": "odd-flow: inject the ODD core and active profile at session start, resume, clear and after compaction; restate full delegation on each prompt and identify workers from their first prompt; validate writer edit surfaces at launch; in full delegation, guard parent Edit, Write and NotebookEdit calls. Bash writes are not guarded; a changed Orca preamble without a recognized first-line # Role: header can leave a Claude worker treated as the parent; the guard covers Edit, Write and NotebookEdit with Code Mode on or off. Code Mode REPL write() and edit() reach the hook as Write and Edit.",
   "hooks": {
     "SessionStart": [
       {
