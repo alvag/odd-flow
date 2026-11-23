@@ -14,7 +14,7 @@ Load this file when the `mode:` line of `profile.py show` says `organic`. It is 
 | Trigger | Condition | Role |
 |---|---|---|
 | Writer: parallel | Two or more independent units with disjoint edit surfaces, each several minutes of work (several files or ~100+ changed lines), launched together in one turn | `write`, one per unit |
-| Writer: context | `scripts/context.py` reports `holds` (the parent context is at 150k tokens or more); delegate the next bounded unit | `write` |
+| Writer: context | `scripts/context.py` reports `holds` (the parent context has reached the threshold below); delegate the next bounded unit | `write` |
 
 ## Measuring context
 
@@ -24,7 +24,7 @@ Run `python3 <skill-dir>/scripts/context.py` before the first write of each impl
 - Codex: input tokens of the last `token_count` event in the session rollout, with the model's context window.
 - `unknown` (Antigravity, a missing file, no session id): judge the trigger yourself and say that the number was unavailable.
 
-The trigger holds from 150k tokens whatever the model's window: a long parent context degrades its attention to the specs before it runs out.
+The trigger threshold is `min(150000, max(1, floor(0.15 × window)))` tokens, or 150k when the model window is unknown. Set `ODD_FLOW_CONTEXT_WINDOW` to a positive integer to override the runtime window. This delegates work before a long parent context degrades attention to the specs.
 
 ## Without Orca
 

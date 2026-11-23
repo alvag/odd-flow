@@ -6,6 +6,9 @@ records each reply's usage; the context is input + cache creation + cache read
 tokens of the last main-thread reply. Codex: the session rollout under $CODEX_HOME
 (default ~/.codex) records token_count events; the context is the last event's
 input tokens. Any other runtime, or a missing file, reports unknown with a reason.
+The trigger threshold is 15% of the model window, rounded down and clamped to
+1–150,000 tokens. With no known window it stays at 150,000. A positive integer in
+ODD_FLOW_CONTEXT_WINDOW overrides the runtime window.
 Always exits 0: a measurement never blocks work.
 """
 
@@ -15,7 +18,7 @@ import json
 import os
 import sys
 
-THRESHOLD = 150_000
+THRESHOLD_CAP = 150_000
 TAIL_BYTES = 4 * 1024 * 1024
 
 
@@ -79,6 +82,26 @@ def codex(thread_id):
     return tokens, window, None
 
 
+def context_window(window=None):
+    """Return the effective window, its source, and the trigger threshold."""
+    if type(window) is not int or window <= 0:
+        window = None
+    window_source = "runtime" if window is not None else None
+    override_name = "ODD_FLOW_CONTEXT_WINDOW"
+    raw = os.environ.get(override_name)
+    if raw:
+        try:
+            override = int(raw) if raw.isascii() and raw.isdecimal() else 0
+        except ValueError:
+            override = 0
+        if override > 0:
+            window, window_source = override, override_name
+        else:
+            print(f"warning: ignoring {override_name}; expected a positive integer", file=sys.stderr)
+    threshold = THRESHOLD_CAP if window is None else min(THRESHOLD_CAP, max(1, 15 * window // 100))
+    return window, window_source, threshold
+
+
 def measure():
     session = os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip()
     if session:
@@ -90,13 +113,15 @@ def measure():
         source, tokens, window, reason = None, None, None, "no token source known for antigravity"
     else:
         source, tokens, window, reason = None, None, None, "no agent session id in the environment"
+    window, window_source, threshold = context_window(window)
     return {
         "tokens": tokens,
         "window": window,
-        "threshold": THRESHOLD,
-        "holds": None if tokens is None else tokens >= THRESHOLD,
+        "threshold": threshold,
+        "holds": None if tokens is None else tokens >= threshold,
         "source": source,
         "reason": reason,
+        "window_source": window_source,
     }
 
 
@@ -107,8 +132,9 @@ def main(argv=None):
     try:
         result = measure()
     except Exception as exc:  # a measurement never blocks work
-        result = {"tokens": None, "window": None, "threshold": THRESHOLD, "holds": None,
-                  "source": None, "reason": f"measurement failed: {exc}"}
+        window, window_source, threshold = context_window()
+        result = {"tokens": None, "window": window, "threshold": threshold, "holds": None,
+                  "source": None, "reason": f"measurement failed: {exc}", "window_source": window_source}
     if args.json:
         print(json.dumps(result))
     elif result["tokens"] is None:
@@ -117,7 +143,7 @@ def main(argv=None):
         window = f" of {result['window']}" if result["window"] else ""
         verdict = "holds" if result["holds"] else "does not hold"
         print(f"context: {result['tokens']} tokens{window} ({result['source']}); "
-              f"writer context trigger: {verdict} (threshold {THRESHOLD})")
+              f"writer context trigger: {verdict} (threshold {result['threshold']})")
     return 0
 
 

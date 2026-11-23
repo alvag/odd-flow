@@ -38,7 +38,7 @@ for rule in \
   '| Writer: parallel | Two or more independent units with disjoint edit surfaces' \
   '| Writer: context | `scripts/context.py` reports `holds`' \
   'Run `python3 <skill-dir>/scripts/context.py` before the first write of each implementation unit' \
-  "The trigger holds from 150k tokens whatever the model's window" \
+  'The trigger threshold is `min(150000, max(1, floor(0.15 × window)))` tokens, or 150k when the model window is unknown. Set `ODD_FLOW_CONTEXT_WINDOW` to a positive integer to override the runtime window.' \
   "Small path: inline" \
   "Inline otherwise: the parent runs the role itself, one unit at a time." \
   "fix inline when small and understood, otherwise relaunch once with the diagnosis and a new hypothesis" \
