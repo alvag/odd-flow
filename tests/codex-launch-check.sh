@@ -69,6 +69,8 @@ out=$(resolve explore --json); ec=$?
 expect "codex role: launch is terminal" '"launch": "terminal"' "$out" 0 $ec
 expect "codex role: flags unchanged" '"flags": ["--agent", "codex", "--model", "gpt-6-luna", "--effort", "medium"]' "$out" 0 $ec
 expect "codex role: terminal command runs the launcher with model and effort" "codex-worker.sh' 'gpt-6-luna' 'medium'\"" "$out" 0 $ec
+same=$(printf '%s\n' "$out" | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(d.get("split_command") == d["terminal_command"])')
+expect "codex role: split command equals terminal command" "True" "$same" 0 $ec
 
 out=$(resolve write --json); ec=$?
 expect "codex role without model: launcher without arguments" "codex-worker.sh'\"" "$out" 0 $ec
@@ -76,6 +78,7 @@ expect "codex role without model: launcher without arguments" "codex-worker.sh'\
 out=$(resolve verify --json); ec=$?
 expect "claude role: launch is worker-start" '"launch": "worker-start"' "$out" 0 $ec
 expect "claude role: no terminal command" '"terminal_command": null' "$out" 0 $ec
+expect "claude role: split command includes model and effort" "\"split_command\": \"claude --model 'claude-opus-5-5' --effort 'high'\"" "$out" 0 $ec
 
 out=$(resolve explore); ec=$?
 expect "text mode: names the terminal path" "launch: terminal" "$out" 0 $ec

@@ -325,6 +325,13 @@ def resolve_role(doc, role):
             flags += ["--effort", entry["effort"]]
     from_profile = bool(entry)
     command = terminal_command(agent, entry.get("model"), entry.get("effort") if entry.get("model") else None)
+    split_command = command
+    if agent == "claude":
+        split_command = "claude"
+        if entry.get("model"):
+            split_command += f" --model {shell_quote(entry['model'])}"
+            if entry.get("effort"):
+                split_command += f" --effort {shell_quote(entry['effort'])}"
     parts = [agent, entry.get("model") or "agent default model"]
     if entry.get("effort"):
         parts.append(f"effort {entry['effort']}")
@@ -345,6 +352,7 @@ def resolve_role(doc, role):
         "launch": "terminal" if command else "worker-start",
         "terminal_command": command,
         "orca_terminal": orca_terminal(),
+        "split_command": split_command,
     }
 
 
