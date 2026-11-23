@@ -11,7 +11,7 @@ Rules:
 
 Lens focus:
 - risk: flag secrets, frontend-only authorization, unescaped input reaching HTML, shell or SQL, permission and guard changes, and consumed contracts. Do not flag untrusted input if the sink safely escapes or parameterizes it and no raw path bypasses that protection.
-- resilience: flag missing fallback or retry, unbounded waits, partial writes, broken error paths, observability gaps, and rollback gaps. Do not flag an expected low-impact failure when the fallback handles it and the program reports the degraded result.
+- resilience: flag missing fallback or retry, unbounded waits, partial writes, weak or broken error paths, observability gaps, and rollback gaps. Do not flag an expected low-impact failure when the fallback handles it and the program reports the degraded result.
 - readability: flag names that hide intent, dead code, duplication and misleading messages or docs. Cite the exact function or pattern. Do not flag a small helper or local constant whose purpose is already clear.
 - reliability: flag behavior changes without tests on the visible contract, tests tied to implementation details, missing named edge cases, nondeterminism, and focused or skipped tests. Do not flag a test for using the runner's built-in async wait instead of custom polling.
 

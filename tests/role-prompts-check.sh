@@ -25,8 +25,9 @@ for lens in risk resilience readability reliability; do
     grep -qE "^- $lens: .*Do not flag" "$roles/review.md" || fail "$lens counterexample"
 done
 grep -qE '^- risk: flag secrets, .*permission and guard changes.*consumed contracts' "$roles/review.md" || fail 'B2: risk scope'
-grep -qE '^- resilience: .*missing fallback or retry.*error paths.*observability.*rollback' "$roles/review.md" || fail 'B2: resilience scope'
+grep -qE '^- resilience: .*missing fallback or retry.*weak or broken error paths.*observability.*rollback' "$roles/review.md" || fail 'B2: resilience scope'
 grep -qE '^- readability: .*duplication' "$roles/review.md" || fail 'B2: readability scope'
+grep -qE '^- reliability: .*tests on the visible contract.*tests tied to implementation details.*missing named edge cases.*nondeterminism.*focused or skipped tests' "$roles/review.md" || fail 'A11: reliability scope'
 
 need "$roles/write.md" 'interaction_required'
 need "$roles/write.md" 'closed set of options'
