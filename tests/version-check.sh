@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check release versions across all plugin manifests.
+# Check release versions across all plugin manifests and the changelog.
 set -u
 root=${1-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)} || exit 1
 
@@ -37,5 +37,13 @@ if len(set(versions.values())) != 1:
     sys.exit("plugin versions differ: " + ", ".join(
         f"{manifest}={version}" for manifest, version in versions.items()
     ))
+
+heading = f"## [{next(iter(versions.values()))}]"
+try:
+    lines = (root / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+except (OSError, ValueError) as exc:
+    sys.exit(f"CHANGELOG.md: cannot read release heading ({type(exc).__name__})")
+if not any(line == heading or line.startswith(heading + " - ") for line in lines):
+    sys.exit(f"CHANGELOG.md: missing release heading {heading}")
 PY
 ) || fail "$result"

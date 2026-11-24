@@ -89,11 +89,19 @@ Not validated live or promised: `edit_file` and the other file-edit tool names, 
 
 ## Updating
 
+Claude Code enables auto-update per marketplace. It defaults to on for official marketplaces and off for third-party GitHub marketplaces like `alvag/odd-flow`. To enable it, run `/plugin`, open **Marketplaces**, select **odd-flow**, and turn on auto-update. See [Install and manage plugins](https://code.claude.com/docs/en/plugins/install.md).
+
+After the first message in an interactive session, Claude Code waits a random delay of up to ten minutes, then refreshes the marketplace and updates installed plugins on disk. Run `/reload-plugins` to apply the update now, or let the next launch load it. Setting `DISABLE_AUTOUPDATER=1`, `DISABLE_UPDATES=1`, or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` disables this pass unless `FORCE_AUTOUPDATE_PLUGINS=1` is also set. See the [Plugin loading reference](https://code.claude.com/docs/en/plugins/loading.md).
+
+Codex and Antigravity do not auto-update; use the manual commands below. Claude Code can also update manually.
+
 - Claude Code: run `claude plugin marketplace update odd-flow`, then `claude plugin update odd-flow@odd-flow` and restart Claude Code.
 - Codex: run `codex plugin marketplace upgrade odd-flow`, then `codex plugin add odd-flow@odd-flow`.
 - Antigravity: from the parent directory of the clone, run `git -C ./odd-flow pull`, then `agy plugin install ./odd-flow`.
 
-For every change published to `main` that users should receive, bump `version` to the same value in `.claude-plugin/plugin.json`, the `odd-flow` entry in `.claude-plugin/marketplace.json`, `.codex-plugin/plugin.json`, and `.antigravity-plugin/plugin.json`. Check with `bash tests/version-check.sh`.
+Claude Code detects updates by reading `version` from `plugin.json` first, then from the marketplace entry if the manifest omits it. odd-flow pins its version, so Claude Code users won't receive a push without a version bump, even with auto-update enabled.
+
+For every change published to `main` that users should receive, bump `version` to the same value in `.claude-plugin/plugin.json`, the `odd-flow` entry in `.claude-plugin/marketplace.json`, `.codex-plugin/plugin.json`, and `.antigravity-plugin/plugin.json`. Add an entry for the new version to [CHANGELOG.md](CHANGELOG.md) and check with `bash tests/version-check.sh`.
 
 ## Profiles
 
