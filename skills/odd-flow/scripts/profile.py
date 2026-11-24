@@ -116,13 +116,27 @@ def write_json_atomic(path, data):
         raise
 
 
+def remove_session_file(path):
+    """Remove a session binding file; False when it does not exist, ProfileError when it cannot be removed."""
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ProfileError(f"{path}: cannot remove session binding: {exc}") from exc
+    return True
+
+
 def read_raw():
     """Return (text, document) of the profiles file; ("", None) when it does not exist."""
     path = profiles_path()
-    if not os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+    except FileNotFoundError:
         return "", None
-    with open(path, encoding="utf-8") as handle:
-        text = handle.read()
+    except OSError as exc:
+        raise ProfileError(f"{path}: cannot read profiles: {exc}") from exc
     try:
         return text, json.loads(text)
     except json.JSONDecodeError as exc:
@@ -189,11 +203,11 @@ def read_session():
     if not value:
         return {}, var
     path = session_file(value)
-    if not os.path.exists(path):
-        return {}, var
     try:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
+    except FileNotFoundError:
+        return {}, var
     except (OSError, json.JSONDecodeError) as exc:
         raise ProfileError(f"{path}: unreadable session binding: {exc}") from exc
     if not isinstance(data, dict):
@@ -223,8 +237,7 @@ def write_session(data):
     path = session_file(value)
     data = {k: v for k, v in data.items() if k in ("profile", "mode") and v}
     if not data:
-        if os.path.exists(path):
-            os.unlink(path)
+        remove_session_file(path)
         return var
     write_json_atomic(path, {**data, "key": var, "updated_at": int(time.time())})
     return var
@@ -401,8 +414,7 @@ def cmd_clear(_args):
         print("no session id found; nothing to clear")
         return
     path = session_file(value)
-    if os.path.exists(path):
-        os.unlink(path)
+    if remove_session_file(path):
         print(f"session binding removed ({var})")
     else:
         print("no session binding for this session")
@@ -718,15 +730,27 @@ def cmd_set_mode(args):
 
 def cmd_prune(args):
     folder = os.path.join(home_dir(), "sessions")
-    if not os.path.isdir(folder):
+    try:
+        entries = os.listdir(folder)
+    except FileNotFoundError:
         print("no session bindings")
         return
+    except OSError as exc:
+        raise ProfileError(f"{folder}: cannot read session bindings: {exc}") from exc
     cutoff = time.time() - args.days * 86400
     removed = 0
-    for entry in os.listdir(folder):
+    for entry in entries:
         path = os.path.join(folder, entry)
-        if entry.endswith(".json") and os.path.isfile(path) and os.path.getmtime(path) < cutoff:
-            os.unlink(path)
+        if not entry.endswith(".json"):
+            continue
+        try:
+            if not os.path.isfile(path) or os.path.getmtime(path) >= cutoff:
+                continue
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ProfileError(f"{path}: cannot inspect session binding: {exc}") from exc
+        if remove_session_file(path):
             removed += 1
     print(f"removed {removed} session binding(s) older than {args.days} days")
 

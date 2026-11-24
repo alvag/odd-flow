@@ -94,5 +94,88 @@ printf '{bad' > "$T/profiles.json"
 ARGS="list"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
 expect "invalid json rejected" "invalid JSON" "$out" 2 $ec
 
+# --- unreadable state must fail explicitly, never degrade to none/organic ---
+if [ "$(id -u)" -ne 0 ]; then
+  U="$T/unreadable"; mkdir -p "$U/sessions"
+  cp "$EX" "$U/profiles.json"; printf '{"profile":"minimal"}' > "$U/sessions/s1.json"
+  chmod 000 "$U/profiles.json"
+  for cmd in "show" "resolve write --json" "mode --json" "list"; do
+    ARGS="$cmd"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$U"); ec=$?
+    expect "unreadable profiles.json fails: $cmd" "odd-flow: $U/profiles.json:" "$out" 2 $ec
+  done
+  chmod 600 "$U/profiles.json"
+  chmod 000 "$U"
+  for cmd in "show" "resolve write --json" "mode --json"; do
+    ARGS="$cmd"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$U"); ec=$?
+    expect "unreadable ODD_FLOW_HOME fails: $cmd" "odd-flow: $U/" "$out" 2 $ec
+  done
+  chmod 700 "$U"
+  chmod 000 "$U/sessions/s1.json"
+  for cmd in "show" "resolve write --json" "mode --json"; do
+    ARGS="$cmd"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$U"); ec=$?
+    expect "unreadable session binding fails: $cmd" "odd-flow: $U/sessions/" "$out" 2 $ec
+  done
+  chmod 600 "$U/sessions/s1.json"
+  chmod 000 "$U/sessions"
+  for cmd in "show" "resolve write --json" "mode --json"; do
+    ARGS="$cmd"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$U"); ec=$?
+    expect "unreadable sessions dir fails: $cmd" "odd-flow: $U/sessions/" "$out" 2 $ec
+  done
+  chmod 700 "$U/sessions"
+
+  # clear: unreadable and read-only sessions dir
+  for mode in 000 500; do
+    chmod 700 "$U/sessions"; printf '{"profile":"minimal"}' > "$U/sessions/s1.json"; chmod "$mode" "$U/sessions"
+    ARGS="clear"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$U"); ec=$?
+    expect "clear on sessions dir $mode fails explicitly" "odd-flow: $U/sessions/" "$out" 2 $ec
+    chmod 700 "$U/sessions"
+    [ -f "$U/sessions/s1.json" ] && { pass=$((pass+1)); echo "PASS clear $mode leaves s1.json"; } || { fail=$((fail+1)); echo "FAIL clear $mode removed s1.json"; }
+  done
+
+  # prune: unreadable home, unreadable sessions dir, read-only sessions dir with an expired binding
+  PR="$T/prune"; mkdir -p "$PR/sessions"; touch -t 202001010000 "$PR/sessions/old.json"
+  chmod 000 "$PR"
+  ARGS="prune"; out=$(run ODD_FLOW_HOME="$PR"); ec=$?
+  expect "prune on unreadable home fails explicitly" "odd-flow: $PR" "$out" 2 $ec
+  chmod 700 "$PR"
+  for mode in 000 500; do
+    chmod "$mode" "$PR/sessions"
+    ARGS="prune"; out=$(run ODD_FLOW_HOME="$PR"); ec=$?
+    expect "prune on sessions dir $mode fails explicitly" "odd-flow: $PR/sessions" "$out" 2 $ec
+    chmod 700 "$PR/sessions"
+    [ -f "$PR/sessions/old.json" ] && { pass=$((pass+1)); echo "PASS prune $mode leaves old.json"; } || { fail=$((fail+1)); echo "FAIL prune $mode removed old.json"; }
+  done
+
+  # session-start must report unresolved mode, never "profile: none", when the home is unreadable
+  SS="$(cd "$(dirname "$0")/.." && pwd)/scripts/session-start.py"
+  chmod 000 "$PR"
+  for rt in "" "--runtime codex" "--runtime antigravity"; do
+    out=$(env -i HOME="$HOME" PATH="$PATH" ODD_FLOW_HOME="$PR" python3 -I "$SS" $rt 2>&1 </dev/null); ec=$?
+    expect "session-start ($rt) unreadable home: mode unresolved" "mode unresolved (" "$out" 0 $ec
+    if [[ "$out" == *"profile: none"* ]]; then fail=$((fail+1)); echo "FAIL session-start ($rt) printed profile: none"; else pass=$((pass+1)); echo "PASS session-start ($rt) no profile: none"; fi
+  done
+  chmod 700 "$PR"
+else
+  echo "SKIP unreadable-state checks (running as root)"
+fi
+
+# not-a-directory / is-a-directory state fails explicitly (no root-sensitive permissions needed)
+NF="$T/homefile"; : > "$NF"
+ARGS="mode --json"; out=$(run ODD_FLOW_HOME="$NF"); ec=$?
+expect "ODD_FLOW_HOME as file: mode fails" "odd-flow: $NF" "$out" 2 $ec
+ARGS="prune"; out=$(run ODD_FLOW_HOME="$NF"); ec=$?
+expect "ODD_FLOW_HOME as file: prune fails" "odd-flow: $NF" "$out" 2 $ec
+PD="$T/profdir"; mkdir -p "$PD/profiles.json"
+ARGS="show"; out=$(run ODD_FLOW_HOME="$PD"); ec=$?
+expect "profiles.json as directory: show fails" "odd-flow: $PD/profiles.json" "$out" 2 $ec
+
+# preservation: genuinely missing files keep the none/organic fallback
+M="$T/missing"; mkdir -p "$M"
+ARGS="show"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$M"); ec=$?
+expect "missing files: show stays none/organic" "profile: none" "$out" 0 $ec
+expect "missing files: show reports organic" "mode: organic (default)" "$out" 0 $ec
+ARGS="mode"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$M/absent"); ec=$?
+expect "missing home dir: mode stays organic" "organic" "$out" 0 $ec
+
 echo "passed=$pass failed=$fail scratch=$T"
 [ "$fail" -eq 0 ]
