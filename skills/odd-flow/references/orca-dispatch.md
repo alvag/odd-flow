@@ -24,6 +24,20 @@
      1. `ORCA orchestration task-create --environment local --spec-file <file> --task-title "<T# role: short title>" --json`, and keep `taskId`.
      2. `ORCA terminal create --worktree current --title "<T# role: short title>" --command "$CMD" --json`, and keep the terminal `handle`. Set `CMD` in the same shell command straight from the resolve JSON (for example `CMD=$(python3 <skill-dir>/scripts/profile.py resolve <role> --json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["terminal_command"])')`); never paste its text inside the quotes, because the parent's shell would expand `$`, backticks or `"` in it.
      3. `ORCA terminal wait --terminal <handle> --for tui-idle --timeout-ms 60000 --json`.
+        With Codex CLI 0.171.0 and the odd-flow Codex plugin (verified 2026-11-23), new interactive Codex sessions, including Orca workers, showed `Hooks need review` after the first install and after a reinstall that changed a hook script. Codex runs a cached copy of the plugin: local edits do not change the installed hooks until reinstall, and trust persists until the hooks change again.
+
+        The wait exits 1 with `"satisfied": false` and `"blockedReason": "agent-hooks-review-prompt"`. This blocked wait is not a step failure under the rule below. Keep the terminal open and do not run step 4 yet. Read the menu with `ORCA terminal read --terminal <handle> --screen` and relay it and its options to the user unchanged. Only the user decides what to select, unless they already chose for this install. Expect this menu:
+
+        ```text
+        Hooks need review
+        2 hooks are new or changed
+        Hooks can run outside the sandbox after you trust them.
+        1. Review hooks
+        2. Trust all and continue
+        3. Continue without trusting (hooks won't run)
+        ```
+
+        If the user declines or does not answer, close the pane and report the `taskId` as described below. With the user's choice, run `ORCA terminal send --terminal <handle> --text <n>` and confirm with `ORCA terminal send --terminal <handle> --text '' --enter`. This input answers Codex's startup menu, not an agent prompt. Option 1 opens a review screen these steps do not cover; with option 3, the odd-flow hooks do not run in that worker. Re-run the wait and continue to step 4 only once it succeeds.
      4. `ORCA orchestration worker-start --environment local --task <taskId> --terminal <handle> --json`, without `flags`.
      If a step fails, close the pane or terminal you opened (`ORCA terminal close --terminal <handle>`) and report the error with the `taskId` if one exists. The task stays unassigned for a retry with `worker-start --task`; never fall back to `worker-start --agent codex`.
 4. End the turn. Orca wakes you; never poll.
