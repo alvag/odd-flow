@@ -47,6 +47,8 @@ metadata:
 
 Close every request with: verified outcome; every failed, skipped or pending check; next step; `Risk: item N (reason)` or `Risk: none` for code changes; and the profile and roles used when workers ran.
 
+If `Risk:` names a high-risk item, add exactly one line: `Review: done | declined | skipped (<reason>)` (see `references/review.md` for meanings). With `Risk: none`, omit it.
+
 ## References
 
 - `references/odd-protocol.md` — steps, task size, high-risk items, test-first policy.

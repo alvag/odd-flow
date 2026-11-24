@@ -6,7 +6,7 @@ Who writes, and the writer triggers, are the active mode file's rule (`mode-orga
 |---|---|---|
 | Mapping | Understanding needs more than the parent's read budget (3 calls, ~10k tokens) or more than ~5 sequential lookups | `explore` |
 | Verification | The change's Risk line names a high-risk item | `verify` |
-| Review | The user asks for review, or verification passed on a change that names a high-risk item and the user accepted the review forecast | `review`, `refute` |
+| Review | The user asks for review, or verification passed on a change that names a high-risk item | `review`, `refute` |
 | Named agent | The user explicitly asks for another agent ("have Codex check this") | role that matches the request |
 
 A trigger names a role, not a runtime. Outside an Orca terminal the role runs as `orca-dispatch.md` (Without Orca) and the active mode file say; a trigger never stops the work because Orca is missing.

@@ -4,10 +4,8 @@ Verification asks "does the change do what was requested". Review is an adversar
 
 ## When
 
-- The user asks for a review, or
-- the change names a high-risk item and verification passed.
-
-Before launching, give the user a one-line forecast (lenses, roles, at most one correction) and wait for a yes.
+- If the user asks for review, give the one-line forecast (lenses, roles, at most one correction) and wait for a yes.
+- Otherwise, if the change names a high-risk item and verification passed, give the same forecast as a notice and launch without waiting for a yes.
 
 ## Candidate
 
@@ -35,4 +33,8 @@ Launch one `review` worker per lens, together, with `assets/roles/review.md` and
 
 ## Close
 
-Report per lens: findings kept, refuted, follow-ups, the correction commit, and the validation result.
+If `Risk:` names a high-risk item, add exactly one line: `Review: done | declined | skipped (<reason>)`. With `Risk: none`, omit it.
+
+- `done`: Review ran. Report per lens: findings kept, refuted, follow-ups, the correction commit, and the validation result.
+- `declined`: The user said no to the forecast and review did not run.
+- `skipped (<reason>)`: Review did not run for another reason, such as failed verification, a user stop, or a worker launch failure.
