@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "odd-flow",
-  "description": "Local marketplace for the odd-flow plugin.",
+  "description": "Marketplace for the odd-flow plugin.",
   "owner": {
     "name": "max"
   },
