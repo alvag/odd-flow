@@ -23,7 +23,7 @@ import time
 
 BASE_ROLES = ("explore", "write", "verify", "review", "refute")
 LENSES = ("risk", "resilience", "readability", "reliability")
-ROLES = BASE_ROLES + tuple(f"review-{lens}" for lens in LENSES)
+ROLES = BASE_ROLES + tuple(f"review-{lens}" for lens in LENSES) + ("review-second",)
 ENTRY_FIELDS = ("agent", "model", "effort")
 MODES = ("organic", "full-delegation")
 DEFAULT_MODE = "organic"

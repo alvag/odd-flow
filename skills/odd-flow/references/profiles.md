@@ -20,7 +20,7 @@ Template: `assets/profiles.example.json`. The user may edit it by hand or throug
 }
 ```
 
-- Roles: `explore`, `write`, `verify`, `review`, `refute`. `review-risk`, `review-resilience`, `review-readability` and `review-reliability` override `review` for one lens.
+- Roles: `explore`, `write`, `verify`, `review`, `refute`. `review-risk`, `review-resilience`, `review-readability` and `review-reliability` override `review` for one lens. The optional `review-second` role selects the second reviewer for dual review and falls back to `review` if omitted.
 - Every field is optional. `effort` requires `model`.
 - A role missing from the profile runs with the current session's agent and that agent's own configured model (no `--model`, no `--effort`).
 - No file at all behaves the same way for every role.
@@ -95,7 +95,7 @@ In Claude Code the plugin skill is invoked as `/odd-flow:odd-flow <command>`. In
 ## Creating a profile
 
 1. Run `profile.py discover --json`. Use only the agents and models it reports. A model from a source with `verified: false` is a suggestion; say so. An agent with no models runs with its own configured model (no `model`, no `effort`).
-2. Ask role by role, one question per role, in this order: `explore`, `write`, `verify`, `review`, `refute`. Each question lists the discovered agent and model options with their efforts and marks one suggested value as recommended: `explore` on a fast, low-cost model with low or medium effort; `write` on a capable mid-cost model with medium effort; `verify`, `review` and `refute` on the strongest model with high effort. Prefer an agent for `verify` that differs from `write` when more than one is available, so the verifier is independent. Offer the four `review-<lens>` overrides only if the user asks.
+2. Ask role by role, one question per role, in this order: `explore`, `write`, `verify`, `review`, `refute`. Each question lists the discovered agent and model options with their efforts and marks one suggested value as recommended: `explore` on a fast, low-cost model with low or medium effort; `write` on a capable mid-cost model with medium effort; `verify`, `review` and `refute` on the strongest model with high effort. Prefer an agent for `verify` that differs from `write` when more than one is available, so the verifier is independent. Offer the four `review-<lens>` overrides and `review-second` only if the user asks for them. For `review-second`, recommend an agent or model different from `review` so the two reviewers differ.
 3. Never write a model the discovery did not list without saying it is unverified. Before saving, show the accepted roles in one table.
 4. Write the accepted roles with the file tool to a scratch file outside the worktree, as a JSON object of role -> `{ "agent", "model", "effort" }`.
 5. Run `profile.py save B --roles-file <file>` (dry run) and show the diff. If the profile exists, ask before adding `--replace`.

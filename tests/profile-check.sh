@@ -39,6 +39,37 @@ expect "lens override" '"--agent", "claude", "--model", "claude-sonnet-5-5"' "$o
 ARGS="resolve review-risk --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_PROFILE=claude-codex); ec=$?
 expect "lens falls back to review" '"entry_role": "review"' "$out" 0 $ec
 
+ARGS="resolve review-second --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_PROFILE=claude-codex); ec=$?
+expect "second reviewer falls back to review" '"entry_role": "review", "agent": "codex", "model": "gpt-6.2-astra", "effort": "high"' "$out" 0 $ec
+
+ARGS="resolve review-unknown --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_PROFILE=claude-codex); ec=$?
+expect "unknown review role does not fall back" "unknown role 'review-unknown'" "$out" 2 $ec
+
+printf '%s\n' '{"default":"dual","profiles":{"dual":{"review":{"agent":"codex","model":"gpt-6.2-astra","effort":"high"},"review-second":{"agent":"claude","model":"claude-sonnet-5-5","effort":"medium"}}}}' > "$T/profiles.json"
+ARGS="resolve review-second --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
+expect "second reviewer uses its explicit entry" '"entry_role": "review-second", "agent": "claude", "model": "claude-sonnet-5-5", "effort": "medium"' "$out" 0 $ec
+cp "$EX" "$T/profiles.json"
+
+printf '%s\n' '{"review":{"agent":"codex","model":"gpt-6.2-astra","effort":"high"},"review-second":{"agent":"claude","model":"claude-sonnet-5-5","effort":"medium"}}' > "$T/roles.json"
+ARGS="save DUALS --roles-file $T/roles.json --yes"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
+expect "save accepts review-second" "profile 'DUALS' saved to" "$out" 0 $ec
+ARGS="resolve review-second --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_PROFILE=DUALS); ec=$?
+expect "saved review-second resolves its own entry" '"entry_role": "review-second", "agent": "claude", "model": "claude-sonnet-5-5", "effort": "medium"' "$out" 0 $ec
+ARGS="show"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_PROFILE=DUALS); ec=$?
+expect "show lists base review role" "  review -> codex / gpt-6.2-astra / effort high" "$out" 0 $ec
+if [[ "$out" == *review-second* ]]; then
+  fail=$((fail+1)); echo "FAIL show does not list review-second"; echo "$out"
+else
+  pass=$((pass+1)); echo "PASS show does not list review-second"
+fi
+printf '%s\n' '{"review-second":{"effort":"low"}}' > "$T/bad.json"
+before=$(shasum -a 256 < "$T/profiles.json")
+ARGS="save BADS --roles-file $T/bad.json --yes"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
+expect "review-second effort requires model" "role 'review-second': 'effort' requires 'model'" "$out" 2 $ec
+after=$(shasum -a 256 < "$T/profiles.json")
+expect "rejected save leaves file unchanged" "$before" "$after" 0 0
+cp "$EX" "$T/profiles.json"
+
 ARGS="use B"; out=$(run ORCA_PANE_KEY=tab:pane); ec=$?
 expect "use unknown profile fails" "profile 'B' is not defined" "$out" 2 $ec
 
