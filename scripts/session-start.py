@@ -5,8 +5,9 @@ The core block follows the session's orchestrator mode: `core-block.md` for orga
 `core-block-full-delegation.md` for full delegation. A mode that cannot be resolved
 loads the organic block and says so, so the session still starts with ODD rules.
 
-Reads the hook payload from stdin, prints a SessionStart `additionalContext` JSON object,
-and always exits 0 so a failure here never blocks the session.
+Reads the hook payload from stdin, prints a SessionStart `additionalContext` JSON object
+(Antigravity: an `injectSteps` system message), and always exits 0 so a failure here never
+blocks the session.
 """
 
 import json
@@ -15,8 +16,12 @@ import subprocess
 import sys
 
 CODEX = sys.argv[1:] == ["--runtime", "codex"]
+ANTIGRAVITY = sys.argv[1:] == ["--runtime", "antigravity"]
 ROOT_VAR = "PLUGIN_ROOT" if CODEX else "CLAUDE_PLUGIN_ROOT"
-PLUGIN_ROOT = os.environ.get(ROOT_VAR) or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Antigravity is rooted relative to this script, so inherited root variables cannot redirect it.
+PLUGIN_ROOT = (None if ANTIGRAVITY else os.environ.get(ROOT_VAR)) or os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
 SKILL_DIR = os.path.join(PLUGIN_ROOT, "skills", "odd-flow")
 CORE_BLOCKS = {
     "organic": os.path.join(SKILL_DIR, "assets", "core-block.md"),
@@ -43,7 +48,13 @@ def core_block(mode):
 def profile_env(session_id):
     env = dict(os.environ)
     # Hook processes may not inherit the agent's session variable; the payload carries the same id.
-    if CODEX:
+    if ANTIGRAVITY:
+        # profile.py checks the Claude and Codex keys first, even in an inherited environment.
+        for foreign in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID"):
+            env.pop(foreign, None)
+        if isinstance(session_id, str) and session_id:
+            env["ANTIGRAVITY_CONVERSATION_ID"] = session_id
+    elif CODEX:
         # profile.py checks the Claude key first, even in an inherited environment.
         env.pop("CLAUDE_CODE_SESSION_ID", None)
         if isinstance(session_id, str) and session_id:
@@ -86,6 +97,10 @@ def profile_state(env):
 
 
 def emit_context(context):
+    if ANTIGRAVITY:
+        steps = [{"systemMessage": {"systemMessage": context}}] if context else []
+        print(json.dumps({"injectSteps": steps}))
+        return
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
@@ -97,7 +112,7 @@ def emit_context(context):
 def main():
     payload = read_payload()
     source = payload.get("source") or "unknown"
-    env = profile_env(payload.get("session_id"))
+    env = profile_env(payload.get("conversationId" if ANTIGRAVITY else "session_id"))
     mode, note = session_mode(env)
     parts = [core_block(mode)]
     if note:
@@ -115,6 +130,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:  # never block the session on a hook failure
-        if CODEX:
+        if CODEX or ANTIGRAVITY:
             emit_context("")
         sys.exit(0)

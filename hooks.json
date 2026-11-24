@@ -1,0 +1,10 @@
+{
+  "odd-flow": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "python3 -I ./scripts/session-start.py --runtime antigravity"
+      }
+    ]
+  }
+}
