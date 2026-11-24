@@ -48,13 +48,43 @@ On 2026-11-23, running `codex plugin add odd-flow@odd-flow` at the same version 
 
 Codex uses its own `PreToolUse` manifest. In full delegation, it checks every target of a coordinator's direct local `apply_patch` call. In either mode, it checks the allowed edit surfaces of identifiable writer launches through supported native `spawn_agent` and local Orca forms. It does not enforce writer surfaces after launch or inspect shell write targets. See the [parent edit guard](skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) and [writer surface checks](skills/odd-flow/references/delegation.md#allowed-edit-surfaces).
 
+## Install (Antigravity)
+
+The package is a native Antigravity CLI plugin for `agy` 1.5.16 (https://antigravity.google/docs/build-plugins). `.antigravity-plugin/plugin.json` selects the shared `skills/odd-flow` skill, and the root `hooks.json` registers one flat `SessionStart` command handler: `python3 -I ./scripts/session-start.py --runtime antigravity`. The hook reads the payload's `conversationId`, uses it as `ANTIGRAVITY_CONVERSATION_ID` for profile resolution (an inherited Claude or Codex id never overrides it), and returns the core block and active profile as an `injectSteps` system message.
+
+Validate a checkout without installing it, with a scratch home:
+
+```sh
+scratch=$(mktemp -d)
+mkdir -p "$scratch/home" "$scratch/config" "$scratch/data"
+HOME="$scratch/home" XDG_CONFIG_HOME="$scratch/config" XDG_DATA_HOME="$scratch/data" agy plugin validate --json "$PWD"
+```
+
+The expected result is one skill, one hook, no errors, and one warning: `hooks/hooks.json` is never loaded because Antigravity reads plugin hooks only from the root `hooks.json`. That file belongs to Claude Code. A missing logo is informational.
+
+To install the plugin later, after you decide to, run this from the repository root with your own Antigravity login and settings:
+
+```sh
+agy plugin install "$PWD"
+```
+
+This has not been run for this package. Reinstall after changing the checkout, and review the plugin's hook in Antigravity before relying on it.
+
+Three kinds of evidence exist, and only the first two are in this package:
+
+- Validation: `agy plugin validate`, above.
+- Hook fixtures: `tests/antigravity-plugin-check.sh`, which runs the hook script directly and needs no `agy` binary.
+- Installed-session smoke test: not run, so installed-session behavior is unverified. Installing the plugin, trusting it and starting an interactive `agy` session are left to a later, separately authorized step.
+
+Not validated or promised: `PreInvocation` and `PreToolUse` hooks, mode reinjection mid-session, the profile identity of an interactive `agy` session, and Orca worker enforcement for Antigravity.
+
 ## Profiles
 
 File at `~/.config/odd-flow/profiles.json`, edited by hand or through the profile commands (override with `ODD_FLOW_HOME`). See `skills/odd-flow/references/profiles.md` and `skills/odd-flow/assets/profiles.example.json`.
 
 ## Other runtimes
 
-Antigravity packaging is pending. For an agent without the plugin, `skills/odd-flow/scripts/init.py` can write the core block into the global instructions file (see `skills/odd-flow/references/init.md`). To validate a writer spec without a supported launch hook, run `python3 -I skills/odd-flow/scripts/surface.py check <spec-file>`.
+For an agent without the plugin, `skills/odd-flow/scripts/init.py` can write the core block into the global instructions file (see `skills/odd-flow/references/init.md`). To validate a writer spec without a supported launch hook, run `python3 -I skills/odd-flow/scripts/surface.py check <spec-file>`.
 
 ## Checks
 
