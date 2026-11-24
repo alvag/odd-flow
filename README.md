@@ -85,7 +85,9 @@ Verified on 2026-11-24 at `bc59916`: `agy plugin validate --json` on a fresh HTT
 
 Verified live on 2026-11-24 in the installed plugin with `agy` 1.5.16 inside Orca (`main` `4c3d8a2`): `PreInvocation` fired, and `PreToolUse` denied `write_file` (argument `Path`; the file was not created), `invoke_subagent` (argument `Prompt`; missing `## Allowed edit surfaces`) and `run_command` (argument `CommandLine`; unparseable Orca launch). `invocationNum` is 0-indexed: `0` on the first model call of a turn and `1` on the second, after tool calls.
 
-Not validated live or promised: `edit_file` and the other file-edit tool names, the external-path `force_ask` decision, the marked worker exemption in live `agy`, mode reinjection mid-session, the profile identity of an interactive `agy` session, and Orca worker enforcement for Antigravity.
+Also verified live on 2026-11-24 (installed odd-flow 0.2.0 matching `main` `edcf3e0`, `agy` 1.5.16 in Orca, default `claude-gpt` full delegation): the guard denied the coordinator's `edit_file` and left the workspace file unchanged. An external, non-temp `write_file` returned `force_ask` and showed a Create file confirmation; declining left the file absent. In a new session, `edit_file` succeeded after a first prompt starting with `# Role: write` in a plain Orca terminal.
+
+Not validated live or promised: `write_to_file`, `replace_file_content` and `multi_replace_file_content`, mode reinjection mid-session, the profile identity of an interactive `agy` session, and Orca worker enforcement for Antigravity, including the Orca dispatch preamble marker.
 
 ## Updating
 
