@@ -28,6 +28,12 @@ Native subagent calls and marked worker sessions are exempt. The prompt hook rec
 
 The guard does not cover writes through `Bash`, including `sed -i` and shell redirection. The guard covers `Edit`, `Write` and `NotebookEdit` with Code Mode on or off. Code Mode REPL `write()` and `edit()` reach the hook as `Write` and `Edit`.
 
+In Codex 0.171.0, the guard checks the coordinator's direct local `apply_patch` calls in full delegation. It uses the same path rules, checking every hunk, both endpoints of a move, and both a final symlink and its referent. One prohibited or unclassifiable target denies the entire invocation. A direct patch outside the workspace and system temp is denied with the named-file and exact-diff requirement: Codex `PreToolUse` does not support `ask`. If the hook cannot resolve the mode, it denies the parent's direct patch. An invalid `profiles.json`, for example, can trigger this denial even in a session intended to run in organic mode.
+
+Codex uses the prompt marker under `PLUGIN_DATA` for Orca workers. The tagged runtime also supplies `agent_id` for native `ThreadSpawn` calls; those children are exempt when the hook delivers that field. If the first prompt starts with neither a known Orca dispatch preamble nor a recognized `# Role:` header, an Orca Codex child without a runtime-supplied native `agent_id` is treated as the parent. The guard does not infer worker identity from model, agent type or shell environment.
+
+The Codex guard does not cover shell writes, including patches executed through the shell, and does not claim coverage of remote execution or specialized paths that do not dispatch these hooks. The manifest's `Bash` and `spawn_agent` matchers are for [writer launch admission](delegation.md#allowed-edit-surfaces), not write enforcement.
+
 ## Writer spec
 
 - Pass the user's request verbatim, or `Spec: odd/tasks/<feature>.md, T<n>, S<a>-S<b>`, as `delegation.md` (What the parent passes) says.

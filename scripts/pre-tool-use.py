@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Code PreToolUse hook: check writer launches and full-delegation parent edits."""
+"""Check writer launches and full-delegation parent edits in Claude Code and Codex."""
 
 import glob
 import importlib.util
@@ -9,7 +9,9 @@ from pathlib import Path
 import re
 import sys
 
-PLUGIN_ROOT = Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).resolve().parents[1])
+CODEX = sys.argv[1:] == ["--runtime", "codex"]
+ROOT_VAR = "PLUGIN_ROOT" if CODEX else "CLAUDE_PLUGIN_ROOT"
+PLUGIN_ROOT = Path(os.environ.get(ROOT_VAR) or Path(__file__).resolve().parents[1])
 SURFACE_SCRIPT = PLUGIN_ROOT / "skills" / "odd-flow" / "scripts" / "surface.py"
 EDIT_PATH_FIELDS = {"Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path"}
 LAUNCHES = {"task-create", "worker-start"}
@@ -34,6 +36,9 @@ WORD_PART = re.compile(r"""'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[^'"\\]+""")
 DOUBLE_QUOTE_PART = re.compile(r"\\[$`\"\\\n]|(?P<expansion>[$`])")
 QUOTED_FRAGMENT = re.compile(r'\\[\s\S]|\$\(|"|[^"\\$]+|\$')
 PARSE_HINT = 'Write the launch as a plain command or in an unquoted $() substitution.'
+PATCH_HEADER = re.compile(r"\*\*\* (Add|Delete|Update) File: (.+)", re.DOTALL)
+# Match Rust str::trim, not Python's extra ASCII record separators.
+PATCH_WHITESPACE = " \t\n\r\v\f\x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
 
 
 class LaunchError(ValueError):
@@ -194,7 +199,8 @@ def workspace_root(cwd):
     )
     if git.returncode == 0:
         return Path(git.stdout.rstrip("\n")).resolve()
-    return Path(os.environ.get("CLAUDE_PROJECT_DIR") or cwd).resolve()
+    fallback = None if CODEX else os.environ.get("CLAUDE_PROJECT_DIR")
+    return Path(fallback or cwd).resolve()
 
 
 def workspace_spelling(target, root):
@@ -221,6 +227,23 @@ def path_decision(target, root, temp_roots):
     return "ask"
 
 
+def system_temp_roots():
+    import tempfile
+
+    return [
+        Path(path).resolve()
+        for path in (tempfile.gettempdir(), os.environ.get("TMPDIR"), "/tmp", "/private/tmp")
+        if path
+    ]
+
+
+def external_edit_reason(target):
+    return (
+        f"Parent edit to {target!r} outside the workspace requires confirmation. "
+        "The parent writes it only after the user named the file and confirmed the exact diff."
+    )
+
+
 def parent_edit_decision(payload, field):
     if payload.get("agent_id"):
         return None, None
@@ -234,8 +257,6 @@ def parent_edit_decision(payload, field):
     target = None
     delegate = "Full delegation sends workspace changes to a bounded writer."
     try:
-        import tempfile
-
         tool_input = payload.get("tool_input")
         target = tool_input.get(field) if isinstance(tool_input, dict) else None
         if not isinstance(target, str) or not target:
@@ -243,29 +264,131 @@ def parent_edit_decision(payload, field):
         cwd = Path(payload.get("cwd") or os.getcwd())
         resolved = (cwd / target).resolve()
         root = workspace_root(cwd)
-        temp_roots = [
-            Path(path).resolve()
-            for path in (tempfile.gettempdir(), os.environ.get("TMPDIR"), "/tmp", "/private/tmp")
-            if path
-        ]
-        decision = path_decision(workspace_spelling(resolved, root), root, temp_roots)
+        decision = path_decision(workspace_spelling(resolved, root), root, system_temp_roots())
     except Exception:
         return "deny", f"Could not verify the edit target {target!r}. {delegate}"
     if decision == "deny":
         return decision, f"Parent edit denied for {target!r}. {delegate}"
     if decision == "ask":
-        return decision, (
-            f"Parent edit to {target!r} outside the workspace requires confirmation. "
-            "The parent writes it only after the user named the file and confirmed the exact diff."
-        )
+        return decision, external_edit_reason(target)
     return None, None
+
+
+def patch_targets(command):
+    """Read the local Codex patch grammar for target classification, not application."""
+    if not isinstance(command, str) or "\0" in command:
+        raise ValueError("invalid patch command")
+    lines = command.strip(PATCH_WHITESPACE).split("\n")
+    if lines[0].removesuffix("\r") in {"<<EOF", "<<'EOF'", '<<"EOF"'} and lines[-1].endswith("EOF"):
+        lines = lines[1:-1]
+    if (
+        len(lines) < 3
+        or lines[0].strip(PATCH_WHITESPACE) != "*** Begin Patch"
+        or lines[-1].strip(PATCH_WHITESPACE) != "*** End Patch"
+    ):
+        raise ValueError("missing patch boundaries or hunks")
+
+    targets = []
+    hunk = None
+    moved = False
+    chunk = None
+    for raw in lines[1:-1]:
+        line = raw.removesuffix("\r")
+        tail = line.rstrip(PATCH_WHITESPACE)
+        header = PATCH_HEADER.fullmatch(tail if hunk == "Update" else tail.lstrip(PATCH_WHITESPACE))
+        if header:
+            if hunk == "Update" and (chunk == "empty" or (chunk is None and not moved)):
+                raise ValueError("empty update")
+            hunk, target = header.groups()
+            targets.append(target)
+            moved, chunk = False, None
+        elif hunk == "Add" and line.startswith("+"):
+            continue
+        elif hunk == "Update":
+            if chunk is None and not moved and tail.startswith("*** Move to: "):
+                targets.append(tail[len("*** Move to: "):])
+                moved = True
+            elif (tail == "@@" or tail.startswith("@@ ")) and chunk != "empty":
+                chunk = "empty"
+            elif tail == "*** End of File" and chunk == "body":
+                chunk = "eof"
+            elif chunk == "eof" and not tail:
+                continue
+            elif chunk != "eof" and (not line or line.startswith((" ", "+", "-"))):
+                chunk = "body"
+            else:
+                raise ValueError("unrecognized update line")
+        else:
+            # An environment selector is not a host path and cannot be classified here.
+            raise ValueError("unrecognized patch header or non-local environment")
+    if hunk == "Update" and (chunk == "empty" or (chunk is None and not moved)):
+        raise ValueError("empty update")
+    return targets
+
+
+def codex_patch_denial(payload):
+    delegate = "Full delegation sends workspace changes to a bounded writer."
+    try:
+        # The tagged runtime sets agent_id for ThreadSpawn children only.
+        agent_id = payload.get("agent_id")
+        if isinstance(agent_id, str) and agent_id:
+            return None
+        session_id = payload.get("session_id")
+        prompt_hook = load_prompt_hook()
+        if prompt_hook.is_worker_session(session_id):
+            return None
+        mode = prompt_hook.mode_state(session_id).get("mode")
+        if mode == "organic":
+            return None
+        if mode != "full-delegation":
+            raise ValueError("unresolved mode")
+
+        targets = patch_targets(payload["tool_input"]["command"])
+        cwd = Path(payload["cwd"])
+        if not cwd.is_absolute() or not cwd.is_dir():
+            raise ValueError("missing local working directory")
+        root = workspace_root(cwd)
+        temp_roots = system_temp_roots()
+        for target in targets:
+            # Codex PathUri::join removes dot segments before filesystem lookup.
+            absolute = Path(os.path.normpath(cwd / target))
+            paths = [absolute.resolve()]
+            if absolute.is_symlink():
+                # Deletes and moves can affect the link entry, not just its referent.
+                paths.append(absolute.parent.resolve() / absolute.name)
+            for path in paths:
+                decision = path_decision(workspace_spelling(path, root), root, temp_roots)
+                if decision == "deny":
+                    return f"Parent edit denied for {target!r}. {delegate}"
+                if decision == "ask":
+                    return external_edit_reason(target)
+    except Exception:
+        return f"Could not verify the direct apply_patch targets or delegation mode. {delegate}"
+    return None
+
+
+def codex_spawn_prompt(tool_input):
+    """Recover the role brief from native plaintext or v1 structured text."""
+    if not isinstance(tool_input, dict):
+        return None
+    message = tool_input.get("message")
+    if isinstance(message, str):
+        return message
+    items = tool_input.get("items")
+    if isinstance(items, list):
+        return "\n".join(
+            item["text"] for item in items
+            if isinstance(item, dict) and item.get("type") == "text"
+            and isinstance(item.get("text"), str)
+        )
+    return None
 
 
 def denial_reason(payload):
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
-    if tool in {"Agent", "Task"}:
-        prompt = tool_input.get("prompt")
+    if (CODEX and tool == "spawn_agent") or (not CODEX and tool in {"Agent", "Task"}):
+        prompt = codex_spawn_prompt(tool_input) if CODEX else tool_input.get("prompt")
         # Mirror surface.is_writer without loading the parser on the fast path.
         if not isinstance(prompt, str) or next(
             (line.strip().casefold() for line in prompt.lstrip("\ufeff").splitlines() if line.strip()), ""
@@ -326,7 +449,9 @@ def denial_reason(payload):
 def main():
     payload = json.load(sys.stdin)
     field = EDIT_PATH_FIELDS.get(payload.get("tool_name"))
-    if field:
+    if CODEX and payload.get("tool_name") == "apply_patch":
+        decision, reason = "deny", codex_patch_denial(payload)
+    elif not CODEX and field:
         decision, reason = parent_edit_decision(payload, field)
     else:
         decision, reason = "deny", denial_reason(payload)

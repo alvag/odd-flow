@@ -69,12 +69,15 @@ class CodexPluginCheck(unittest.TestCase):
 
     def test_only_codex_hook_events_and_commands(self):
         config = json.loads((root / "hooks/codex-hooks.json").read_text())["hooks"]
-        self.assertEqual(set(config), {"SessionStart", "UserPromptSubmit"})
+        self.assertEqual(set(config), {"SessionStart", "UserPromptSubmit", "PreToolUse"})
         start, = config["SessionStart"]
         self.assertEqual(set(start["matcher"].split("|")), {"startup", "resume", "clear", "compact"})
         submit, = config["UserPromptSubmit"]
         self.assertNotIn("matcher", submit)
-        for entry, script in ((start, "session-start.py"), (submit, "prompt-submit.py")):
+        pre, = config["PreToolUse"]
+        self.assertEqual(pre["matcher"], "^(apply_patch|spawn_agent|Bash)$")
+        for entry, script in ((start, "session-start.py"), (submit, "prompt-submit.py"),
+                              (pre, "pre-tool-use.py")):
             hook, = entry["hooks"]
             self.assertEqual(hook["type"], "command")
             self.assertEqual(
