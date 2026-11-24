@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
 import sys
 import unittest
@@ -153,6 +154,56 @@ class PreToolUseCheck(unittest.TestCase):
         self.check("write_file", {}, "deny")
         external = "/odd-flow-fixture-external/denied.txt"
         self.check("write_file", {"Path": external}, "force_ask", "named the file", "exact diff")
+
+    def test_git_workspace_path_without_cwd_uses_git_top_level(self):
+        entry, = hooks["PreToolUse"]
+        hook, = entry["hooks"]
+        for path, decision in (("../README.md", "deny"), ("../odd/tasks/x.md", "allow")):
+            with self.subTest(path=path):
+                output = run_hook(hook["command"], {
+                    "toolCall": {"name": "write_file", "args": {"Path": path}},
+                    "conversationId": "parent", "workspacePaths": [str(workspace / "src")],
+                    "hookEventName": "PreToolUse",
+                })
+                self.assertEqual(output["decision"], decision)
+
+    def test_non_git_workspace_root_is_separate_from_relative_edit_base(self):
+        project = scratch / "non-git"
+        nested = project / "src"
+        nested.mkdir(parents=True)
+        for path, decision in (("../README.md", "deny"),
+                               ("../odd/tasks/new.md", "allow"),
+                               ("odd/tasks/new.md", "deny")):
+            with self.subTest(path=path):
+                self.check("write_file", {"Path": path}, decision, cwd=str(nested),
+                           workspacePaths=[str(workspace), str(project)])
+        self.check("write_file", {"Path": "../README.md"}, "deny",
+                   cwd=str(workspace / "src"), workspacePaths=[str(project)])
+        self.check("write_file", {"Path": "README.md"}, "deny",
+                   cwd=None, workspacePaths=[str(project)])
+        elsewhere = scratch / "elsewhere"
+        elsewhere.mkdir()
+        self.check("write_file", {"Path": str(project / "README.md")}, "deny",
+                   cwd=str(elsewhere), workspacePaths=[str(project), str(workspace)])
+
+    def test_edit_denied_when_worker_classification_fails(self):
+        isolated = scratch / "broken-hooks"
+        isolated.mkdir()
+        hook_copy = isolated / "pre-tool-use.py"
+        shutil.copyfile(root / "scripts/pre-tool-use.py", hook_copy)
+        command = shlex.join([sys.executable, "-I", str(hook_copy), "--runtime", "antigravity"])
+        payload = {"conversationId": "parent", "cwd": str(workspace),
+                   "toolCall": {"name": "write_file", "args": {"Path": "README.md"}}}
+        for failure in ("missing helper", "worker marker exception"):
+            with self.subTest(failure=failure):
+                if failure == "worker marker exception":
+                    (isolated / "prompt-submit.py").write_text(
+                        "def is_worker_session(session):\n    raise OSError('broken marker')\n")
+                output = run_hook(command, payload)
+                self.assertEqual(output["decision"], "deny")
+                self.assertTrue(output["reason"].startswith("odd-flow: "))
+        unrelated = payload | {"toolCall": {"name": "run_command", "args": {"CommandLine": "printf x"}}}
+        self.assertEqual(run_hook(command, unrelated), {"decision": "allow"})
 
     def test_workspace_symlink_to_external_and_temp_denied(self):
         (workspace / "src/link_tmp.txt").symlink_to(temp / "x.txt")

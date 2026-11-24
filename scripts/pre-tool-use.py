@@ -192,7 +192,7 @@ def load_prompt_hook():
     return module
 
 
-def workspace_root(cwd):
+def workspace_root(cwd, workspace_paths=()):
     import subprocess
 
     git = subprocess.run(
@@ -201,6 +201,10 @@ def workspace_root(cwd):
     )
     if git.returncode == 0:
         return Path(git.stdout.rstrip("\n")).resolve()
+    if workspace_paths:
+        resolved_cwd = cwd.resolve()
+        roots = [Path(path).resolve() for path in workspace_paths]
+        return next((root for root in roots if workspace_spelling(resolved_cwd, root).is_relative_to(root)), roots[0])
     fallback = None if CODEX or ANTIGRAVITY else os.environ.get("CLAUDE_PROJECT_DIR")
     return Path(fallback or cwd).resolve()
 
@@ -456,12 +460,12 @@ ANTIGRAVITY_EDIT_TOOLS = {
 def antigravity_edit_decision(payload, args):
     """Classify a parent edit; returns (decision, reason) with decision None to allow."""
     conversation = payload.get("conversationId")
-    prompt_hook = load_prompt_hook()
-    if prompt_hook.is_worker_session(conversation):
-        return None, None
     delegate = "Full delegation sends workspace changes to a bounded writer."
     target = None
     try:
+        prompt_hook = load_prompt_hook()
+        if prompt_hook.is_worker_session(conversation):
+            return None, None
         mode = prompt_hook.mode_state(conversation).get("mode")
         if mode == "organic":
             return None, None
@@ -471,13 +475,15 @@ def antigravity_edit_decision(payload, args):
         if target is None:
             return "deny", f"Missing or invalid edit target. {delegate}"
         workspaces = payload.get("workspacePaths")
-        cwd = Path(payload.get("cwd") or (workspaces[0] if isinstance(workspaces, list) and workspaces else os.getcwd()))
+        workspaces = workspaces if isinstance(workspaces, list) else []
+        payload_cwd = payload.get("cwd")
+        cwd = Path(payload_cwd or (workspaces[0] if workspaces else os.getcwd()))
         absolute = cwd / target
         paths = [absolute.resolve()]
         if absolute.is_symlink():
             # The link entry itself changes on replace, not just its referent.
             paths.append(absolute.parent.resolve() / absolute.name)
-        root = workspace_root(cwd)
+        root = workspace_root(cwd, workspaces)
         temp_roots = system_temp_roots()
         decisions = [path_decision(workspace_spelling(path, root), root, temp_roots) for path in paths]
     except Exception:
