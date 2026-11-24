@@ -16,9 +16,13 @@ import subprocess
 import sys
 
 CODEX = sys.argv[1:] == ["--runtime", "codex"]
+ANTIGRAVITY = sys.argv[1:] == ["--runtime", "antigravity"]
 ROOT_VAR = "PLUGIN_ROOT" if CODEX else "CLAUDE_PLUGIN_ROOT"
-DATA_VAR = "PLUGIN_DATA" if CODEX else "CLAUDE_PLUGIN_DATA"
-PLUGIN_ROOT = os.environ.get(ROOT_VAR) or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_VAR = "PLUGIN_DATA" if CODEX or ANTIGRAVITY else "CLAUDE_PLUGIN_DATA"
+# Antigravity is rooted relative to this script, so inherited root variables cannot redirect it.
+PLUGIN_ROOT = (None if ANTIGRAVITY else os.environ.get(ROOT_VAR)) or os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__))
+)
 PROFILE_SCRIPT = os.path.join(PLUGIN_ROOT, "skills", "odd-flow", "scripts", "profile.py")
 ORCA_WORKER_PREFIXES = (
     "You are working inside Orca, a multi-agent IDE.",
@@ -61,7 +65,13 @@ def is_worker_session(session_id):
 
 def mode_state(session_id):
     env = dict(os.environ)
-    if CODEX:
+    if ANTIGRAVITY:
+        # profile.py checks the Claude and Codex keys first, even in an inherited environment.
+        for foreign in ("CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "CODEX_SESSION_ID"):
+            env.pop(foreign, None)
+        if isinstance(session_id, str) and session_id:
+            env["ANTIGRAVITY_CONVERSATION_ID"] = session_id
+    elif CODEX:
         # profile.py checks the Claude key first, even in an inherited environment.
         env.pop("CLAUDE_CODE_SESSION_ID", None)
         if isinstance(session_id, str) and session_id:
@@ -81,7 +91,37 @@ def emit_context(context):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}))
 
 
+def antigravity_main():
+    """Mark the session on its first invocation and restate full delegation; never blocks."""
+    steps = []
+    try:
+        payload = json.loads(sys.stdin.read())
+        if isinstance(payload, dict):
+            conversation = payload.get("conversationId")
+            mark_first_prompt(conversation, payload.get("lastUserInput"))
+            number = payload.get("invocationNum", 1)
+            if number is None:
+                number = 1
+            state = mode_state(conversation) if number == 1 else {}
+            if state.get("mode") == "full-delegation":
+                if is_worker_session(conversation):
+                    context = "You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start."
+                else:
+                    context = (
+                        f"odd-flow mode: full-delegation ({state.get('source')}). The parent coordinates and writes "
+                        "only what the mode file lists; bounded writers make all other workspace changes. "
+                        f"Rules: skills/odd-flow/{state.get('rules')}."
+                    )
+                steps = [{"systemMessage": {"systemMessage": context}}]
+    except Exception:  # never block an invocation on a hook failure
+        steps = []
+    print(json.dumps({"injectSteps": steps}))
+    return 0
+
+
 def main():
+    if ANTIGRAVITY:
+        return antigravity_main()
     try:
         payload = json.loads(sys.stdin.read() or "{}")
     except (ValueError, OSError):

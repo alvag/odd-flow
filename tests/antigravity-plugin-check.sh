@@ -62,20 +62,30 @@ class AntigravityPluginCheck(unittest.TestCase):
         self.assertNotIn("hooks", manifest)
         self.assertTrue((root / "skills/odd-flow/SKILL.md").is_file())
 
-    def test_only_session_start_hook(self):
-        # Antigravity's root hooks.json maps a hook name to flat per-event handler lists.
+    def test_three_native_hooks(self):
+        # Antigravity's root hooks.json maps a hook name to per-event handlers: flat for
+        # SessionStart and PreInvocation, grouped (matcher + hooks) for PreToolUse.
         config = json.loads((root / "hooks.json").read_text())
         spec, = config.values()
-        self.assertEqual(set(spec), {"SessionStart"})
-        hook, = spec["SessionStart"]
-        self.assertEqual(set(hook), {"type", "command"})
-        self.assertEqual(hook["type"], "command")
-        self.assertEqual(
-            shlex.split(hook["command"]),
-            ["python3", "-I", "./scripts/session-start.py", "--runtime", "antigravity"],
-        )
-        self.assertNotIn("PLUGIN_ROOT", hook["command"])
-        self.assertTrue(script.is_file())
+        self.assertEqual(set(spec), {"SessionStart", "PreInvocation", "PreToolUse"})
+        commands = {
+            "SessionStart": ("session-start.py", spec["SessionStart"]),
+            "PreInvocation": ("prompt-submit.py", spec["PreInvocation"]),
+        }
+        group, = spec["PreToolUse"]
+        self.assertEqual(set(group), {"matcher", "hooks"})
+        commands["PreToolUse"] = ("pre-tool-use.py", group["hooks"])
+        for event, (name, handlers) in commands.items():
+            with self.subTest(event=event):
+                hook, = handlers
+                self.assertEqual(set(hook), {"type", "command"})
+                self.assertEqual(hook["type"], "command")
+                self.assertEqual(
+                    shlex.split(hook["command"]),
+                    ["python3", "-I", f"./scripts/{name}", "--runtime", "antigravity"],
+                )
+                self.assertNotIn("PLUGIN_ROOT", hook["command"])
+                self.assertTrue((root / "scripts" / name).is_file())
 
     def test_conversation_id_beats_inherited_ids(self):
         set_session_mode("full-delegation")

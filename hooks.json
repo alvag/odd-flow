@@ -5,6 +5,23 @@
         "type": "command",
         "command": "python3 -I ./scripts/session-start.py --runtime antigravity"
       }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "python3 -I ./scripts/prompt-submit.py --runtime antigravity"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "write_file|edit_file|write_to_file|replace_file_content|multi_replace_file_content|run_command|invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ./scripts/pre-tool-use.py --runtime antigravity"
+          }
+        ]
+      }
     ]
   }
 }

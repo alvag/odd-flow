@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check writer launches and full-delegation parent edits in Claude Code and Codex."""
+"""Check writer launches and full-delegation parent edits in Claude Code, Codex and Antigravity."""
 
 import glob
 import importlib.util
@@ -10,8 +10,10 @@ import re
 import sys
 
 CODEX = sys.argv[1:] == ["--runtime", "codex"]
+ANTIGRAVITY = sys.argv[1:] == ["--runtime", "antigravity"]
 ROOT_VAR = "PLUGIN_ROOT" if CODEX else "CLAUDE_PLUGIN_ROOT"
-PLUGIN_ROOT = Path(os.environ.get(ROOT_VAR) or Path(__file__).resolve().parents[1])
+# Antigravity is rooted relative to this script, so inherited root variables cannot redirect it.
+PLUGIN_ROOT = Path((None if ANTIGRAVITY else os.environ.get(ROOT_VAR)) or Path(__file__).resolve().parents[1])
 SURFACE_SCRIPT = PLUGIN_ROOT / "skills" / "odd-flow" / "scripts" / "surface.py"
 EDIT_PATH_FIELDS = {"Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path"}
 LAUNCHES = {"task-create", "worker-start"}
@@ -199,7 +201,7 @@ def workspace_root(cwd):
     )
     if git.returncode == 0:
         return Path(git.stdout.rstrip("\n")).resolve()
-    fallback = None if CODEX else os.environ.get("CLAUDE_PROJECT_DIR")
+    fallback = None if CODEX or ANTIGRAVITY else os.environ.get("CLAUDE_PROJECT_DIR")
     return Path(fallback or cwd).resolve()
 
 
@@ -446,7 +448,77 @@ def denial_reason(payload):
     return None
 
 
+ANTIGRAVITY_EDIT_TOOLS = {
+    "write_file", "edit_file", "write_to_file", "replace_file_content", "multi_replace_file_content",
+}
+
+
+def antigravity_edit_decision(payload, args):
+    """Classify a parent edit; returns (decision, reason) with decision None to allow."""
+    conversation = payload.get("conversationId")
+    prompt_hook = load_prompt_hook()
+    if prompt_hook.is_worker_session(conversation):
+        return None, None
+    delegate = "Full delegation sends workspace changes to a bounded writer."
+    target = None
+    try:
+        mode = prompt_hook.mode_state(conversation).get("mode")
+        if mode == "organic":
+            return None, None
+        if mode != "full-delegation":
+            raise ValueError("unresolved mode")
+        target = next((args[f] for f in ("Path", "TargetFile") if isinstance(args.get(f), str) and args[f]), None)
+        if target is None:
+            return "deny", f"Missing or invalid edit target. {delegate}"
+        workspaces = payload.get("workspacePaths")
+        cwd = Path(payload.get("cwd") or (workspaces[0] if isinstance(workspaces, list) and workspaces else os.getcwd()))
+        absolute = cwd / target
+        paths = [absolute.resolve()]
+        if absolute.is_symlink():
+            # The link entry itself changes on replace, not just its referent.
+            paths.append(absolute.parent.resolve() / absolute.name)
+        root = workspace_root(cwd)
+        temp_roots = system_temp_roots()
+        decisions = [path_decision(workspace_spelling(path, root), root, temp_roots) for path in paths]
+    except Exception:
+        return "deny", f"Could not verify the edit target {target!r} or delegation mode. {delegate}"
+    if "deny" in decisions:
+        return "deny", f"Parent edit denied for {target!r}. {delegate}"
+    if "ask" in decisions:
+        return "force_ask", external_edit_reason(target)
+    return None, None
+
+
+def antigravity_main():
+    decision, reason = None, None
+    try:
+        payload = json.load(sys.stdin)
+        call = payload.get("toolCall")
+        name = call.get("name")
+        args = call.get("args")
+        args = args if isinstance(args, dict) else {}
+        if name in ANTIGRAVITY_EDIT_TOOLS:
+            decision, reason = antigravity_edit_decision(payload, args)
+        elif name in {"run_command", "invoke_subagent"}:
+            workspaces = payload.get("workspacePaths")
+            normalized = {"cwd": payload.get("cwd") or (workspaces[0] if isinstance(workspaces, list) and workspaces else None)}
+            if name == "run_command":
+                normalized |= {"tool_name": "Bash", "tool_input": {"command": args.get("CommandLine")}}
+            else:
+                normalized |= {"tool_name": "Agent", "tool_input": {"prompt": args.get("Prompt")}}
+            reason = denial_reason(normalized)
+            decision = "deny" if reason else None
+    except Exception:  # Internal errors must not block an unrelated tool call.
+        decision, reason = None, None
+    output = {"decision": decision or "allow"}
+    if reason:
+        output["reason"] = f"odd-flow: {reason}"
+    print(json.dumps(output))
+
+
 def main():
+    if ANTIGRAVITY:
+        return antigravity_main()
     payload = json.load(sys.stdin)
     field = EDIT_PATH_FIELDS.get(payload.get("tool_name"))
     if CODEX and payload.get("tool_name") == "apply_patch":
@@ -467,4 +539,6 @@ if __name__ == "__main__":
     try:
         main()
     except Exception:  # Internal errors must not block an unrelated tool call.
+        if ANTIGRAVITY:
+            print(json.dumps({"decision": "allow"}))
         sys.exit(0)
