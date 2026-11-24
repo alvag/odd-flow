@@ -100,6 +100,14 @@ organic_core=$(cat "$S/assets/core-block.md")
 has "full delegation: the parent never edits" "never edit a file yourself" "$full"
 has "full delegation: size never decides who writes" "Task size decides tracking and risk only, never who writes." "$full"
 has "full delegation: relaunch after exhaustion" "Launch one new bounded writer with the diagnosis" "$full"
+dispatch=$(sed -n '/^## When Orca wakes you$/,/^## /p' "$S/references/orca-dispatch.md")
+grep -Eq 'Do not send a follow-up.*"delivery": "reopened".*pins are not guaranteed' <<< "$dispatch" \
+  && ok "closed Codex terminal: no follow-up" || ko "closed Codex terminal: no follow-up" "reopen note or launcher caveat missing"
+grep -Eq 'never answer it for the user.*relay the screen unchanged' <<< "$dispatch" \
+  && ok "trust prompt stays with user" || ko "trust prompt stays with user" "trust rule missing"
+grep -Eq 'closed Codex writer terminal.*orca-dispatch\.md#when-orca-wakes-you.*relaunch counts as the correction' <<< "$full" \
+  && ok "mode file points to closed-terminal exception" || ko "mode file points to closed-terminal exception" "mode file contradicts orca-dispatch reopen rule"
+has "full delegation: no new worker per fix" "never a new worker per fix" "$full"
 has "full delegation: how to switch back" "/odd-flow --mode organic" "$full"
 has "organic: how to switch" "/odd-flow --mode full-delegation" "$organic"
 

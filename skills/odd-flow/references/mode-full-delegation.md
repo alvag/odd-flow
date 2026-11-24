@@ -13,7 +13,7 @@ You are a coordinator: you never implement.
 - Task size decides tracking and risk only, never who writes. A small task gets a writer and no feature document; a large task also gets the feature document before the first writer launches.
 - One writer per unit of behavior (`delegation.md`, Units), never launched while a unit it depends on still runs. Every launch carries `## Allowed edit surfaces`.
 - Independent units with disjoint surfaces launch together in one turn; units that need the same file run one at a time.
-- Fixes within a worker's correction bound continue the same worker (an Orca reply, or a message to the same subagent), never a new worker per fix.
+- Fixes within a worker's correction bound continue the same worker (an Orca reply, or a message to the same subagent), never a new worker per fix. The exception is a closed Codex writer terminal: follow [When Orca wakes you](orca-dispatch.md#when-orca-wakes-you); the relaunch counts as the correction against the original worker's bound.
 - Reading that prepares a writer belongs in that writer's spec, not in your context.
 
 ## Worker prompt context
