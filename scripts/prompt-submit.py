@@ -92,17 +92,17 @@ def emit_context(context):
 
 
 def antigravity_main():
-    """Mark the session on its first invocation and restate full delegation; never blocks."""
+    """Mark the session and restate full delegation on the first invocation of a turn (invocationNum 0); never blocks."""
     steps = []
     try:
         payload = json.loads(sys.stdin.read())
         if isinstance(payload, dict):
             conversation = payload.get("conversationId")
             mark_first_prompt(conversation, payload.get("lastUserInput"))
-            number = payload.get("invocationNum", 1)
+            number = payload.get("invocationNum", 0)
             if number is None:
-                number = 1
-            state = mode_state(conversation) if number == 1 else {}
+                number = 0
+            state = mode_state(conversation) if number == 0 else {}
             if state.get("mode") == "full-delegation":
                 if is_worker_session(conversation):
                     context = "You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start."

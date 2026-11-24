@@ -18,7 +18,7 @@ You are a coordinator: you never implement.
 
 ## Worker prompt context
 
-In Claude Code, Codex and Antigravity, the prompt hook marks a session as a worker when its first prompt starts with a known Orca dispatch preamble or a recognized `# Role:` header. Starting with that prompt, full-delegation workers get a reminder to follow their spec's role rules instead of the coordinator rules from session start. Parent sessions and sessions without a marker keep the coordinator reminder. Organic sessions get no additional context. In Antigravity, the `PreInvocation` hook reads `conversationId` and `lastUserInput`, stores the marker under `PLUGIN_DATA`, and injects the reminder only on invocation 1 (the default when `invocationNum` is omitted); other invocations, organic sessions and malformed input get an empty `injectSteps`.
+In Claude Code, Codex and Antigravity, the prompt hook marks a session as a worker when its first prompt starts with a known Orca dispatch preamble or a recognized `# Role:` header. Starting with that prompt, full-delegation workers get a reminder to follow their spec's role rules instead of the coordinator rules from session start. Parent sessions and sessions without a marker keep the coordinator reminder. Organic sessions get no additional context. In Antigravity, the `PreInvocation` hook reads `conversationId` and `lastUserInput`, stores the marker under `PLUGIN_DATA`, and injects the reminder only on the first invocation of each turn (`invocationNum == 0`; the counter is 0-indexed in `agy` 1.5.16, and the default is `0` when `invocationNum` is omitted or `None`); other invocations (1, 2, ...), organic sessions and malformed input get an empty `injectSteps`.
 
 ## Parent edit guard
 

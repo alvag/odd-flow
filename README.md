@@ -50,7 +50,7 @@ Codex uses its own `PreToolUse` manifest. In full delegation, it checks every ta
 
 ## Install (Antigravity)
 
-The package is a native Antigravity CLI plugin for `agy` 1.5.16 (https://antigravity.google/docs/build-plugins). `.antigravity-plugin/plugin.json` selects the shared `skills/odd-flow` skill, and the root `hooks.json` registers a flat `SessionStart` handler (`python3 -I ./scripts/session-start.py --runtime antigravity`), a flat `PreInvocation` handler (`scripts/prompt-submit.py --runtime antigravity`: worker marking and full-delegation reinjection on invocation 1) and a grouped `PreToolUse` handler (`scripts/pre-tool-use.py --runtime antigravity`: parent edit guard for the file-edit tools and writer launch admission for `run_command` and `invoke_subagent`). The hook reads the payload's `conversationId`, uses it as `ANTIGRAVITY_CONVERSATION_ID` for profile resolution (an inherited Claude or Codex id never overrides it), and returns the core block and active profile as an `injectSteps` system message.
+The package is a native Antigravity CLI plugin for `agy` 1.5.16 (https://antigravity.google/docs/build-plugins). `.antigravity-plugin/plugin.json` selects the shared `skills/odd-flow` skill, and the root `hooks.json` registers a flat `SessionStart` handler (`python3 -I ./scripts/session-start.py --runtime antigravity`), a flat `PreInvocation` handler (`scripts/prompt-submit.py --runtime antigravity`: worker marking and full-delegation reinjection on the first invocation of each turn, `invocationNum == 0`; the counter is 0-indexed in `agy` 1.5.16 and defaults to `0` when omitted) and a grouped `PreToolUse` handler (`scripts/pre-tool-use.py --runtime antigravity`: parent edit guard for the file-edit tools and writer launch admission for `run_command` and `invoke_subagent`). The hook reads the payload's `conversationId`, uses it as `ANTIGRAVITY_CONVERSATION_ID` for profile resolution (an inherited Claude or Codex id never overrides it), and returns the core block and active profile as an `injectSteps` system message.
 
 Validate a checkout without installing it, with a scratch home:
 
@@ -76,7 +76,9 @@ Three kinds of evidence exist, and only the first two are in this package:
 - Hook fixtures: `tests/antigravity-plugin-check.sh`, which runs the hook script directly and needs no `agy` binary.
 - Installed-session smoke test: not run, so installed-session behavior is unverified. Installing the plugin, trusting it and starting an interactive `agy` session are left to a later, separately authorized step.
 
-Not validated or promised: live `PreInvocation` and `PreToolUse` behavior in an installed `agy` (tool names follow the documented contract and are verified after install), mode reinjection mid-session, the profile identity of an interactive `agy` session, and Orca worker enforcement for Antigravity.
+Verified live on 2026-11-24 in the installed plugin with `agy` 1.5.16 inside Orca (`main` `4c3d8a2`): `PreInvocation` fired, and `PreToolUse` denied `write_file` (argument `Path`; the file was not created), `invoke_subagent` (argument `Prompt`; missing `## Allowed edit surfaces`) and `run_command` (argument `CommandLine`; unparseable Orca launch). `invocationNum` is 0-indexed: `0` on the first model call of a turn and `1` on the second, after tool calls.
+
+Not validated live or promised: `edit_file` and the other file-edit tool names, the external-path `force_ask` decision, the marked worker exemption in live `agy`, mode reinjection mid-session, the profile identity of an interactive `agy` session, and Orca worker enforcement for Antigravity.
 
 ## Profiles
 

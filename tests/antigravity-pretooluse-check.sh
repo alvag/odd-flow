@@ -56,13 +56,17 @@ def run_hook(command, payload, hook_env=env):
 
 
 class PreInvocationCheck(unittest.TestCase):
-    def invoke(self, conversation, prompt, number=1, **extra):
+    OMIT = object()
+
+    def invoke(self, conversation, prompt, number=0, **extra):
         hook, = hooks["PreInvocation"]
         self.assertEqual(shlex.split(hook["command"]),
                          ["python3", "-I", "./scripts/prompt-submit.py", "--runtime", "antigravity"])
         payload = {"conversationId": conversation, "lastUserInput": prompt, "invocationNum": number,
                    "initialNumSteps": 0, "cwd": str(workspace), "workspacePaths": [str(workspace)],
                    "hookEventName": "PreInvocation"} | extra
+        if number is self.OMIT:
+            del payload["invocationNum"]
         output = run_hook(hook["command"], payload)
         self.assertEqual(set(output), {"injectSteps"})
         return output["injectSteps"]
@@ -72,9 +76,10 @@ class PreInvocationCheck(unittest.TestCase):
         return step["systemMessage"]["systemMessage"]
 
     def test_parent_reinjection_only_on_first_invocation(self):
-        self.assertIn("odd-flow mode: full-delegation", self.text(self.invoke("parent", "hello")))
-        self.assertEqual(self.invoke("parent", "hello", number=2), [])
-        self.assertIn("odd-flow mode: full-delegation", self.text(self.invoke("parent", "hello", number=None)))
+        for number in (0, self.OMIT, None):
+            self.assertIn("odd-flow mode: full-delegation", self.text(self.invoke("parent", "hello", number=number)))
+        for number in (1, 2, "0"):
+            self.assertEqual(self.invoke("parent", "hello", number=number), [])
 
     def test_worker_marker_and_message(self):
         steps = self.invoke("worker", "You are working inside Orca, a multi-agent IDE.\n# Role: write")
@@ -161,7 +166,7 @@ class PreToolUseCheck(unittest.TestCase):
         self.check("write_file", {"Path": "code.py"}, conversation="organic-session")
         marker_hook, = hooks["PreInvocation"]
         run_hook(marker_hook["command"], {"conversationId": "worker",
-                 "lastUserInput": "# Role: write", "invocationNum": 1})
+                 "lastUserInput": "# Role: write", "invocationNum": 0})
         self.check("write_file", {"Path": "code.py"}, conversation="worker")
         broken = dict(env, ODD_FLOW_HOME=str(scratch / "missing" / "file"))
         (scratch / "missing").write_text("not a directory")
