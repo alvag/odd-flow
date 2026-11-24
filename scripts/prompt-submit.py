@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UserPromptSubmit hook: restate the orchestrator mode on every prompt of a full delegation session.
+"""UserPromptSubmit hook: give full-delegation coordinators and workers distinct context.
 
 The SessionStart core block is fixed for the whole session, so a mode switched mid-session
 (`profile.py use`, `session-mode`, `set-mode`) would otherwise reach the model only once.
@@ -93,6 +93,9 @@ def main():
     if state.get("mode") != "full-delegation":
         if CODEX:
             emit_context("")
+        return 0
+    if is_worker_session(session_id):
+        emit_context("You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start.")
         return 0
     line = (
         f"odd-flow mode: full-delegation ({state.get('source')}). The parent coordinates and writes "

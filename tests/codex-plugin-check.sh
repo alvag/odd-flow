@@ -95,7 +95,10 @@ class CodexPluginCheck(unittest.TestCase):
     def test_prompt_submit_uses_codex_mode_and_worker_data(self):
         set_session_mode()
         context = self.hook_context("prompt-submit.py", "UserPromptSubmit", prompt="# Role: write")
-        self.assertTrue(context.startswith("odd-flow mode: full-delegation (session (CODEX_THREAD_ID))."), context)
+        self.assertEqual(
+            context,
+            "You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start.",
+        )
         key = hashlib.sha256(session.encode()).hexdigest()
         marker = scratch / "codex-data/prompt-sessions" / key
         self.assertEqual(marker.read_text(), "worker")

@@ -10,7 +10,7 @@ Claude Code and Codex plugin for Organic Driven Development (ODD): Engram memory
 | `hooks/hooks.json` | Claude Code hooks: `SessionStart` on startup, resume, clear and compact; `UserPromptSubmit` and `PreToolUse` |
 | `hooks/codex-hooks.json` | Codex hooks: `SessionStart` on startup, resume, clear and compact; `UserPromptSubmit` |
 | `scripts/session-start.py` | Injects the core block of the session's mode (`assets/core-block.md` or `assets/core-block-full-delegation.md`) and the active profile into the session |
-| `scripts/prompt-submit.py` | Records whether each session's first prompt identifies a worker; restates full delegation mode and adds no context in organic mode |
+| `scripts/prompt-submit.py` | Uses the first prompt to identify workers; sends distinct coordinator and worker reminders in full delegation and adds no context in organic mode |
 | `scripts/pre-tool-use.py` | Checks writer edit surface declarations at launch in both modes; guards the parent's direct Claude Code edits in full delegation |
 | `.claude-plugin/` | Claude Code plugin manifest and local marketplace |
 | `.codex-plugin/plugin.json` | Codex plugin manifest pointing to the shared skill and Codex hooks |
@@ -40,7 +40,9 @@ codex plugin marketplace add "$PWD"
 codex plugin add odd-flow@odd-flow
 ```
 
-Review and trust the two odd-flow hooks in Codex with `/hooks`. The package is designed to load the shared skill and inject the core block and active profile without `init.py`. The live install has not yet been verified.
+Codex installs a copy in its plugin cache (`~/.codex/plugins/cache/odd-flow/odd-flow/`). Reinstall the plugin after changing the checkout; edits do not reach the cached copy.
+
+Review and trust the two odd-flow hooks in Codex with `/hooks`. On 2026-11-23, a live check with Codex CLI 0.171.0 accepted the local marketplace and installed the plugin. Both hooks ran in a headless session without `init.py`: the core block and active profile reached the model, and the prompt hook recorded separate parent and worker markers. The live check exposed a worker receiving the coordinator reminder; automated checks now cover the worker-specific reminder in both runtimes.
 
 Codex does not load odd-flow's Claude Code `PreToolUse` hooks. Parent edit guarding and automatic writer surface checks are pending in Codex.
 
