@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""UserPromptSubmit hook: give full-delegation coordinators and workers distinct context.
+"""UserPromptSubmit hook: on every prompt, restate full delegation to the coordinator or give the worker role context.
 
 The SessionStart core block is fixed for the whole session, so a mode switched mid-session
 (`profile.py use`, `session-mode`, `set-mode`) would otherwise reach the model only once.

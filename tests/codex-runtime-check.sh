@@ -26,4 +26,24 @@ check "claude marker under CLAUDE_PLUGIN_DATA" '[ "$(cat "$tmp/cpd2/prompt-sessi
 worker_line="You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start."
 context=$(printf '%s' "$out" | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])')
 check "claude full delegation worker gets role context" '[ "$context" = "$worker_line" ]'
+
+run_ps() {
+  local session=$1 prompt=$2 data=$3
+  shift 3
+  printf '{"session_id":"%s","prompt":%s}\n' "$session" "$prompt" |
+    ODD_ORCHESTRATOR_MODE=full-delegation PLUGIN_ROOT="$root" PLUGIN_DATA="$tmp/$data" CLAUDE_PLUGIN_DATA="$tmp/$data" \
+    python3 -I "$root/scripts/prompt-submit.py" "$@" |
+    python3 -I -c 'import json, sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])'
+}
+for rt in claude codex; do
+  set --
+  if [ "$rt" = codex ]; then set -- --runtime codex; fi
+  o2='"Please carry out this task from my Orca coordinator by following the brief I pasted below.\n\nx"'
+  check "orca2 worker first prompt [$rt]" '[ "$(run_ps w9 "$o2" "$rt" "$@")" = "$worker_line" ]'
+  check "worker line persists [$rt]" '[ "$(run_ps w9 "\"hello\"" "$rt" "$@")" = "$worker_line" ]'
+  run_ps p9 '"hello"' "$rt" "$@" >/dev/null
+  check "parent stays coordinator [$rt]" '[[ "$(run_ps p9 "\"# Role: write\"" "$rt" "$@")" == "odd-flow mode: full-delegation"* ]]'
+  check "role must be whole first line [$rt]" '[[ "$(run_ps x9 "\"# Role: write extra\"" "$rt" "$@")" == "odd-flow mode: full-delegation"* ]]'
+  check "no data dir keeps coordinator [$rt]" '[[ "$(printf "%s\n" "{\"session_id\":\"n9\",\"prompt\":\"# Role: write\"}" | ODD_ORCHESTRATOR_MODE=full-delegation PLUGIN_ROOT="$root" python3 -I "$root/scripts/prompt-submit.py" "$@")" == *"odd-flow mode: full-delegation"* ]]'
+done
 exit $fail
