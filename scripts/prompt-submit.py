@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""UserPromptSubmit hook: restate the orchestrator mode on every prompt of a full delegation session.
+"""UserPromptSubmit hook: on every prompt, restate full delegation to the coordinator or give the worker role context.
 
 The SessionStart core block is fixed for the whole session, so a mode switched mid-session
 (`profile.py use`, `session-mode`, `set-mode`) would otherwise reach the model only once.
-Organic sessions get no output, so their context is unchanged. Always exits 0: a failure here
-never blocks a prompt.
+Organic sessions get no additional context (Claude Code gets no output). Always exits 0:
+a failure here never blocks a prompt.
 """
 
 import hashlib
@@ -15,7 +15,10 @@ import re
 import subprocess
 import sys
 
-PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CODEX = sys.argv[1:] == ["--runtime", "codex"]
+ROOT_VAR = "PLUGIN_ROOT" if CODEX else "CLAUDE_PLUGIN_ROOT"
+DATA_VAR = "PLUGIN_DATA" if CODEX else "CLAUDE_PLUGIN_DATA"
+PLUGIN_ROOT = os.environ.get(ROOT_VAR) or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROFILE_SCRIPT = os.path.join(PLUGIN_ROOT, "skills", "odd-flow", "scripts", "profile.py")
 ORCA_WORKER_PREFIXES = (
     "You are working inside Orca, a multi-agent IDE.",
@@ -25,7 +28,7 @@ WORKER_ROLE = re.compile(r"# Role: (explore|write|verify|review|refute)", re.IGN
 
 
 def session_marker(session_id):
-    data = os.environ.get("CLAUDE_PLUGIN_DATA")
+    data = os.environ.get(DATA_VAR)
     if not data or not isinstance(session_id, str) or not session_id:
         return None
     key = hashlib.sha256(session_id.encode("utf-8", errors="surrogatepass")).hexdigest()
@@ -58,7 +61,12 @@ def is_worker_session(session_id):
 
 def mode_state(session_id):
     env = dict(os.environ)
-    if session_id and not env.get("CLAUDE_CODE_SESSION_ID"):
+    if CODEX:
+        # profile.py checks the Claude key first, even in an inherited environment.
+        env.pop("CLAUDE_CODE_SESSION_ID", None)
+        if isinstance(session_id, str) and session_id:
+            env["CODEX_THREAD_ID"] = session_id
+    elif session_id and not env.get("CLAUDE_CODE_SESSION_ID"):
         env["CLAUDE_CODE_SESSION_ID"] = session_id
     done = subprocess.run(
         [sys.executable, "-I", PROFILE_SCRIPT, "mode", "--json"],
@@ -67,6 +75,10 @@ def mode_state(session_id):
     if done.returncode != 0:
         return {}
     return json.loads(done.stdout)
+
+
+def emit_context(context):
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}))
 
 
 def main():
@@ -79,13 +91,18 @@ def main():
         mark_first_prompt(session_id, payload.get("prompt"))
     state = mode_state(session_id)
     if state.get("mode") != "full-delegation":
+        if CODEX:
+            emit_context("")
+        return 0
+    if is_worker_session(session_id):
+        emit_context("You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start.")
         return 0
     line = (
         f"odd-flow mode: full-delegation ({state.get('source')}). The parent coordinates and writes "
         "only what the mode file lists; bounded writers make all other workspace changes. "
         f"Rules: skills/odd-flow/{state.get('rules')}."
     )
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": line}}))
+    emit_context(line)
     return 0
 
 
@@ -93,4 +110,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:  # never block a prompt on a hook failure
+        if CODEX:
+            emit_context("")
         sys.exit(0)

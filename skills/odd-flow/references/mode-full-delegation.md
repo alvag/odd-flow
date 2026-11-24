@@ -16,6 +16,10 @@ You are a coordinator: you never implement.
 - Fixes within a worker's correction bound continue the same worker (an Orca reply, or a message to the same subagent), never a new worker per fix.
 - Reading that prepares a writer belongs in that writer's spec, not in your context.
 
+## Worker prompt context
+
+In Claude Code and Codex, the prompt hook marks a session as a worker when its first prompt starts with a known Orca dispatch preamble or a recognized `# Role:` header. Starting with that prompt, full-delegation workers get a reminder to follow their spec's role rules instead of the coordinator rules from session start. Parent sessions and sessions without a marker keep the coordinator reminder. Organic sessions get no additional context.
+
 ## Parent edit guard
 
 In Claude Code, the guard checks the parent's `Edit`, `Write` and `NotebookEdit` targets in full delegation only. After resolving symlinks, it allows workspace Markdown files directly under `odd/tasks/` and denies other workspace targets. It leaves targets in system temp directories outside the workspace alone and asks for confirmation on any other external target. The confirmation rule above still applies.

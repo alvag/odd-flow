@@ -14,7 +14,9 @@ import os
 import subprocess
 import sys
 
-PLUGIN_ROOT = os.environ.get("CLAUDE_PLUGIN_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CODEX = sys.argv[1:] == ["--runtime", "codex"]
+ROOT_VAR = "PLUGIN_ROOT" if CODEX else "CLAUDE_PLUGIN_ROOT"
+PLUGIN_ROOT = os.environ.get(ROOT_VAR) or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL_DIR = os.path.join(PLUGIN_ROOT, "skills", "odd-flow")
 CORE_BLOCKS = {
     "organic": os.path.join(SKILL_DIR, "assets", "core-block.md"),
@@ -41,7 +43,12 @@ def core_block(mode):
 def profile_env(session_id):
     env = dict(os.environ)
     # Hook processes may not inherit the agent's session variable; the payload carries the same id.
-    if session_id and not env.get("CLAUDE_CODE_SESSION_ID"):
+    if CODEX:
+        # profile.py checks the Claude key first, even in an inherited environment.
+        env.pop("CLAUDE_CODE_SESSION_ID", None)
+        if isinstance(session_id, str) and session_id:
+            env["CODEX_THREAD_ID"] = session_id
+    elif session_id and not env.get("CLAUDE_CODE_SESSION_ID"):
         env["CLAUDE_CODE_SESSION_ID"] = session_id
     return env
 
@@ -78,6 +85,15 @@ def profile_state(env):
     return text or "odd-flow profile state unavailable (no output)."
 
 
+def emit_context(context):
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }
+    }))
+
+
 def main():
     payload = read_payload()
     source = payload.get("source") or "unknown"
@@ -91,13 +107,7 @@ def main():
         f"Active odd-flow profile, resolved by `skills/odd-flow/scripts/profile.py show`:\n\n"
         f"```\n{profile_state(env)}\n```"
     )
-    context = "\n\n".join(parts)
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": context,
-        }
-    }))
+    emit_context("\n\n".join(parts))
     return 0
 
 
@@ -105,4 +115,6 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except Exception:  # never block the session on a hook failure
+        if CODEX:
+            emit_context("")
         sys.exit(0)
