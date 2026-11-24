@@ -6,6 +6,13 @@ This file tracks notable changes to odd-flow. It follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-24
+
+### Added
+
+- Dual review on explicit request: “revisión dual”, “dual review”, “doble revisión”, “sométela a juicio”, or “ponla a juicio”. Two blind generalist reviewers assess the same change. Blockers and critical findings both reviewers identify skip refutation. Re-checks cover only corrected findings, with at most two correction rounds. The close reports `Review: done (dual)`.
+- Optional `review-second` profile role to select the second reviewer. It falls back to `review` when unset.
+
 ## [0.1.0] - 2026-11-24
 
 ### Added

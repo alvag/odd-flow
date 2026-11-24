@@ -24,6 +24,7 @@ Profile: `claude-gpt`.
 | T4 | S2-S8 | Verifier advisories A1, A2, A4, A5, A6 and its regression tests | orca:write (full delegation; follows T3) | done | dispatch `ctx_7bb1e69e37f6`; parent: dual-review, review-close, role-prompts, profile, full-delegation checks exit 0; run.sh 19/19 |
 | T5 | S1-S9 | Ordinary review (Risk item 3, verification passed): lenses readability, reliability | orca:review | done | candidate `d68da6a` (base `4a4b027`); readability `ctx_991ac03463a7`: R2-001 WARNING + 4 SUGGESTION; reliability `ctx_3f4a662c693c`: 3 WARNING; no BLOCKER/CRITICAL, no refute, no correction required |
 | T6 | S2-S8 | Review follow-ups R2-001..R2-005, R3-001..R3-003 | orca:write (full delegation) | done | dispatch ctx_621ee488b6d4; parent: dual-review, review-close, role-prompts, profile, full-delegation exit 0; run.sh 19/19; diff --check clean |
+| T7 | S1 | Release 0.2.0: four manifest versions and CHANGELOG entry | orca:write (full delegation) | done | dispatch ctx_dcbfa3d43536; parent: version-check exit 0, run.sh 19/19, diff --check clean |
 | T3 | S1-S9 | Independent verification of T1+T2 candidate | orca:verify (Risk item 3: shared review prompt and profile roles) | done | dispatch `ctx_342935deaa6e`; base `4a4b027`, candidate `437c73b`: S1-S9 met, no blockers, advisories A1-A7; live Orca dual run unverified |
 
 ## Log
@@ -34,4 +35,5 @@ Profile: `claude-gpt`.
 - L4 (user, 2026-11-24): "con que tipo de pedido se dispara: puedo decir, sometelo a juicio o haz una segunda revision o como?" Parent proposed (verbatim): "\"revisión dual\" / \"dual review\"", "\"doble revisión\"", "\"sométela a juicio\" / \"ponla a juicio\"", "\"Haz una segunda revisión\" quedaría como review normal", and on doubt the parent asks "¿review normal o dual?".
 - L5 (user, 2026-11-24): "si, me sirve". S3 rewritten; T2 reopened for the trigger list.
 - L6 (2026-11-24): T1 done: writer ctx_316703aea508; parent observed tests/profile-check.sh passed=64 failed=0; diff within surface (3 files). T2 first pass done (ctx_29dc00cba2ae): parent observed dual-review, review-close, role-prompts and full-delegation checks exit 0; diff within surface (5 files).
-- L7 (2026-11-24): T3 verify passed (S1-S9 met, no blockers); T4 fixed advisories A1, A2, A4-A6; T5 ordinary review (readability, reliability) found no BLOCKER/CRITICAL; T6 fixed all 8 follow-ups. Unverified: a live Orca dual review run. Next: commit on feature/dual-review after user approval.
+- L7 (2026-11-24): T3 verify passed (S1-S9 met, no blockers); T4 fixed advisories A1, A2, A4-A6; T5 ordinary review (readability, reliability) found no BLOCKER/CRITICAL; T6 fixed all 8 follow-ups. Unverified: a live Orca dual review run. Committed as 60d61f6 on feature/dual-review (user: "si, commitea").
+- L8 (user, 2026-11-24): "si, hazlo" (merge to main and release 0.2.0). Release commit, fast-forward merge to main and push follow.
