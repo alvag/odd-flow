@@ -14,7 +14,7 @@
 3. For a writer in a folder without Git, use Project folders without Git below. Otherwise choose a placement:
    `python3 <skill-dir>/scripts/pane.py open --role <role> --title "<T# role: short title>" --json`
    On a non-zero exit, report the error and do not launch. If the split reply cannot be parsed or has no handle, a pane may have opened; check `terminal list` and close it. Report any `title_error`, but continue with the opened pane.
-   - `split-right` or `split-below`: keep the returned `handle` and run terminal steps 1, 3 and 4 below. Skip `terminal create`. Use this path for both Claude and Codex.
+   - `split-right` or `split-below`: keep the returned `handle` and run terminal steps 1, 3 and 4 below. Skip `terminal create`. Use this path for Claude, Codex and Antigravity.
    - `tab`: start by the `launch` field of the resolve result.
 
    A profile entry counts as the user naming the model, so its model and effort are allowed.

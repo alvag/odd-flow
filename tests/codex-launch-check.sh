@@ -70,7 +70,9 @@ cat >"$T/profiles.json" <<'JSON'
 {"profiles": {"p": {
   "explore": {"agent": "codex", "model": "gpt-6-luna", "effort": "medium"},
   "verify": {"agent": "claude", "model": "claude-opus-5-5", "effort": "high"},
-  "write": {"agent": "codex"}
+  "write": {"agent": "codex"},
+  "review": {"agent": "antigravity", "model": "gemini-4", "effort": "low"},
+  "refute": {"agent": "antigravity"}
 }}}
 JSON
 resolve() { env -i HOME="$T" PATH="$PATH" ODD_FLOW_HOME="$T" CLAUDE_CODE_SESSION_ID=s1 ODD_PROFILE=p python3 -I "$P" resolve "$@" 2>&1; }
@@ -89,6 +91,14 @@ out=$(resolve verify --json); ec=$?
 expect "claude role: launch is worker-start" '"launch": "worker-start"' "$out" 0 $ec
 expect "claude role: no terminal command" '"terminal_command": null' "$out" 0 $ec
 expect "claude role: split command includes model and effort" "\"split_command\": \"claude --model 'claude-opus-5-5' --effort 'high'\"" "$out" 0 $ec
+
+out=$(resolve review --json); ec=$?
+expect "antigravity role: launch is worker-start" '"launch": "worker-start"' "$out" 0 $ec
+expect "antigravity role: no terminal command" '"terminal_command": null' "$out" 0 $ec
+expect "antigravity role: split command includes model and effort" "\"split_command\": \"agy --model 'gemini-4' --effort 'low'\"" "$out" 0 $ec
+
+out=$(resolve refute --json); ec=$?
+expect "antigravity role without model: split command is agy" '"split_command": "agy"' "$out" 0 $ec
 
 out=$(resolve explore); ec=$?
 expect "text mode: names the terminal path" "launch: terminal" "$out" 0 $ec

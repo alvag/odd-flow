@@ -303,6 +303,10 @@ def terminal_command(agent, model, effort):
     return " ".join(["sh", shell_quote(CODEX_LAUNCHER)] + args)
 
 
+# Agents whose CLI Orca can start in a split pane with --model and --effort flags.
+SPLIT_CLIS = {"claude": "claude", "antigravity": "agy"}
+
+
 def resolve_role(doc, role):
     if role not in ROLES:
         raise ProfileError(f"unknown role '{role}' (known: {', '.join(ROLES)})")
@@ -326,8 +330,8 @@ def resolve_role(doc, role):
     from_profile = bool(entry)
     command = terminal_command(agent, entry.get("model"), entry.get("effort") if entry.get("model") else None)
     split_command = command
-    if agent == "claude":
-        split_command = "claude"
+    if agent in SPLIT_CLIS:
+        split_command = SPLIT_CLIS[agent]
         if entry.get("model"):
             split_command += f" --model {shell_quote(entry['model'])}"
             if entry.get("effort"):

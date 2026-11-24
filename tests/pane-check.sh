@@ -34,7 +34,7 @@ printf '%s\n' \
   '  *) exit 99 ;;' \
   'esac' >"$T/orca"
 chmod +x "$T/orca"
-printf '%s\n' '{"default":"test","profiles":{"test":{"verify":{"agent":"claude"},"write":{"agent":"antigravity"}}}}' >"$T/profiles.json"
+printf '%s\n' '{"default":"test","profiles":{"test":{"verify":{"agent":"claude"},"write":{"agent":"antigravity"},"explore":{"agent":"antigravity","model":"gemini-4","effort":"low"},"review":{"agent":"pi"}}}}' >"$T/profiles.json"
 
 # Test-only seam: replace the TTY sampler and clock, but run the real CLI and
 # pane lock against the same fake Orca as the fixed-width cases.
@@ -117,9 +117,17 @@ expect "unknown first width: tab without retrying" 0 "$ec" \
   '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
   "$list_call"$'\n\nend argv\nsamples:\n0 True'
 
-out=$(widths='81' settle_ms=1000 open_pane --role write); ec=$?
+out=$(widths='81' settle_ms=1000 open_pane --role review); ec=$?
 expect "no split command: one sample and no Orca call" 0 "$ec" \
-  '"reason": "no split command for antigravity"' $'\nargv:\n\nend argv\nsamples:\n0 True'
+  '"reason": "no split command for pi"' $'\nargv:\n\nend argv\nsamples:\n0 True'
+
+out=$(widths='200' settle_ms=100 open_pane --role write); ec=$?
+expect "antigravity without model: split right with agy" 0 "$ec" '"placement": "split-right", "handle": "term_new"' \
+  $'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\nagy\n--json'
+
+out=$(widths='200' settle_ms=100 open_pane --role explore); ec=$?
+expect "antigravity with model and effort: split right with agy flags" 0 "$ec" '"placement": "split-right", "handle": "term_new"' \
+  $'\n--command\nagy --model \'gemini-4\' --effort \'low\'\n--json'
 
 out=$(widths='80 80 80' settle_ms=150 open_pane --role verify); ec=$?
 expect "partial last step stays within the bound" 0 "$ec" \
@@ -163,7 +171,7 @@ layout "$(split vertical "$p" "$(split horizontal "$r1" "$r2")")"
 out=$(open_pane --role verify --cols 80); ec=$?
 expect "split the later leaf on a tie" 0 "$ec" '"target": "term_r2"' $'\nsplit\n--terminal\nterm_r2\n'
 
-out=$(open_pane --role write --cols 200); ec=$?
+out=$(open_pane --role review --cols 200); ec=$?
 expect "unsupported agent: tab and no Orca call" 0 "$ec" '"placement": "tab"' $'\nargv:\n\nend argv'
 
 out=$(fail_split=1 open_pane --role verify --cols 200); ec=$?
