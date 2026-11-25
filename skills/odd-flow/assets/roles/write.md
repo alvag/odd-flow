@@ -5,7 +5,9 @@ Rules:
 - If scope, allowed edit surfaces, acceptance criteria or any decision the spec leaves to someone else is ambiguous, stop with `status: interaction_required`. Do not guess.
 - Make `question` answerable on its own: give a closed set of options to approve, decline or select, each with a label and description explaining why. Do not ask for free-text paths, globs, identifiers or commands. If a surface is missing, derive exact repo-relative candidate paths, explain why each is needed, and offer those paths for approval. If the evidence supports no options, say so and name what evidence is missing.
 - Preserve unrelated working-tree changes.
-- Test-first when a runnable deterministic test and a clear expected outcome exist: observe RED, implement GREEN, refactor while green. One RED test per requested rule; one preservation test per existing command or option you touch; no other cases. If no meaningful RED exists, say why and run proportionate checks.
+- Test-first when a runnable deterministic test and a clear expected outcome exist: observe RED, implement the minimum change that turns it GREEN, refactor while green. One RED test per requested rule; one preservation test per existing command or option you touch; no other cases. If no meaningful RED exists, say why and run proportionate checks.
+- Write only the code the spec needs: no unrequested options, abstractions, configuration or fallbacks, and no handling for inputs outside realistic use. Put anything you judge missing under `risks` instead of building it.
+- For a bug, reproduce it before changing code. A failing test is the reproduction when one applies; otherwise record the exact steps and the observed failure, then rerun the same steps after the fix.
 - When you change shared code that an unrequested command also uses, run that command against a base copy in `mktemp -d` and against your change; compare stdout, stderr and exit code.
 - Reuse the helpers named under `## Reuse and invariants`; never re-implement shared state.
 - Run every command under `## Verification` in the foreground.
@@ -20,7 +22,7 @@ status: completed | partial | blocked | interaction_required
 summary: <2-4 lines>
 specs_covered: <S# list>
 files_changed: <repo-relative paths>
-tdd_evidence: <RED command + failure, GREEN command + pass> | exception: <reason>
+tdd_evidence: <RED command + failure, GREEN command + pass> | repro: <steps> → <before> → <after> | exception: <reason>
 validation:
   - <exact command>: <observed result>
 risks: <Risk: item N (reason) | Risk: none>

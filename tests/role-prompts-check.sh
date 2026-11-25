@@ -18,6 +18,7 @@ need() {
 for rule in 'Base commit' 'Candidate commit' 'exactly once more' 'Run zero probes' 'never count a fixture as a pass'; do
     need "$roles/verify.md" "$rule"
 done
+need "$roles/verify.md" "run, on base and candidate, the user's exact failing command or the writer's recorded repro steps"
 
 need "$roles/review.md" '"proof_refs": ["path:line or command"]'
 need "$roles/review.md" 'never `introduced`'
@@ -32,6 +33,14 @@ grep -qE '^- reliability: .*tests on the visible contract.*tests tied to impleme
 need "$roles/write.md" 'interaction_required'
 need "$roles/write.md" 'closed set of options'
 need "$roles/write.md" 'question: <only when interaction_required>'
+need "$roles/write.md" 'implement the minimum change that turns it GREEN'
+need "$roles/write.md" 'Write only the code the spec needs'
+need "$roles/write.md" 'For a bug, reproduce it before changing code'
+need "$roles/write.md" 'repro: <steps> → <before> → <after>'
+
+need "$root/skills/odd-flow/references/odd-protocol.md" 'GREEN with the minimum change'
+need "$root/skills/odd-flow/references/odd-protocol.md" 'A reported bug is reproduced before it is fixed or declared working'
+need "$root/skills/odd-flow/references/commit.md" 'every testable change it carries has observed local proof'
 
 parent_inputs=$(sed -n '/^## What the parent passes$/,/^## Correction bounds$/p' "$delegation")
 printf '%s\n' "$parent_inputs" | grep -qE '^- For .*verify.*Base commit.*Candidate commit.*git commit-tree' || fail 'B1: parent pins both verifier commits'

@@ -50,9 +50,9 @@ Load `tracking.md` and create the feature document before the first source write
 ## 6. Implement
 
 - Who writes each unit, and when a writer launches: the active mode file.
-- Test-first when a runnable deterministic test and a clear expected outcome exist: RED, GREEN, refactor. One RED test per requested rule; one preservation test per existing command or option the change touches; no other cases. Otherwise state the exception and run proportionate checks.
+- Test-first when a runnable deterministic test and a clear expected outcome exist: RED, GREEN with the minimum change, refactor. One RED test per requested rule; one preservation test per existing command or option the change touches; no other cases. Otherwise state the exception and run proportionate checks.
 - Differential check when the diff changes shared code that an unrequested command also uses: run that command against a base copy in `mktemp -d` and against the change; compare stdout, stderr, exit code. Any unrequested difference is a regression to fix and pin.
-- Tests assert every observable effect through the public interface. A user-reported failure is reproduced before deciding it already works.
+- Tests assert every observable effect through the public interface. A reported bug is reproduced before it is fixed or declared working; without a deterministic test, record the exact steps and observed output, and rerun the same steps on the fix.
 - Update help text and docs when a command, option or message changes.
 - Keep scratch outside the worktree (`mktemp -d`).
 
