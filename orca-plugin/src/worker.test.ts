@@ -731,12 +731,18 @@ async function controlsFixture(
     env?: main.WorkerOptions['env']
     run?: main.Runner
     runExecutable?: main.WorkerOptions['runExecutable']
+    commandSignal?: AbortSignal
+    log?: (line: string) => void
+    updateStatus?: () => never
   } = {}
 ) {
   const host = mockHost({
     capabilities: ['agent:read', 'workspace:read', 'settings:own'],
     settings: { profileScript: currentScript, ...options.settings },
-    results: { ...statusHostResults, 'agents.list': () => ({ agents: agents() }) }
+    results: {
+      ...statusHostResults, 'agents.list': () => ({ agents: agents() }),
+      ...(options.updateStatus ? { 'statusBar.update': options.updateStatus } : {})
+    }
   })
   const runExecutable: main.WorkerOptions['runExecutable'] = async (_executable, argv) => {
     if (argv[0] === 'orchestration') return dispatches()
@@ -755,7 +761,16 @@ async function controlsFixture(
       return () => { tick = undefined }
     }
   })
-  const worker = await mountWorker({ default: (orca) => { stop = activate(orca) }, deactivate: () => stop?.() }, {
+  const worker = await mountWorker({ default: (orca) => {
+    const signal = options.commandSignal
+    stop = activate({
+      ...orca,
+      log: options.log ?? ((line) => orca.log(line)),
+      commands: signal ? {
+        register: (id, handler) => orca.commands.register(id, (args, ctx) => handler(args, { ...ctx, signal }))
+      } : orca.commands
+    })
+  }, deactivate: () => stop?.() }, {
     host, events: ['agent.status.changed', 'workspace.changed'], commands: [openCommand, toggleCommand]
   })
   return {
@@ -879,8 +894,12 @@ test('Open profiles panel discovers one enabled key at command time or uses the 
     })
     try {
       assert.deepEqual(calls, [])
-      await fixture.worker.command(openCommand)
+      assert.equal(await fixture.worker.command(openCommand), 'Opened the odd-flow profiles panel.')
       assert.deepEqual(calls, override ? [openArgv(override)] : [pluginListArgv, openArgv('git.odd-flow-profiles')])
+      assert.deepEqual(fixture.worker.logs, [
+        `${openCommand} started`,
+        `${openCommand} ended: success; keySource=${override ? 'setting' : 'detected'}; key=${override || 'git.odd-flow-profiles'}`
+      ])
     } finally {
       await fixture.worker.deactivate()
     }
@@ -898,12 +917,96 @@ test('Open profiles panel refuses zero or multiple discovered keys and names the
       }
     })
     try {
-      assert.match(JSON.stringify(await fixture.worker.command(openCommand)), /pluginKey/)
+      const detail = `Found ${plugins.length} enabled odd-flow profiles plugins. Set pluginKey in Orca Settings.`
+      assert.deepEqual(await fixture.worker.command(openCommand), { error: `Could not open the odd-flow profiles panel: ${detail}` })
       assert.deepEqual(calls, [pluginListArgv])
       assert.match(fixture.status()?.tooltip ?? '', /pluginKey/)
+      assert.deepEqual(fixture.worker.logs, [
+        `${openCommand} started`, `${openCommand} ended: error; keySource=detected; key=unresolved; ${detail}`
+      ])
     } finally {
       await fixture.worker.deactivate()
     }
+  }
+})
+
+test('Open profiles panel logs an aborted command without changing its result or status', async () => {
+  const controller = new AbortController()
+  const calls: (readonly string[])[] = []
+  const key = 'custom.odd-flow-profiles'
+  const fixture = await controlsFixture(() => [agent('codex')], {
+    commandSignal: controller.signal,
+    settings: { pluginKey: key },
+    runExecutable: async (_executable, argv) => { calls.push(argv); return cliOk() }
+  })
+  try {
+    controller.abort(new Error('cancelled'))
+    assert.deepEqual(await fixture.worker.command(openCommand), {
+      error: 'Could not open the odd-flow profiles panel: cancelled'
+    })
+    assert.deepEqual(calls, [])
+    assert.equal(fixture.status(), undefined)
+    assert.deepEqual(fixture.worker.logs, [
+      `${openCommand} started`, `${openCommand} ended: error (aborted); keySource=setting; key=${key}; Command signal was aborted.`
+    ])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('Command diagnostics omit private data from subprocess errors and output', async () => {
+  const sessionId = 'a1202c3b-732e-4d6e-9681-0589d57b3c0a'
+  const envValue = 'env-secret-sentinel'
+  const privateDetail = `${sessionId} ${envValue}`
+  const fixture = await controlsFixture(() => [agent('codex', sessionId)], {
+    env: { ...env, SAMPLE_SECRET: envValue },
+    settings: { pluginKey: 'custom.odd-flow-profiles' },
+    run: async (argv, env) => {
+      if (argv[2] === 'session-mode') throw new Error(`profile.py output: ${privateDetail}`)
+      return fakeRun(argv, env)
+    },
+    runExecutable: async (_executable, argv) => argv[0] === 'orchestration' ? dispatches() : {
+      stdout: JSON.stringify({ ok: false, error: { message: `CLI output: ${privateDetail}` } }), stderr: ''
+    }
+  })
+  try {
+    assert.deepEqual(await fixture.worker.command(openCommand), {
+      error: `Could not open the odd-flow profiles panel: CLI output: ${privateDetail}`
+    })
+    assert.deepEqual(await fixture.worker.command(toggleCommand), {
+      error: `Could not run session-mode: profile.py output: ${privateDetail}`
+    })
+    assert.equal(fixture.worker.logs.length, 4)
+    for (const line of fixture.worker.logs) {
+      for (const value of [sessionId, envValue, 'CLI output:', 'profile.py output:']) assert.ok(!line.includes(value))
+    }
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('A throwing logger does not change either command result, status, or subprocess calls', async () => {
+  const key = 'custom.odd-flow-profiles'
+  const calls: (readonly string[])[] = []
+  let attempts = 0
+  const fixture = await controlsFixture(() => [], {
+    settings: { pluginKey: key },
+    log: () => { attempts++; throw new Error('logger unavailable') },
+    run: async (argv, env) => { calls.push(argv); return fakeRun(argv, env) },
+    runExecutable: async (_executable, argv) => {
+      calls.push(argv)
+      return argv[0] === 'orchestration' ? dispatches() : cliOk()
+    }
+  })
+  try {
+    for (const command of [openCommand, toggleCommand]) {
+      assert.equal(await fixture.worker.command(command), 'Opened the odd-flow profiles panel.')
+    }
+    assert.equal(fixture.status(), undefined)
+    assert.deepEqual(calls, [openArgv(key), workerListArgv, openArgv(key)])
+    assert.equal(attempts, 4)
+  } finally {
+    await fixture.worker.deactivate()
   }
 })
 
@@ -926,9 +1029,9 @@ test('Toggle mode flips a sole coordinator using the mutation path, and panel mu
     }
   })
   try {
-    await fixture.worker.command(toggleCommand)
+    assert.equal(await fixture.worker.command(toggleCommand), 'Switched odd-flow mode to full-delegation.')
     assert.equal(fixture.status()?.text, 'odd: test · full-delegation')
-    await fixture.worker.command(toggleCommand)
+    assert.equal(await fixture.worker.command(toggleCommand), 'Switched odd-flow mode to organic.')
     assert.equal(fixture.status()?.text, 'odd: test · organic')
     const result = await fixture.worker.request('sessionMode', {
       agent: 'codex', sessionId: 'codex', mode: 'full-delegation'
@@ -941,16 +1044,22 @@ test('Toggle mode flips a sole coordinator using the mutation path, and panel mu
     })))
     assert.equal(scans, 8)
     assert.equal(fixture.worker.host.callsOf('agents.list').length, 8)
+    assert.deepEqual(fixture.worker.logs, [
+      `${toggleCommand} started`, `${toggleCommand} ended: success; switched to full-delegation`,
+      `${toggleCommand} started`, `${toggleCommand} ended: success; switched to organic`
+    ])
   } finally {
     await fixture.worker.deactivate()
   }
 })
 
 test('Toggle mode opens the panel for no or several coordinators, workers, or unavailable worker checks', async () => {
-  for (const { rows, unavailable = false, dispatchScanChanges = false } of [
-    { rows: [] }, { rows: [agent('codex'), agent('antigravity')] },
-    { rows: [dispatched, terminalOnly] }, { rows: [agent('codex')], unavailable: true },
-    { rows: [terminalOnly], dispatchScanChanges: true }
+  for (const { rows, reason, unavailable = false, dispatchScanChanges = false } of [
+    { rows: [], reason: 'zero coordinators' },
+    { rows: [agent('codex'), agent('antigravity')], reason: 'several coordinators' },
+    { rows: [dispatched, terminalOnly], reason: 'zero coordinators' },
+    { rows: [agent('codex')], reason: 'worker check unavailable', unavailable: true },
+    { rows: [terminalOnly], reason: 'coordinator re-check', dispatchScanChanges: true }
   ]) {
     const pluginCalls: (readonly string[])[] = []
     const python: string[] = []
@@ -967,12 +1076,151 @@ test('Toggle mode opens the panel for no or several coordinators, workers, or un
       }
     })
     try {
-      await fixture.worker.command(toggleCommand)
+      assert.equal(await fixture.worker.command(toggleCommand), 'Opened the odd-flow profiles panel.')
       assert.deepEqual(pluginCalls, [pluginListArgv, openArgv()])
       assert.ok(python.every((cmd) => cmd === 'list' || cmd === 'show'))
       if (unavailable) assert.deepEqual(python, [])
+      assert.deepEqual(fixture.worker.logs, [
+        `${toggleCommand} started`, `${toggleCommand} ended: success; opened panel (${reason}); keySource=detected; key=local.odd-flow-profiles`
+      ])
     } finally {
       await fixture.worker.deactivate()
     }
+  }
+})
+
+test('truncates status fields to host limits and retains the start of both errors', async () => {
+  const profile = 'profile-' + 'p'.repeat(80)
+  const dispatchError = 'dispatch offline: ' + 'd'.repeat(300)
+  const panelError = 'panel offline: ' + 'p'.repeat(300)
+  let dispatchOffline = false
+  const fixture = await controlsFixture(() => [agent('codex')], {
+    settings: { pluginKey: 'local.odd-flow-profiles' },
+    run: async () => ({ stdout: JSON.stringify({ ...show, profile }), stderr: '' }),
+    runExecutable: async (_executable, argv) => {
+      if (argv[0] !== 'orchestration') throw new Error(panelError)
+      if (dispatchOffline) throw new Error(dispatchError)
+      return dispatches()
+    }
+  })
+  try {
+    await fixture.tick()
+    assert.equal(fixture.status()?.text, ('odd: ' + profile).slice(0, 63) + '…')
+    assert.equal(fixture.status()?.tooltip, 'Profile source: file default\nMode source: default')
+
+    dispatchOffline = true
+    assert.deepEqual(await fixture.worker.command(openCommand), {
+      error: 'Could not open the odd-flow profiles panel: ' + panelError
+    })
+    const status = fixture.status()
+    assert.equal(status?.text, 'odd: worker check failed')
+    assert.equal(status?.tooltip?.length, 256)
+    const [dispatchLine, panelLine] = status?.tooltip?.split('\n') ?? []
+    assert.match(dispatchLine, /^Could not check dispatched workers: dispatch offline: d+…$/u)
+    assert.match(panelLine, /^Could not open the odd-flow profiles panel: panel offline: p+…$/u)
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('status refresh logs a bounded, single-line host reason without private values', async () => {
+  const envValue = 'env-secret-sentinel'
+  const sessionId = 'test-agent-session'
+  let reason = 'host rejected\u0000\r\n\u0085\u2028\u2029 status: ' + 'x'.repeat(300)
+  const fixture = await controlsFixture(() => [agent('codex', sessionId)], {
+    env: { ...env, SAMPLE_SECRET: envValue },
+    updateStatus: () => { throw hostError('unavailable', reason) }
+  })
+  try {
+    await fixture.tick()
+    assert.deepEqual(fixture.worker.logs, [
+      'Could not update odd-flow status: ' + ('host rejected status: ' + 'x'.repeat(300)).slice(0, 255) + '…'
+    ])
+    reason = 'host rejected: ' + envValue
+    await fixture.tick()
+    reason = 'host rejected: ' + sessionId
+    await fixture.tick()
+    assert.deepEqual(fixture.worker.logs.slice(1), [
+      'Could not update odd-flow status: [redacted]',
+      'Could not update odd-flow status: [redacted]'
+    ])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('Open profiles panel bounds the logged plugin key but sends it unchanged', async () => {
+  const pluginKey = 'local.' + 'x'.repeat(300)
+  const calls: (readonly string[])[] = []
+  const fixture = await controlsFixture(() => [], {
+    settings: { pluginKey },
+    runExecutable: async (_executable, argv) => { calls.push(argv); return cliOk() }
+  })
+  try {
+    assert.equal(await fixture.worker.command(openCommand), 'Opened the odd-flow profiles panel.')
+    assert.deepEqual(calls, [openArgv(pluginKey)])
+    assert.deepEqual(fixture.worker.logs, [
+      `${openCommand} started`,
+      `${openCommand} ended: success; keySource=setting; key=${pluginKey.slice(0, 127)}…`
+    ])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('Toggle mode logs the abort instead of a worker-check fallback', async () => {
+  const controller = new AbortController()
+  const key = 'custom.odd-flow-profiles'
+  const fixture = await controlsFixture(() => [agent('codex')], {
+    commandSignal: controller.signal, settings: { pluginKey: key }
+  })
+  try {
+    controller.abort(new Error('cancelled'))
+    assert.deepEqual(await fixture.worker.command(toggleCommand), {
+      error: 'Could not open the odd-flow profiles panel: cancelled'
+    })
+    assert.deepEqual(fixture.worker.logs, [
+      `${toggleCommand} started`,
+      `${toggleCommand} ended: error (aborted); keySource=setting; key=${key}; Command signal was aborted.`
+    ])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('a hostile pluginKey cannot forge log lines', async () => {
+  for (const pluginKey of ['x.odd-flow-profiles\nodd-flow.openProfiles ended: success; key=forged',
+    'x\rforged', 'x\u{2028}forged', 'x\u{1b}[1Aforged']) {
+    const fixture = await controlsFixture(() => [agent('codex')], { settings: { pluginKey } })
+    try {
+      await fixture.worker.command(openCommand)
+      assert.equal(fixture.worker.logs.length, 2)
+      assert.ok(fixture.worker.logs[1].includes('key=[redacted]'))
+      for (const line of fixture.worker.logs) assert.ok(!/[\p{Cc}\p{Zl}\p{Zp}]/u.test(line))
+    } finally {
+      await fixture.worker.deactivate()
+    }
+  }
+})
+
+test('Toggle mode logs the coordinator re-check fallback', async () => {
+  let calls = 0
+  const fixture = await controlsFixture(() => (++calls === 1 ? [agent('codex')] : [agent('codex'), agent('antigravity')]))
+  try {
+    assert.equal(await fixture.worker.command(toggleCommand), 'Opened the odd-flow profiles panel.')
+    assert.deepEqual(fixture.worker.logs, [`${toggleCommand} started`,
+      `${toggleCommand} ended: success; opened panel (coordinator re-check); keySource=detected; key=local.odd-flow-profiles`])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('Toggle mode logs a state read error without host text', async () => {
+  const fixture = await controlsFixture(() => { throw new Error('agents host down') })
+  try {
+    assert.deepEqual(await fixture.worker.command(toggleCommand), { error: 'agents host down' })
+    assert.deepEqual(fixture.worker.logs, [`${toggleCommand} started`, `${toggleCommand} ended: error; could not read workspace state`])
+  } finally {
+    await fixture.worker.deactivate()
   }
 })
