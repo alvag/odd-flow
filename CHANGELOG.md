@@ -6,11 +6,16 @@ This file tracks notable changes to odd-flow. It follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-25
+
 ### Added
 
 - `profile.py list --json` and `profile.py show --json` for tools that read saved profiles and effective session settings.
 - A one-time notice on the next coordinator prompt when the effective mode changes, so the previous mode's rules no longer apply.
 - An [Orca profiles plugin](orca-plugin/README.md) with a sidebar panel for switching session profiles and modes, a status bar item, and commands to open the panel or toggle a sole coordinator's mode. Worker rows are read-only and show only their title line.
+- **Reset to defaults** in the Orca panel removes a session's profile and mode overrides.
+- The Orca commands log their outcomes, and the status item keeps its text and tooltip within Orca's length limits.
+- The Orca panel, status tooltip, and **Toggle mode** command explain how to update an installed odd-flow script that lacks the JSON flags.
 
 ## [0.2.0] - 2026-11-24
 

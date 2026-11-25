@@ -5,8 +5,9 @@ workspace. The panel changes session bindings without sending an agent prompt.
 
 ## Load the plugin
 
-Use Orca 1.4.259 or newer and make `python3` available to Orca. From this
-repository's root on the Orca host, load the checkout as a development folder:
+Use Orca 1.4.259 or newer and odd-flow 0.3.0 or newer. Make `python3` available
+to Orca. From this repository's root on the Orca host, load the checkout as a
+development folder:
 
 ```sh
 orca plugin dev load orca-plugin --json
@@ -38,17 +39,15 @@ fingerprint.
 
 ## Settings
 
-Set these values in the plugin's Orca settings.
+Both settings are optional.
 
-- **`profileScript`**: Set this to the absolute path of
-  `skills/odd-flow/scripts/profile.py` in a trusted checkout. The script must
-  support `list --json`, `show --json`, `use`, `session-mode`, and `clear`.
-  The installed odd-flow 0.2.0 script lacks both JSON flags; point Orca at
-  the checkout until a release includes them. When this setting is blank,
-  the plugin checks the newest semver directory in
-  the Claude cache, then the Codex cache, then the Antigravity installation
-  under `~/.gemini/config/plugins/odd-flow`. The panel shows the path and
-  source it selected.
+- **`profileScript`**: Leave blank to use the installed odd-flow. The plugin
+  checks the newest semver directory in the Claude cache, then the newest
+  in the Codex cache, then the Antigravity installation under
+  `~/.gemini/config/plugins/odd-flow`. The panel shows the path and source
+  it selected. To override that choice, set the absolute path to a trusted
+  `profile.py` that supports `list --json`, `show --json`, `use`,
+  `session-mode`, and `clear`.
 - **`pluginKey`**: Set this to the installed key to use when opening the
   panel. When blank, the command looks for exactly one installed entry whose
   key ends in `.odd-flow-profiles` and whose status is a string other than
@@ -123,8 +122,10 @@ sends a prompt, or launches an agent.
 
 ## Troubleshoot
 
-- For `unrecognized arguments: --json`, check the **Script** line in the
-  panel and set `profileScript` to the checkout copy described above.
+- If the selected script does not accept `--json` for profile or session
+  lookups, the panel and status tooltip report:
+  `odd-flow 0.3.0 or newer is required (found <script path>). Update the odd-flow plugin, or set profileScript to a newer profile.py.`
+  See [Updating odd-flow](../README.md#updating) for the runtime update steps.
 - For a worker-check error, inspect the panel error or status tooltip.
   The worker looks for `orca` at an absolute file path in `ORCA_CLI_COMMAND`,
   on `PATH`, then at

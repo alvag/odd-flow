@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { delimiter, isAbsolute, resolve } from 'node:path'
+import { basename, delimiter, isAbsolute, resolve } from 'node:path'
 import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { isAgentKind, isMode, type Agent, type AgentRow, type OddState, type ProfileList,
@@ -33,6 +33,7 @@ const STATUS_TOOLTIP_LIMIT = 256
 const LOG_KEY_LIMIT = 128
 const LOG_HOST_REASON_LIMIT = 256
 const SESSION_UUID = /[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}/i
+const PROFILE_UPGRADE_PREFIX = 'odd-flow 0.3.0 or newer is required (found '
 type Env = Record<string, string | undefined>
 type Mutation = 'use' | 'session-mode' | 'clear'
 type Status = Omit<HostMethods['statusBar.update']['params'], 'id'> & { text: string; tooltip: string }
@@ -172,6 +173,9 @@ function statusFor(snapshot: State, panelOpenError?: string): Status {
   if ('error' in snapshot.script) return warning('odd: script unavailable', snapshot.script.error)
   if (panelOpenError) return warning('odd: panel unavailable', panelOpenError)
   if (rows.length > 1) {
+    const outdatedShow = rows.map(({ odd }) => odd)
+      .find((odd): odd is string => typeof odd === 'string' && odd.startsWith(PROFILE_UPGRADE_PREFIX))
+    if (outdatedShow) return warning('odd: show failed', outdatedShow)
     return { visible: true, tone: 'neutral', text: `odd: ${rows.length} sessions`, tooltip: 'Open the odd-flow profiles panel' }
   }
   const odd = readableShow(rows[0].odd)
@@ -214,6 +218,12 @@ async function readJson<T>(
       return `profile.py ${command} returned invalid JSON output.${detail ? ` ${detail}` : ''}`
     }
   } catch (error) {
+    const stderr = error && typeof error === 'object' && 'stderr' in error ? error.stderr : undefined
+    if (typeof stderr === 'string' && stderr.startsWith('usage: ') &&
+        stderr.split(/\r?\n/).reverse().find((line) => line.trim()) ===
+          `${basename(path)}: error: unrecognized arguments: --json`) {
+      return `${PROFILE_UPGRADE_PREFIX}${path}). Update the odd-flow plugin, or set profileScript to a newer profile.py.`
+    }
     return `profile.py ${command} failed: ${message(error)}`
   }
 }

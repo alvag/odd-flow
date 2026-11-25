@@ -425,17 +425,65 @@ test('reads the real profile.py JSON for each kind without writing to the isolat
   await worker.deactivate()
 })
 
-test('reports old scripts, nonzero exits, invalid JSON and bounded timeouts in list and rows', async (t) => {
+const upgradeError = (path: string) =>
+  `odd-flow 0.3.0 or newer is required (found ${path}). Update the odd-flow plugin, or set profileScript to a newer profile.py.`
+
+test('replaces old argparse errors in profile and row reads with upgrade instructions', async (t) => {
+  const home = await temp(t)
+  const worker = await fixture({ profileScript: oldScript }, [agent('claude'), agent('codex')], {
+    env: { PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
+  })
+  try {
+    const { profiles, agents } = await worker.request('state')
+    assert.deepEqual([profiles, ...agents.map(({ odd }) => odd)], Array(3).fill(upgradeError(oldScript)))
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('keeps the raw failure when a traceback line ends in the argparse phrase', async (t) => {
+  const home = await temp(t)
+  const script = join(home, 'trace.py')
+  await writeFile(script, 'import sys\nsys.stderr.write("Traceback (most recent call last):\\nRuntimeError: helper: error: unrecognized arguments: --json\\n")\nsys.exit(1)\n')
+  const worker = await fixture({ profileScript: script }, [agent('claude')], {
+    env: { PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
+  })
+  try {
+    const { profiles, agents } = await worker.request('state')
+    assert.match(String(profiles), /^profile\.py list failed: Traceback/)
+    assert.match(String(agents[0].odd), /^profile\.py show failed: Traceback/)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('keeps the raw failure when the script path contains the argparse phrase and stderr is empty', async (t) => {
+  const home = await temp(t)
+  const script = await scriptAt(join(home, 'path\nhelper: error: unrecognized arguments: --json\n', 'profile.py'))
+  await writeFile(script, 'raise SystemExit(1)\n')
+  const worker = await fixture({ profileScript: script }, [agent('claude')], {
+    env: { PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
+  })
+  try {
+    const { profiles, agents } = await worker.request('state')
+    assert.match(String(profiles), /^profile\.py list failed: Command failed:/)
+    assert.match(String(agents[0].odd), /^profile\.py show failed: Command failed:/)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('preserves nonzero exits, invalid JSON and bounded timeouts in list and rows', async (t) => {
   const home = await temp(t)
   for (const [filename, content, expected] of [
-    ['old-profile.py', null, /unrecognized arguments: --json/],
-    ['exit.py', 'import sys\nsys.stderr.write("boom-stderr\\n")\nsys.exit(3)\n', /boom-stderr/],
+    ['exit.py', 'import sys\nsys.stderr.write("boom-stderr: unrecognized arguments: --json-extra\\n")\nsys.exit(3)\n',
+      /^profile\.py (list|show) failed: boom-stderr: unrecognized arguments: --json-extra$/],
     ['garbage.py', 'print("not JSON")\n', /invalid JSON/],
     ['wrong-shape.py', 'print("[1,2]")\n', /invalid JSON/],
     ['sleep.py', 'import time\ntime.sleep(20)\n', /timed out/i]
   ] as const) {
-    const script = content === null ? oldScript : join(home, filename)
-    if (content !== null) await writeFile(script, content)
+    const script = join(home, filename)
+    await writeFile(script, content)
     const worker = await fixture({ profileScript: script }, [agent('claude'), agent('codex')], {
       env: { PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
     })
@@ -833,6 +881,28 @@ test('status bar reports failed dispatch checks, missing scripts and Show errors
   }
 })
 
+test('status refresh reads only Show and warns about an outdated script for one or several coordinators', async (t) => {
+  const home = await temp(t)
+  for (const rows of [[agent('codex')], [agent('codex'), agent('claude')]]) {
+    const calls: string[] = []
+    const fixture = await controlsFixture(() => rows, {
+      settings: { profileScript: oldScript },
+      env: { PATH: process.env.PATH, ODD_FLOW_HOME: home },
+      run: (argv, env) => { calls.push(argv[2]); return main.runPython(argv, env) }
+    })
+    try {
+      await fixture.tick()
+      assert.deepEqual(fixture.status(), {
+        id: 'odd-flow-status', visible: true, text: 'odd: show failed', tone: 'warning',
+        tooltip: upgradeError(oldScript)
+      })
+      assert.deepEqual(calls, rows.map(() => 'show'))
+    } finally {
+      await fixture.worker.deactivate()
+    }
+  }
+})
+
 test('coalesces overlapping event and timer refreshes into one trailing read', async () => {
   let reads = 0
   let active = 0
@@ -1048,6 +1118,22 @@ test('Toggle mode flips a sole coordinator using the mutation path, and panel mu
       `${toggleCommand} started`, `${toggleCommand} ended: success; switched to full-delegation`,
       `${toggleCommand} started`, `${toggleCommand} ended: success; switched to organic`
     ])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('Toggle mode gives upgrade instructions without mutating an outdated script', async (t) => {
+  const home = await temp(t)
+  const calls: string[] = []
+  const fixture = await controlsFixture(() => [agent('codex')], {
+    settings: { profileScript: oldScript },
+    env: { PATH: process.env.PATH, ODD_FLOW_HOME: home },
+    run: (argv, env) => { calls.push(argv[2]); return main.runPython(argv, env) }
+  })
+  try {
+    assert.deepEqual(await fixture.worker.command(toggleCommand), { error: upgradeError(oldScript) })
+    assert.deepEqual(calls, ['show'])
   } finally {
     await fixture.worker.deactivate()
   }

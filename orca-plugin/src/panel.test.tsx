@@ -60,7 +60,7 @@ test('shows state request failures and preserves per-row, script and profile err
     }
     return {
       script: { error: 'No installed profile.py was found. Set profileScript in Orca Settings.' },
-      profiles: 'profile.py list failed: unrecognized arguments: --json',
+      profiles: 'profile.py list failed: boom',
       agents: [{
         terminalId: 'a', title: 'Alpha', agent: 'claude', state: 'working', sessionId: 's',
         odd: 'profile.py show failed: boom'
@@ -75,7 +75,7 @@ test('shows state request failures and preserves per-row, script and profile err
     assert.ok(view.find({ text: /Could not load workspace state: worker offline/ }))
     failure = 0
     await view.press({ text: 'Refresh' })
-    for (const text of [/No installed profile\.py.*profileScript/, /unrecognized arguments: --json/,
+    for (const text of [/No installed profile\.py.*profileScript/, /list failed: boom/,
       /Alpha.*claude.*working/, /show failed: boom/, /Beta.*pi.*done/, /Unsupported agent kind/]) {
       assert.ok(view.find({ text }), String(text))
     }
@@ -84,6 +84,27 @@ test('shows state request failures and preserves per-row, script and profile err
     await view.press({ text: 'Refresh' })
     assert.ok(view.find({ text: /Could not load workspace state: agent list offline/ }))
     assert.deepEqual(view.errors, [])
+  } finally {
+    await view.unmount()
+  }
+})
+
+test('shows the upgrade instructions without disabling Mode or Reset to defaults', async () => {
+  const path = '/installed/profile.py'
+  const upgrade = `odd-flow 0.3.0 or newer is required (found ${path}). Update the odd-flow plugin, or set profileScript to a newer profile.py.`
+  const host = mockHost({ requests: { state: () => ({
+    script: { path, source: 'Claude cache' },
+    profiles: upgrade,
+    agents: [{
+      terminalId: 'a', title: 'Alpha', agent: 'claude', state: 'working', sessionId: 's', odd: upgrade
+    }]
+  }) } })
+  const view = await mount(panel, { host })
+  try {
+    assert.ok(view.find({ text: upgrade }))
+    assert.equal(view.find({ label: 'Profile' })?.props.disabled, true)
+    assert.equal(view.find({ label: 'Mode' })?.props.disabled, false)
+    assert.equal(view.find({ text: 'Reset to defaults' })?.props.disabled, false)
   } finally {
     await view.unmount()
   }
