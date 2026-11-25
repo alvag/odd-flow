@@ -43,6 +43,14 @@ const PROFILE_UPGRADE_PREFIX = 'odd-flow 0.3.0 or newer is required (found '
 type Env = Record<string, string | undefined>
 type Mutation = 'use' | 'session-mode' | 'clear'
 type Status = Omit<HostMethods['statusBar.update']['params'], 'id'> & { text: string; tooltip: string }
+type StatusDispatch = {
+  dispatchId: string
+  terminal?: string | null
+  state?: string
+  agent?: string | null
+  attention?: string[]
+}
+type StatusSnapshot = { snapshot: State; activeDispatches?: StatusDispatch[] }
 type MutationOutcome = MutationResult | { openPanel: true }
 type CommandResult = string | { error: string }
 type CommandTrace = {
@@ -109,7 +117,7 @@ function message(error: unknown): string {
 }
 
 function dispatchPage(stdout: string): {
-  workers: { dispatchId: string; terminal?: string | null }[]
+  workers: StatusDispatch[]
   nextCursor?: string | null
 } {
   let parsed
@@ -230,7 +238,35 @@ function tooltipLines(first: string, second?: string): string {
   return `${ellipsize(first, firstLimit)}\n${ellipsize(second, budget - firstLimit)}`
 }
 
-function statusFor(snapshot: State, panelOpenError?: string): Status {
+function blockedDuration(since: number | undefined): string {
+  if (!Number.isFinite(since) || !since) return ''
+  const seconds = Math.max(0, Math.floor((Date.now() - since) / 1000))
+  if (seconds < 60) return ` ${seconds}s`
+  if (seconds < 3600) return ` ${Math.floor(seconds / 60)}m`
+  if (seconds < 86400) return ` ${Math.floor(seconds / 3600)}h`
+  return ` ${Math.floor(seconds / 86400)}d`
+}
+
+function statusAttention(rows: Agent[], agents: Agent[], activeDispatches: StatusDispatch[]): string[] {
+  const labels = rows.flatMap((row) => attentionItems(row, []).map(({ label }) => label))
+  const byTerminal = new Map(agents.map((agent) => [agent.terminalId, agent]))
+  const seenTerminals = new Set<string>()
+  for (const { terminal, agent, attention } of activeDispatches) {
+    if (!terminal) continue
+    const row = byTerminal.get(terminal)
+    if (!row) continue
+    const blocked = !seenTerminals.has(terminal) && row.state === 'blocked'
+    seenTerminals.add(terminal)
+    if (!blocked && !(Array.isArray(attention) &&
+        attention.some((item) => item === 'input' || item === 'escalation'))) continue
+    const title = row.task?.title || row.title || 'Worker'
+    const provider = typeof agent === 'string' && agent ? agent : row.agent
+    labels.push(`${title}${provider ? ` — ${provider}` : ''}${blocked ? `, blocked${blockedDuration(row.stateStartedAt)}` : ''}`)
+  }
+  return labels
+}
+
+function statusFor({ snapshot, activeDispatches = [] }: StatusSnapshot, panelOpenError?: string): Status {
   const warning = (text: string, tooltip: string, tone: 'warning' | 'danger' = 'warning'): Status =>
     ({ visible: true, text, tooltip, tone })
   if (snapshot.workerCheckError) {
@@ -240,6 +276,8 @@ function statusFor(snapshot: State, panelOpenError?: string): Status {
   if (snapshot.error) return warning('odd: status unavailable', snapshot.error, 'danger')
   const rows = coordinators(snapshot)
   if (!rows.length) return { visible: false, tone: 'neutral', text: '', tooltip: '' }
+  const attention = statusAttention(rows, snapshot.agents, activeDispatches)
+  if (attention.length) return warning('odd: ⚠ needs you', attention.join('\n'))
   if ('error' in snapshot.script) return warning('odd: script unavailable', snapshot.script.error)
   if (panelOpenError) return warning('odd: panel unavailable', panelOpenError)
   if (rows.length > 1) {
@@ -383,10 +421,12 @@ export function createWorker({
     const getScript = async () => resolveScript(home, await orca.settings.get('profileScript'))
     const cachedDispatchIds = new Set<string>()
     const cachedTerminals = new Set<string>()
+    let cachedActiveDispatchIds = new Set<string>()
+    let statusHead = new Set<string>()
 
-    async function getDispatches(signal: AbortSignal): Promise<ReadonlySet<string> | string> {
+    async function getDispatches(signal: AbortSignal, includeAttention = false) {
       try {
-        const incremental = cachedDispatchIds.size > 0
+        const knownIds = includeAttention ? statusHead : cachedDispatchIds
         const deadline = performance.now() + DISPATCH_SCAN_TIMEOUT_MS
         function remainingBudget() {
           signal.throwIfAborted()
@@ -401,6 +441,10 @@ export function createWorker({
         // Publish only complete scans. A failed page must not advance the next scan's cutoff.
         const dispatchIds = new Set<string>()
         const terminals = new Set<string>()
+        const activeDispatches = new Map<string, StatusDispatch>()
+        const head = new Set<string>()
+        // A known page can precede an active dispatch whose state has changed.
+        const unseenActive = includeAttention ? new Set(cachedActiveDispatchIds) : new Set<string>()
         const seenCursors = new Set<string>()
         let cursor: string | null | undefined
         let reachedKnownPage = false
@@ -409,21 +453,31 @@ export function createWorker({
           const argv = cursor ? [...WORKER_LIST, '--cursor', cursor] : WORKER_LIST
           const { stdout } = await runExecutable(executable, argv, cliEnv, signal, timeout)
           const page = dispatchPage(stdout)
-          for (const { dispatchId, terminal } of page.workers) {
-            if (incremental && cachedDispatchIds.has(dispatchId)) reachedKnownPage = true
+          for (const row of page.workers) {
+            const { dispatchId, terminal, state } = row
+            if (knownIds.has(dispatchId)) reachedKnownPage = true
             dispatchIds.add(dispatchId)
             if (terminal != null) terminals.add(terminal)
+            if (includeAttention) {
+              if (!cursor) head.add(dispatchId)
+              unseenActive.delete(dispatchId)
+              if (terminal && typeof state === 'string' && ACTIVE_DISPATCH(state)) activeDispatches.set(dispatchId, row)
+            }
           }
           cursor = page.nextCursor
           if (cursor) {
             if (seenCursors.has(cursor)) throw new Error('Orca CLI repeated a dispatch cursor.')
             seenCursors.add(cursor)
           }
-        } while (cursor && !reachedKnownPage)
+        } while (cursor && (!reachedKnownPage || unseenActive.size > 0))
         remainingBudget()
         for (const id of dispatchIds) cachedDispatchIds.add(id)
         for (const terminal of terminals) cachedTerminals.add(terminal)
-        return cachedTerminals
+        if (includeAttention) {
+          cachedActiveDispatchIds = new Set(activeDispatches.keys())
+          statusHead = head
+        }
+        return { terminals: cachedTerminals, activeDispatches: [...activeDispatches.values()] }
       } catch (error) {
         return `Could not check dispatched workers: ${message(error)}`
       }
@@ -625,11 +679,13 @@ export function createWorker({
       return Object.fromEntries(entries)
     }
 
-    async function state(signal: AbortSignal, includeProfiles = true, includeDashboards = includeProfiles): Promise<State> {
+    async function readState(
+      signal: AbortSignal, includeProfiles: boolean, includeDashboards: boolean, includeAttention: boolean
+    ): Promise<StatusSnapshot> {
       try {
         const [listed, script] = await Promise.all([getAgents(signal), getScript()])
         const cleanEnv = isolatedEnv()
-        const dispatches = await getDispatches(signal)
+        const dispatches = await getDispatches(signal, includeAttention)
         const workerCheckError = typeof dispatches === 'string' ? dispatches : undefined
         const [profiles, agents] = await Promise.all([
           includeProfiles && !workerCheckError && 'path' in script
@@ -638,16 +694,20 @@ export function createWorker({
             agentRow({
               terminalId, title, agent, state, stateStartedAt, sessionId: sessionId ?? null,
               ...(task != null ? { task: { title: task.title } } : {})
-            }, dispatches, script, cleanEnv, run, signal)
+            }, typeof dispatches === 'string' ? dispatches : dispatches.terminals, script, cleanEnv, run, signal)
           ))
         ])
         const snapshot: State = { script, profiles, agents, ...(workerCheckError ? { workerCheckError } : {}) }
         if (includeDashboards && !workerCheckError) snapshot.dashboards = await dashboardsFor(snapshot, signal)
-        return snapshot
+        return { snapshot, activeDispatches: typeof dispatches === 'string' ? undefined : dispatches.activeDispatches }
       } catch (cause) {
         const error = message(cause)
-        return { script: { error }, profiles: null, agents: [], error }
+        return { snapshot: { script: { error }, profiles: null, agents: [], error } }
       }
+    }
+
+    async function state(signal: AbortSignal, includeProfiles = true): Promise<State> {
+      return (await readState(signal, includeProfiles, includeProfiles, false)).snapshot
     }
 
     const lifetime = new AbortController()
@@ -655,7 +715,7 @@ export function createWorker({
     let refreshing: Promise<void> | undefined
     let refreshAgain = false
 
-    function refreshStatus(snapshot?: State): Promise<void> {
+    function refreshStatus(snapshot?: StatusSnapshot): Promise<void> {
       const { signal } = lifetime
       if (signal.aborted) return Promise.resolve()
       if (refreshing) {
@@ -667,7 +727,7 @@ export function createWorker({
         try {
           do {
             refreshAgain = false
-            const current = snapshot ?? await state(signal, false)
+            const current = snapshot ?? await readState(signal, false, false, true)
             snapshot = undefined
             if (signal.aborted) return
             const status = statusFor(current, panelOpenError)
@@ -681,7 +741,7 @@ export function createWorker({
                 // Use the host message, not the subprocess-oriented stderr fallback.
                 const reason = (error instanceof Error ? error.message : String(error)).replace(/[\p{Cc}\p{Zl}\p{Zp}]/gu, '')
                 const privateReason = containsPrivateValue(reason) ||
-                  current.agents.some(({ sessionId }) => sessionId && reason.includes(sessionId))
+                  current.snapshot.agents.some(({ sessionId }) => sessionId && reason.includes(sessionId))
                 return `Could not update odd-flow status: ${privateReason ? '[redacted]' : ellipsize(reason, LOG_HOST_REASON_LIMIT)}`
               })
             }
@@ -779,10 +839,10 @@ export function createWorker({
         const dispatches = await getDispatches(signal)
         if (typeof dispatches === 'string') return soleCoordinator ? { openPanel: true }
           : { error: dispatches, workerCheckUnavailable: true }
-        if (matches.some((row) => isWorker(row, dispatches))) {
+        if (matches.some((row) => isWorker(row, dispatches.terminals))) {
           return soleCoordinator ? { openPanel: true } : { error: 'Dispatched worker sessions cannot be changed.' }
         }
-        if (soleCoordinator && agents.filter((row) => hasSession(row) && !isWorker(row, dispatches)).length !== 1) {
+        if (soleCoordinator && agents.filter((row) => hasSession(row) && !isWorker(row, dispatches.terminals)).length !== 1) {
           return { openPanel: true }
         }
       }
@@ -803,9 +863,9 @@ export function createWorker({
           if (error) return error
         }
         await run(['-I', script.path, command, ...args], sessionEnv(cleanEnv, { agent, sessionId }), signal)
-        const snapshot = await state(signal, true, !soleCoordinator)
-        void refreshStatus(signal.aborted ? undefined : snapshot)
-        return { state: snapshot }
+        const current = await readState(signal, true, !soleCoordinator, true)
+        void refreshStatus(signal.aborted ? undefined : current)
+        return { state: current.snapshot }
       } catch (cause) {
         return { error: `Could not run ${command}: ${message(cause)}` }
       }

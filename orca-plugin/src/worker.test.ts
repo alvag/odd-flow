@@ -1477,3 +1477,103 @@ test('status refresh runs no task-list, run-list or git', async () => {
     await fixture.worker.deactivate()
   }
 })
+
+test('shows needs you when a coordinator in the focused workspace is blocked', async () => {
+  const fixture = await controlsFixture(() => [agent('codex'), { ...agent('claude'), state: 'blocked' }])
+  try {
+    await fixture.tick()
+    assert.equal(fixture.status()?.text, 'odd: ⚠ needs you')
+    assert.equal(fixture.status()?.tone, 'warning')
+    assert.match(fixture.status()?.tooltip ?? '', /This session is blocked/)
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('alerts for a blocked worker terminal in the focused workspace', async () => {
+  const timestamp = Date.now() - 120_000
+  const worker = { ...dispatched, state: 'blocked' as const, stateStartedAt: timestamp }
+  const fixture = await controlsFixture(() => [agent('codex'), worker], {
+    runExecutable: async () => cliOk({ workers: [
+      { dispatchId: 'settled', terminal: worker.terminalId, state: 'succeeded', agent: 'claude/settled' },
+      { dispatchId: 'newest-active', terminal: worker.terminalId, state: 'ready', agent: 'claude/newest' },
+      { dispatchId: 'older-active', terminal: worker.terminalId, state: 'ready', agent: 'claude/older' }
+    ] })
+  })
+  try {
+    await fixture.tick()
+    assert.equal(fixture.status()?.text, 'odd: ⚠ needs you')
+    assert.equal(fixture.status()?.tooltip, `${task.title} — claude/newest, blocked 2m`)
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('alerts for pending worker attention until the existing scan reports it resolved', async () => {
+  const workers = [agent('input'), agent('escalation')]
+  const cursors: (string | undefined)[] = []
+  let complete = false
+  const fixture = await controlsFixture(() => [agent('codex'), ...workers], {
+    runExecutable: async (_executable, argv) => {
+      cursors.push(argv[6])
+      return argv[6] ? cliOk({ workers: workers.map(({ terminalId }, index) => ({
+        dispatchId: terminalId, terminal: terminalId, state: complete ? 'succeeded' : 'ready', agent: 'claude',
+        attention: [index === 0 ? 'input' : 'escalation']
+      })) }) : dispatchResult([{ dispatchId: 'newest' }], 'older')
+    }
+  })
+  try {
+    await fixture.tick()
+    assert.equal(fixture.status()?.text, 'odd: ⚠ needs you')
+    assert.equal(fixture.status()?.tooltip, 'input — claude\nescalation — claude')
+    complete = true
+    await fixture.tick()
+    assert.deepEqual(cursors, [undefined, 'older', undefined, 'older'])
+    assert.equal(fixture.status()?.text, 'odd: test · organic')
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test("keeps today's status when nothing needs the user", async () => {
+  const fixture = await controlsFixture(() => [agent('codex'), dispatched], {
+    runExecutable: async () => cliOk({ workers: [
+      { dispatchId: 'other-workspace', terminal: 'elsewhere', state: 'ready', attention: ['input'] },
+      { dispatchId: 'active', terminal: dispatched.terminalId, state: 'ready',
+        attention: ['unverifiable', 'root_completion'] },
+      ...['succeeded', 'failed', 'cancelled', 'lost'].map((state) => ({
+        dispatchId: state, terminal: dispatched.terminalId, state, attention: ['input']
+      }))
+    ] })
+  })
+  try {
+    await fixture.tick()
+    assert.deepEqual(fixture.status(), {
+      id: 'odd-flow-status', visible: true, text: 'odd: test · organic', tone: 'neutral',
+      tooltip: 'Profile source: file default\nMode source: default'
+    })
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('bounds the attention tooltip in UTF-16 without splitting a surrogate pair', async () => {
+  const workers = Array.from({ length: 25 }, (_, index) => ({
+    ...agent(`worker-${index}`), title: '😀'.repeat(20), state: 'blocked' as const
+  }))
+  const fixture = await controlsFixture(() => [agent('codex'), ...workers], {
+    runExecutable: async () => cliOk({ workers: workers.map(({ terminalId }) => ({
+      dispatchId: terminalId, terminal: terminalId, state: 'ready', agent: 'claude'
+    })) })
+  })
+  try {
+    await fixture.tick()
+    const status = fixture.status()
+    assert.equal(status?.text, 'odd: ⚠ needs you')
+    const tooltip = status?.tooltip ?? ''
+    assert.ok(tooltip.length <= 256 && tooltip.endsWith('…'))
+    assert.ok(!/[\uD800-\uDFFF]/u.test(tooltip))
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
