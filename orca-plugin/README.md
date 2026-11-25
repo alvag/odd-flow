@@ -40,15 +40,32 @@ fingerprint.
 ## Worker dispatch prompts
 
 For Orca orchestration prompts, the `agent.prompt.before` hook takes the first
-matching `# Role: <role>` line and appends `odd-flow-worker: <role>` on its own
-line, with the role in lowercase. It appends rather than prepends so odd-flow
-can still recognize the Orca worker preamble or a role line at the start of
-the original prompt. Prompts outside orchestration, prompts without a matching
-role, and prompts whose last non-empty line is already a worker marker pass
-unchanged. If the hook fails, Orca passes the original prompt through.
+matching `# Role: <role>` line and appends `odd-flow-worker: <role> <token>` on
+its own line. The role is lowercase and the token is 32 lowercase hexadecimal
+characters. Appending leaves the start of the prompt intact, and the trailing
+marker lets odd-flow still recognize a worker if the Orca preamble or role
+line changes.
 
-Installing or reloading this update requires re-approval because the manifest
-now declares the prompt hook. Review the access Orca reports before approving.
+Before adding the marker, the hook writes a private record under
+`$ODD_FLOW_STATE_DIR/worker-tokens/` (default: `~/.odd-flow/worker-tokens/`).
+The plugin reads `ODD_FLOW_STATE_DIR` from the Orca app's environment; the
+hooks read it from the agent process's environment, not necessarily a shell.
+Set the same absolute directory in both environments or leave it unset in both
+to use `~/.odd-flow`.
+When issuing a new token, the plugin makes a best-effort attempt to remove
+digest-named records whose numeric `issuedAt` is older than 15 minutes. Records
+it cannot read or parse, records without a numeric `issuedAt`, and other files
+stay.
+
+If an existing `worker-tokens` directory is not mode `0700`, or the plugin
+cannot write the new record, the hook leaves the prompt unchanged. It also
+leaves prompts unchanged outside orchestration, without a matching role, or
+when the last non-empty line already has a tokened marker. A bare marker does
+not stop issuance. If the hook fails or times out, Orca passes the original
+prompt through (`onError` is `"pass"`).
+
+Orca asks for approval again when the plugin's code changes. Get the user's
+approval before reloading or reinstalling the plugin.
 
 ## Settings
 

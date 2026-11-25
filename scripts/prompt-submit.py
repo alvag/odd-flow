@@ -11,8 +11,10 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
+import time
 
 CODEX = sys.argv[1:] == ["--runtime", "codex"]
 ANTIGRAVITY = sys.argv[1:] == ["--runtime", "antigravity"]
@@ -29,7 +31,7 @@ ORCA_WORKER_PREFIXES = (
 )
 WORKER_ROLES = r"(explore|write|verify|review|refute)"
 WORKER_ROLE = re.compile(rf"# Role: {WORKER_ROLES}", re.IGNORECASE | re.ASCII)
-WORKER_MARKER = re.compile(rf"odd-flow-worker: {WORKER_ROLES}", re.IGNORECASE | re.ASCII)
+WORKER_MARKER = re.compile(rf"odd-flow-worker: {WORKER_ROLES} ((?-i:[0-9a-f]{{32}}))", re.IGNORECASE | re.ASCII)
 PASTED_CONTENT_CLOSE = re.compile(r'</pasted_content id=(?:"[A-Za-z0-9_-]+"|[A-Za-z0-9_-]+)>')
 
 
@@ -47,6 +49,32 @@ def record_session_mode(marker, mode):
         marker.write_text(mode, encoding="ascii")
 
 
+def consume_worker_token(line):
+    match = WORKER_MARKER.fullmatch(line)
+    if match is None:
+        return False
+    role, token = match.groups()
+    try:
+        state_dir = os.environ.get("ODD_FLOW_STATE_DIR") or Path.home() / ".odd-flow"
+        key = hashlib.sha256(token.encode("ascii")).hexdigest()
+        record = Path(state_dir) / "worker-tokens" / key
+        if not stat.S_ISREG(record.lstat().st_mode):
+            return False
+        data = json.loads(record.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("role") != role.lower():
+            return False
+        issued_at = data.get("issuedAt")
+        now = time.time_ns() // 1_000_000
+        if type(issued_at) not in (int, float) or not now - 900_000 <= issued_at <= now + 60_000:
+            return False
+        # Remove the record on first use so a later prompt cannot reuse it.
+        # This does not guard against simultaneous use by multiple sessions.
+        os.unlink(record)
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return True
+
+
 def mark_first_prompt(session_id, prompt):
     marker = session_marker(session_id)
     if marker is None:
@@ -57,15 +85,15 @@ def mark_first_prompt(session_id, prompt):
     if PASTED_CONTENT_CLOSE.fullmatch(last_line):
         # Claude Code can wrap an Orca brief in pasted_content.
         last_line = next(filter(None, map(str.strip, reversed(lines[:-1]))), "")
-    worker = bool(lines) and (
-        prompt.startswith(ORCA_WORKER_PREFIXES)
-        or WORKER_ROLE.fullmatch(lines[0].rstrip())
-        or WORKER_MARKER.fullmatch(last_line.strip())
-    )
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         # Exclusive creation keeps any later prompt from changing the recorded role.
         with marker.open("x", encoding="ascii") as stream:
+            worker = bool(lines) and (
+                consume_worker_token(last_line.strip())
+                or prompt.startswith(ORCA_WORKER_PREFIXES)
+                or WORKER_ROLE.fullmatch(lines[0].rstrip())
+            )
             stream.write("worker" if worker else "parent")
     except (OSError, ValueError):
         pass

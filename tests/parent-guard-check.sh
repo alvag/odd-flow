@@ -4,12 +4,16 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 T=$(mktemp -d)
 echo "Scratch: $T"
-env -i PATH="$PATH" python3 -I - "$ROOT" "$T" <<'PY'
+env -i PATH="$PATH" python3 -I -B - "$ROOT" "$T" <<'PY'
+import hashlib
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+from unittest.mock import patch
 
 root, scratch = map(Path, sys.argv[1:])
 scratch = scratch.resolve()
@@ -23,6 +27,7 @@ env = {
     "TMPDIR": str(temp),
     "CLAUDE_PLUGIN_DATA": str(data),
     "ODD_FLOW_HOME": str(profiles),
+    "ODD_FLOW_STATE_DIR": str(scratch),
 }
 (profiles / "profiles.json").write_text('{"default":"A","profiles":{"A":{}}}')
 subprocess.run(["git", "init", "-q", str(workspace)], env=env, check=True)
@@ -95,51 +100,115 @@ for session, first in (
     check(f"S4 recognized worker is exempt: {session}", edit("code", session=session, **full))
 check("S4 a role on a later line does not mark a session", prompt("not-role", "Hello\n# Role: write"))
 check("S4 non-worker remains guarded", edit("code", session="not-role", **full), "deny")
-prompt("trailing-worker", "Updated Orca dispatch\n\n  ODD-Flow-Worker: WrItE  \n \t\n")
-check("S11 a trailing marker exempts a Claude worker",
-      edit("code", session="trailing-worker", **full))
-prompt("non-trailing-marker", "Updated Orca dispatch\nodd-flow-worker: write\nTask text")
-check("S11 a non-trailing marker leaves the Claude parent guarded",
-      edit("code", session="non-trailing-marker", **full), "deny")
-wrapped = 'Updated Orca dispatch\n\n<pasted_content id="ef22">\nTask text\n'
+tokens = scratch / "worker-tokens"
+tokens.mkdir(mode=0o700)
+
+
+def issue(token, role="write", age_ms=0):
+    record = tokens / hashlib.sha256(token.encode("ascii")).hexdigest()
+    with os.fdopen(os.open(record, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
+        json.dump({"role": role, "issuedAt": time.time_ns() // 1_000_000 - age_ms}, stream)
+    return record
+
+
+def marker_check(session, tail, expected=None):
+    check(f"S8 {session} prompt stays silent", prompt(session, "Updated Orca dispatch\n" + tail))
+    check(f"S8 {session} guard decision", edit("code", session=session, **full), expected)
+
+
+token = "1" * 32
+record = issue(token)
+marker_check("trailing-worker", f"\n  ODD-Flow-Worker: WrItE {token}  \n \t\n")
+if record.exists():
+    failed += 1
+    print("FAIL S8 accepted token record was not removed")
+else:
+    print("PASS S8 accepted token record was removed")
+marker_check("reused-token", f"odd-flow-worker: write {token}", "deny")
+
+token = "b" * 32
+record = issue(token)
+dispatch = f"You are working inside Orca, a multi-agent IDE.\n# Role: write\n\nodd-flow-worker: write {token}"
+for session in ("tokened-dispatch", "reused-tokened-dispatch"):
+    check(f"S8 {session} prompt stays silent", prompt(session, dispatch))
+    check(f"S8 {session} is an exempt worker", edit("code", session=session, **full))
+    if record.exists():
+        failed += 1
+        print(f"FAIL S8 {session} left the token record behind")
+    else:
+        print(f"PASS S8 {session} left no token record")
+
+spec = importlib.util.spec_from_file_location("prompt_submit", root / "scripts/prompt-submit.py")
+prompt_submit = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(prompt_submit)
+now_ms = 1_700_000_000_000
+with patch.dict(os.environ, {"ODD_FLOW_STATE_DIR": str(scratch)}), patch.object(
+    time, "time_ns", return_value=now_ms * 1_000_000
+):
+    for digit, age_ms, accepted in (
+        ("c", 900_000, True),
+        ("d", 900_001, False),
+        ("e", -60_000, True),
+        ("f", -60_001, False),
+    ):
+        token = digit * 32
+        record = issue(token, age_ms=age_ms)
+        actual = prompt_submit.consume_worker_token(f"odd-flow-worker: write {token}")
+        if actual is accepted and record.exists() is (not accepted):
+            print(f"PASS S8 token age {age_ms} ms: accepted={accepted}")
+        else:
+            failed += 1
+            print(f"FAIL S8 token age {age_ms} ms: accepted={actual}, record exists={record.exists()}")
+
+marker_check("bare-marker", "odd-flow-worker: write", "deny")
+for session, digit, role, age_ms in (
+    ("wrong-role", "2", "verify", 0),
+    ("expired-token", "3", "write", 16 * 60_000),
+    ("future-token", "4", "write", -120_000),
+    ("malformed-token", "A", "write", 0),
+):
+    token = digit * 32
+    issue(token, role, age_ms)
+    marker_check(session, f"odd-flow-worker: write {token}", "deny")
+marker_check("missing-record", f"odd-flow-worker: write {'5' * 32}", "deny")
+
+for session, tag_id, digit in (
+    ("wrapped-worker", '"ef22"', "6"),
+    ("unquoted-wrapped-worker", "Brief_9-a", "7"),
+):
+    token = digit * 32
+    issue(token)
+    marker_check(session, f"<pasted_content id={tag_id}>\nTask text\n"
+                 f"odd-flow-worker: write {token}\n \t\n</pasted_content id={tag_id}>\n")
+
+token = "8" * 32
+record = issue(token)
+trailing = f"odd-flow-worker: write {token}"
+wrapped = '<pasted_content id="ef22">\nTask text\n'
 closing = '</pasted_content id="ef22">'
-trailing = "odd-flow-worker: write\n \t\n"
-prompt("wrapped-worker", wrapped + trailing + closing + "\n")
-check("S11 a marker before a quoted closing tag exempts a Claude worker",
-      edit("code", session="wrapped-worker", **full))
-prompt("unquoted-wrapped-worker", wrapped.replace('id="ef22"', "id=Brief_9-a")
-       + trailing + "</pasted_content id=Brief_9-a>\n")
-check("S11 a marker before an unquoted closing tag still exempts a Claude worker",
-      edit("code", session="unquoted-wrapped-worker", **full))
-prompt("wrapped-parent", wrapped + closing + "\n")
-check("S11 a closing tag without a preceding marker leaves the parent guarded",
-      edit("code", session="wrapped-parent", **full), "deny")
-prompt("double-closing", wrapped + trailing + closing + "\n" + closing)
-check("S11 two closing tags leave the parent guarded",
-      edit("code", session="double-closing", **full), "deny")
+marker_check("non-trailing-marker", trailing + "\nTask text", "deny")
+marker_check("wrapped-parent", wrapped + closing, "deny")
+marker_check("double-closing", wrapped + trailing + "\n" + closing + "\n" + closing, "deny")
 for i, tag in enumerate(('</pasted_content id="ef22>', '</pasted_content id=ef22">',
                          '</pasted_content id="">', '</pasted_content>')):
-    prompt(f"bad-tag-{i}", "Updated Orca dispatch\nodd-flow-worker: write\n" + tag)
-    check(f"S11 malformed closing tag {tag!r} leaves the parent guarded",
-          edit("code", session=f"bad-tag-{i}", **full), "deny")
+    marker_check(f"bad-tag-{i}", wrapped + trailing + "\n" + tag, "deny")
 prompt("non-ascii-role", "# Role: rev" + chr(0x131) + "ew\nTask")
 check("S11 a non-ASCII first-line role leaves the parent guarded",
       edit("code", session="non-ascii-role", **full), "deny")
-prompt("non-ascii-marker", "Updated Orca dispatch\nodd-flow-worker: rev" + chr(0x131) + "ew")
-check("S11 a marker with a non-ASCII case variant leaves the parent guarded",
-      edit("code", session="non-ascii-marker", **full), "deny")
-prompt("fenced-marker", "Look:\n```\nodd-flow-worker: write\n```\n")
-check("S11 a marker in a closed fenced block leaves the parent guarded",
-      edit("code", session="fenced-marker", **full), "deny")
-for i, tail in enumerate(("odd-flow-worker: deploy", "odd-flow-worker: write now",
-                          "> odd-flow-worker: write", "odd-flow-worker:write")):
-    prompt(f"bad-marker-{i}", "Updated Orca dispatch\n" + tail)
-    check(f"S11 malformed marker {tail!r} leaves the parent guarded",
-          edit("code", session=f"bad-marker-{i}", **full), "deny")
+review_token = "9" * 32
+issue(review_token, "review")
+marker_check("non-ascii-marker", f"odd-flow-worker: rev{chr(0x131)}ew {review_token}", "deny")
+marker_check("fenced-marker", "Look:\n```\n" + trailing + "\n```\n", "deny")
+for i, tail in enumerate((f"odd-flow-worker: deploy {token}", trailing + " now",
+                          "> " + trailing, f"odd-flow-worker:write {token}")):
+    marker_check(f"bad-marker-{i}", tail, "deny")
 prompt("late-marker", "Hello")
-prompt("late-marker", "Task\n\nodd-flow-worker: write\n")
-check("S11 a marker on a later prompt cannot mark a parent",
-      edit("code", session="late-marker", **full), "deny")
+marker_check("late-marker", trailing, "deny")
+if not record.is_file():
+    failed += 1
+    print("FAIL S8 a later prompt consumed the token record")
+else:
+    print("PASS S8 a later prompt did not consume the token record")
 check("S4 absent plugin data preserves prompt output",
       prompt("no-data", "# Role: write", CLAUDE_PLUGIN_DATA=None))
 check("S4 absent plugin data does not mark",
