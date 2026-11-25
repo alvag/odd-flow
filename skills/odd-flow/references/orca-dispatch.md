@@ -20,8 +20,10 @@
    A profile entry counts as the user naming the model, so its model and effort are allowed.
    - `worker-start`:
      `ORCA orchestration worker-start --environment local --spec-file <file> --task-title "<T# role: short title>" --worktree current <flags>`
+     For a dependent unit, create the Task up front with terminal step 1. Once it can launch (see When Orca wakes you), use `ORCA orchestration worker-start --environment local --task <taskId> --worktree current <flags>` instead, without `--spec-file` or `--task-title`.
    - Terminal steps: for an opened pane or a tab with `launch: terminal` (Codex). `worker-start --agent codex` starts Codex in a sandbox that blocks the connection to Orca, so the worker could never report. Start it in a terminal instead. For a Codex tab, use the resolve result's `terminal_command`, which already carries the model and effort.
      1. `ORCA orchestration task-create --environment local --spec-file <file> --task-title "<T# role: short title>" --json`, and keep `taskId`.
+        Only for a [unit](delegation.md#units) that depends on another unit of this request, add `--deps '<JSON array of dependency taskIds>'` when creating the Task up front. Use IDs from the same Run and record the new `taskId`. Defer placement and the remaining terminal steps until it can launch; resume at the applicable terminal step without creating the Task again. Launch independent units as usual.
      2. `ORCA terminal create --worktree current --title "<T# role: short title>" --command "$CMD" --json`, and keep the terminal `handle`. Set `CMD` in the same shell command straight from the resolve JSON (for example `CMD=$(python3 <skill-dir>/scripts/profile.py resolve <role> --json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["terminal_command"])')`); never paste its text inside the quotes, because the parent's shell would expand `$`, backticks or `"` in it.
      3. `ORCA terminal wait --terminal <handle> --for tui-idle --timeout-ms 60000 --json`.
         With Codex CLI 0.171.0 and the odd-flow Codex plugin (verified 2026-11-23), new interactive Codex sessions, including Orca workers, showed `Hooks need review` after the first install and after a reinstall that changed a hook script. Codex runs a cached copy of the plugin: local edits do not change the installed hooks until reinstall, and trust persists until the hooks change again.
@@ -62,6 +64,8 @@ Start every independent worker of one parallel batch from a single shell command
 - `question`: answer from the task or the user's instructions. Otherwise relay it to the user unchanged: every option, label and description in original order, and the allowed answers. Return a valid answer to the worker once.
 - An Antigravity worker that pauses with `stopReason=needs-input` when it first runs `orca orchestration send` (verified 2026-11-24, `agy` 1.5.16) is waiting for `orca` command permission, not failing. Relay it to the user: only they decide whether to persist `orca` permission in Antigravity `settings.json`. Once persisted, later Antigravity workers send `worker_done` without escalation. Do not answer the prompt for them.
 - `escalation` or a lost worker: apply the correction bounds in `delegation.md`; never retry a launch blindly.
+- If a dependency unit fails or exhausts its correction bound, follow the active mode. Cancel each pending dependent with `ORCA orchestration task-update --environment local --id <task_id> --status failed --result cancelled`, or keep it pending for a relaunch that continues the unit. Do not leave dependents pending silently.
+- On every wake, after handling the message and any `worker_done` checks above, run `ORCA orchestration task-list --environment local --ready --brief` and start the ready Tasks of this request. A successful outcome makes dependents ready before you check the report. Start a dependent only after every dependency's report passes the checks above.
 
 ## Without Orca
 
