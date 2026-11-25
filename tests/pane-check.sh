@@ -115,15 +115,36 @@ title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verif
 
 layout "$p"
 out=$(widths='118' settle_ms=0 open_pane --role verify); ec=$?
-expect "consecutive launches: first sample at 118 columns creates a titled tab" 0 "$ec" \
+expect "narrow width without a recorded split creates a titled tab" 0 "$ec" \
   '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
 expect "created tab reports the resolved verify role and null defaults" 0 "$ec" \
   '"role": "verify", "agent": "claude", "model": null, "effort": null'
+
+out=$(widths='80 81 82' settle_ms=200 open_pane --role verify); ec=$?
+expect "width stays narrow: tab at the bound using the last width" 0 "$ec" \
+  '"cols": 82, "min_cols": 160, "reason": "parent terminal is 82 columns wide (minimum 160)"' \
+  "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
+
+out=$(widths='80 80 80' settle_ms=150 open_pane --role verify); ec=$?
+expect "partial last step stays within the bound" 0 "$ec" \
+  '"cols": 80' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n150 True'
 
 out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
 expect "consecutive launches: measure again and split right at 219 columns" 0 "$ec" \
   '"placement": "split-right", "handle": "term_new"' \
   "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\n0 True'
+
+# Orca reports the parent alone again when the split closes, before the TTY grows.
+out=$(widths='110 110 110' settle_ms=200 open_pane --role verify); ec=$?
+expect "parent alone after a split closes: use the recorded wide width after settling" 0 "$ec" \
+  '"cols": 110, "min_cols": 160, "reason": "parent terminal measured 110 columns; recorded width is 219 columns"' \
+  "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
+
+layout "$(split horizontal "$p" "$r1")"
+out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "parent shares its tab: ignore the recorded wide width" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
+layout "$p"
 
 out=$(fail_create=1 open_pane --role verify --cols 118); ec=$?
 expect "tab create refusal is visible" 1 "$ec" 'Orca terminal create: create refused' \
@@ -140,11 +161,6 @@ expect "tab create reply without a handle warns that a terminal may have opened"
 out=$(widths='81 165' settle_ms=100 open_pane --role verify); ec=$?
 expect "width settles under lock: split right using the new width" 0 "$ec" \
   '"cols": 165, "min_cols": 160' "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\n0 True\n100 True'
-
-out=$(widths='80 81 82' settle_ms=200 open_pane --role verify); ec=$?
-expect "width stays narrow: tab at the bound using the last width" 0 "$ec" \
-  '"cols": 82, "min_cols": 160, "reason": "parent terminal is 82 columns wide (minimum 160)"' \
-  "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
 
 out=$(widths='unknown' settle_ms=1000 open_pane --role verify); ec=$?
 expect "unknown first width: tab without retrying" 0 "$ec" \
@@ -168,10 +184,6 @@ expect "right split reports the resolved explore role, model and effort" 0 "$ec"
 out=$(text_output=1 open_pane --role explore --cols 200); ec=$?
 expect "text preserves placement and appends the resolved role notice" 0 "$ec" \
   'pane: split-right term_new: parent terminal has at least 160 columns | explore -> antigravity / gemini-4 / effort low'
-
-out=$(widths='80 80 80' settle_ms=150 open_pane --role verify); ec=$?
-expect "partial last step stays within the bound" 0 "$ec" \
-  '"cols": 80' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n150 True'
 
 out=$(widths='80 unknown' settle_ms=500 open_pane --role verify); ec=$?
 expect "width lost mid-wait: tab with unknown width" 0 "$ec" \

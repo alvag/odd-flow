@@ -67,7 +67,7 @@ def right_columns(node, parent, panes_only=False):
             direction == "vertical" and isinstance(first, dict)
             and first.get("type") == "terminal" and first.get("handle") == parent
         ):
-            yield second
+            yield second, False
         yield from right_columns(first, parent, panes_only=True)
         yield from right_columns(second, parent, panes_only=True)
     elif not panes_only and kind == "split":
@@ -80,7 +80,10 @@ def right_columns(node, parent, panes_only=False):
         for tab in tabs:
             if not isinstance(tab, dict):
                 raise malformed_layout("expected a tab object")
-            yield from right_columns(tab.get("panes"), parent, panes_only=True)
+            panes = tab.get("panes")
+            yield from right_columns(panes, parent, panes_only=True)
+            if panes["type"] == "terminal" and panes["handle"] == parent:
+                yield None, True
     else:
         raise malformed_layout(f"unexpected node type {kind!r}")
 
@@ -90,16 +93,17 @@ def layout_target(layout, parent):
     if not isinstance(items, list):
         raise malformed_layout("visualLayouts must be a list")
     column = None
+    parent_alone = False
     for item in items:
         if not isinstance(item, dict):
             raise malformed_layout("expected a visualLayouts entry object")
-        for candidate in right_columns(item.get("root"), parent):
+        for candidate, alone in right_columns(item.get("root"), parent):
             # Keep the first match, but finish traversing to validate the layout.
             if column is None:
                 column = candidate
-    if column is None:
-        return None
-    return max(leaves(column), key=lambda leaf: leaf[0])[1]
+            parent_alone |= alone
+    target = max(leaves(column), key=lambda leaf: leaf[0])[1] if column is not None else None
+    return target, parent_alone
 
 
 def leaves(node, height=1):
@@ -141,6 +145,15 @@ def parent_cols():
     return None
 
 
+def recorded_width(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as record:
+            return int(record.read(16))
+    except (OSError, ValueError):
+        return None
+
+
 def open_pane(args):
     parent = orca_terminal()
     if parent is None:
@@ -160,14 +173,15 @@ def open_pane(args):
         raise ProfileError("ODD_FLOW_SPLIT_SETTLE_MS must be a non-negative integer") from exc
     command = role["split_command"]
 
-    lock_path = os.path.join(tempfile.gettempdir(), f"odd-flow-pane-{parent}.lock")
-    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDONLY | os.O_NOFOLLOW, 0o600)
+    pane_path = os.path.join(tempfile.gettempdir(), f"odd-flow-pane-{parent}")
+    width_path = pane_path + ".cols"
+    lock_fd = os.open(pane_path + ".lock", os.O_CREAT | os.O_RDONLY | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "r") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        target = None
+        target, parent_alone = None, False
         if command is not None:
             layout = terminal("list", "--include-visual-layouts")
-            target = layout_target(layout, parent)
+            target, parent_alone = layout_target(layout, parent)
         cols = args.cols if args.cols is not None else parent_cols()
         if command is not None and target is None and args.cols is None and settle_ms:
             # The layout can lose its right column before the TTY grows.
@@ -184,12 +198,23 @@ def open_pane(args):
         if command is None:
             result["reason"] = f"no split command for {role['agent']}"
             return result, role
+        saved_cols = None
+        if (
+            target is None and parent_alone and args.cols is None
+            and cols is not None and cols < min_cols
+        ):
+            recorded = recorded_width(width_path)
+            if recorded is not None and recorded >= min_cols:
+                saved_cols = recorded
         if target:
             result.update(placement="split-below", target=target, reason="right column exists")
             direction = "horizontal"
-        elif cols is not None and cols >= min_cols:
-            result.update(placement="split-right", target=parent,
-                          reason=f"parent terminal has at least {min_cols} columns")
+        elif (cols is not None and cols >= min_cols) or saved_cols is not None:
+            reason = (
+                f"parent terminal has at least {min_cols} columns" if saved_cols is None
+                else f"parent terminal measured {cols} columns; recorded width is {saved_cols} columns"
+            )
+            result.update(placement="split-right", target=parent, reason=reason)
             direction = "vertical"
         else:
             result["reason"] = (
@@ -211,6 +236,17 @@ def open_pane(args):
         if not isinstance(handle, str) or not handle:
             raise RuntimeError(f"Orca terminal split: missing split handle. {SPLIT_HINT}")
         result["handle"] = handle
+        if direction == "vertical" and args.cols is None and cols is not None and cols >= min_cols:
+            try:
+                fd = os.open(
+                    width_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK,
+                    0o600,
+                )
+                with os.fdopen(fd, "w") as record:
+                    record.write(f"{cols}\n")
+            except OSError:
+                # The split already succeeded; a missing record must not hide its handle.
+                pass
 
     try:
         terminal("set-pane-title", "--terminal", handle, "--title", args.title)
