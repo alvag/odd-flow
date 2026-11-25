@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { basename, delimiter, isAbsolute, join, resolve } from 'node:path'
 import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { attentionItems, currentWork, parseGit, parseOrcaTime, selectFeatureDoc, workerRows,
+import { attentionItems, currentWork, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc, workerRows,
   type RawDispatch, type RawRun, type RawTask } from './dashboard'
 import { isAgentKind, isMode, type Agent, type AgentRow, type Dashboard, type OddState, type ProfileList,
   type MutationResult, type Script, type SessionTarget, type State } from './protocol'
@@ -29,7 +29,6 @@ const WORKER_LIST = ['orchestration', 'worker-list', '--environment', 'local', '
 const RUN_LIST = ['orchestration', 'run-list', '--environment', 'local', '--json', '--full']
 const DASHBOARD_TIMEOUT_MS = 15_000
 const DASHBOARD_RUN_LIMIT = 10
-const ACTIVE_DISPATCH = (state: string) => !['succeeded', 'failed', 'cancelled', 'lost'].includes(state)
 const PANEL_ID = 'odd-flow-profiles'
 const STATUS_ID = 'odd-flow-status'
 const STATUS_REFRESH_MS = 15_000
@@ -230,9 +229,9 @@ function ellipsize(value: string, limit: number): string {
   return value.length <= limit ? value : value.slice(0, limit - 1).replace(/[\uD800-\uDBFF]$/u, '') + '…'
 }
 
-function tooltipLines(first: string, second?: string): string {
+function tooltipLines(first: string, second?: string, limit = STATUS_TOOLTIP_LIMIT): string {
   if (!second) return first
-  const budget = STATUS_TOOLTIP_LIMIT - 1 // Reserve the newline between the two details.
+  const budget = limit - 1 // Reserve the newline between the two details.
   if (first.length + second.length <= budget) return `${first}\n${second}`
   const firstLimit = Math.min(first.length, Math.max(Math.ceil(budget / 2), budget - second.length))
   return `${ellipsize(first, firstLimit)}\n${ellipsize(second, budget - firstLimit)}`
@@ -277,7 +276,14 @@ function statusFor({ snapshot, activeDispatches = [] }: StatusSnapshot, panelOpe
   const rows = coordinators(snapshot)
   if (!rows.length) return { visible: false, tone: 'neutral', text: '', tooltip: '' }
   const attention = statusAttention(rows, snapshot.agents, activeDispatches)
-  if (attention.length) return warning('odd: ⚠ needs you', attention.join('\n'))
+  if (attention.length) {
+    const scriptError = 'error' in snapshot.script ? snapshot.script.error : undefined
+    // When both warnings are present, reserve enough room for both inside the second part.
+    const detail = scriptError && panelOpenError
+      ? tooltipLines(scriptError, panelOpenError, Math.floor((STATUS_TOOLTIP_LIMIT - 1) / 2))
+      : scriptError || panelOpenError
+    return warning('odd: ⚠ needs you', tooltipLines(attention.join('\n'), detail))
+  }
   if ('error' in snapshot.script) return warning('odd: script unavailable', snapshot.script.error)
   if (panelOpenError) return warning('odd: panel unavailable', panelOpenError)
   if (rows.length > 1) {
@@ -461,7 +467,7 @@ export function createWorker({
             if (includeAttention) {
               if (!cursor) head.add(dispatchId)
               unseenActive.delete(dispatchId)
-              if (terminal && typeof state === 'string' && ACTIVE_DISPATCH(state)) activeDispatches.set(dispatchId, row)
+              if (terminal && typeof state === 'string' && isActiveDispatch(state)) activeDispatches.set(dispatchId, row)
             }
           }
           cursor = page.nextCursor

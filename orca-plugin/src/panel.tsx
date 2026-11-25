@@ -2,7 +2,7 @@ import {
   atom, Badge, Box, Button, Callout, Card, Collapsible, EmptyState, Heading, on, plugin,
   Progress, read, RelativeTime, Row, Select, set, Stack, Text, type PanelContext, type Tone
 } from 'orca'
-import { attentionItems } from './dashboard'
+import { attentionItems, isActiveDispatch } from './dashboard'
 import {
   isAgentKind, MODES, type Agent, type Attention, type CurrentWork, type Dashboard, type FeatureDoc,
   type FeatureTask, type GitSummary, type MutationResult, type State, type WorkerRow
@@ -110,6 +110,21 @@ function statusTone(status: string, task = false): Tone {
   }
 }
 
+function OrcaWorkBadge({ status, working, needsYou = false }: { status: string; working: boolean; needsYou?: boolean }) {
+  if (needsYou) return <Badge tone="warning">needs you</Badge>
+  if (working) return <Badge tone="accent">working</Badge>
+  switch (status) {
+    case 'completed':
+    case 'succeeded': return <Badge tone="success">done</Badge>
+    case 'failed':
+    case 'stopped':
+    case 'abandoned':
+    case 'lost': return <Badge tone="danger">{status}</Badge>
+    case 'blocked': return <Badge tone="warning">{status}</Badge>
+    default: return <Badge tone="neutral">{status}</Badge>
+  }
+}
+
 function SessionState({ state, stateStartedAt }: Pick<Agent, 'state' | 'stateStartedAt'>) {
   if (state === 'waiting') {
     return (
@@ -157,8 +172,8 @@ function RunTime({ start, end, active, agent }: {
     <Text muted size="sm" truncate>
       {agent && `${agent} · `}
       {start === null ? 'Time unavailable'
-        : end !== null ? `took ${elapsed(start, end)}`
-        : active ? <RelativeTime at={start} format="duration" muted /> : 'Time unavailable'}
+        : active ? <RelativeTime at={start} format="duration" muted />
+        : end !== null ? `took ${elapsed(start, end)}` : 'Time unavailable'}
     </Text>
   )
 }
@@ -204,10 +219,10 @@ function CurrentSection({ current }: { current: CurrentWork }) {
       {current.tasks.map((task, index) => (
         <Stack gap="none" key={index}>
           <Row gap="xs" align="center">
-            <Badge tone={statusTone(task.status, true)}>{task.status === 'in_progress' ? 'working' : task.status}</Badge>
+            <OrcaWorkBadge status={task.status} working={task.status === 'dispatched'} />
             <Text truncate>{task.title}</Text>
           </Row>
-          <RunTime start={task.startedAt} end={task.endedAt} active={task.status === 'in_progress' || task.status === 'working'} />
+          <RunTime start={task.startedAt} end={task.endedAt} active={task.status === 'dispatched'} />
         </Stack>
       ))}
       {current.lastResult && (
@@ -244,11 +259,12 @@ function WorkSection({ dashboard }: { dashboard: Dashboard }) {
 }
 
 function WorkerLine({ worker }: { worker: WorkerRow }) {
-  const status = worker.needsYou ? 'needs you' : worker.state
   return (
     <Stack gap="none">
       <Box direction="row" gap="xs" align="center" wrap={false}>
-        <Box shrink={false}><Badge tone={statusTone(status)}>{status}</Badge></Box>
+        <Box shrink={false}>
+          <OrcaWorkBadge status={worker.state} working={isActiveDispatch(worker.state)} needsYou={worker.needsYou} />
+        </Box>
         <Box grow minWidth={0}><Text truncate>{worker.title}</Text></Box>
       </Box>
       <RunTime agent={worker.agent} start={worker.startedAt} end={worker.endedAt} active={worker.active} />

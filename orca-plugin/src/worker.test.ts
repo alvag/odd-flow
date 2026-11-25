@@ -1335,7 +1335,7 @@ async function dashboardFixture(
       const run = argv[argv.indexOf('--run') + 1]
       if (argv[1] === 'worker-list') {
         return cliOk({ workers: [{
-          dispatchId: 'dispatch-1', taskId: 'task-1', state: 'running', terminal: 'worker-terminal',
+          dispatchId: 'dispatch-1', taskId: 'task-1', state: 'ready', terminal: 'worker-terminal',
           agent: 'codex/gpt-6-luna', attention: ['input'], workspace: root && `workspace::${root}`,
           spec: taskSpecMarker
         }] })
@@ -1358,7 +1358,7 @@ async function dashboardFixture(
         }
         assert.equal(run, 'run-1')
         return cliOk({ tasks: [{
-          id: 'task-1', task_title: 'Gather data', status: 'in_progress', created_at: started,
+          id: 'task-1', task_title: 'Gather data', status: 'dispatched', created_at: started,
           completed_at: null, created_by_terminal_handle: 'codex', run_id: 'run-1', result: null,
           spec: taskSpecMarker
         }] })
@@ -1573,6 +1573,67 @@ test('bounds the attention tooltip in UTF-16 without splitting a surrogate pair'
     const tooltip = status?.tooltip ?? ''
     assert.ok(tooltip.length <= 256 && tooltip.endsWith('…'))
     assert.ok(!/[\uD800-\uDFFF]/u.test(tooltip))
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('status refresh reads one page once settled dispatches are known', async () => {
+  const calls: string[][] = []
+  const fixture = await controlsFixture(() => [agent('codex')], { runExecutable: async (_e, argv) => {
+    calls.push([...argv])
+    return argv.includes('--cursor') ? cliOk({ workers: [{ dispatchId: 'old', terminal: 'x', state: 'stopped' }] })
+      : cliOk({ workers: [{ dispatchId: 'new', terminal: 'y', state: 'succeeded' }], nextCursor: 'c1' })
+  } })
+  try {
+    await fixture.tick()
+    assert.deepEqual(calls.splice(0), [workerListArgv, [...workerListArgv, '--cursor', 'c1']])
+    await fixture.tick()
+    assert.deepEqual(calls, [workerListArgv])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('keeps the scan open only until older active dispatches settle', async () => {
+  let state = 'ready'
+  const calls: string[][] = []
+  const fixture = await controlsFixture(() => [agent('codex'), { ...dispatched, state: 'blocked' }], {
+    runExecutable: async (_executable, argv) => {
+      calls.push([...argv])
+      return argv.includes('--cursor') ? cliOk({ workers: [{
+        dispatchId: 'old', terminal: dispatched.terminalId, state, attention: ['input']
+      }] }) : cliOk({ workers: [{ dispatchId: 'new', state: 'succeeded' }], nextCursor: 'older' })
+    }
+  })
+  try {
+    await fixture.tick()
+    assert.deepEqual(calls.splice(0), [workerListArgv, [...workerListArgv, '--cursor', 'older']])
+    assert.equal(fixture.status()?.text, 'odd: ⚠ needs you')
+    state = 'abandoned'
+    await fixture.tick()
+    assert.deepEqual(calls.splice(0), [workerListArgv, [...workerListArgv, '--cursor', 'older']])
+    assert.equal(fixture.status()?.text, 'odd: test · organic')
+    await fixture.tick()
+    assert.deepEqual(calls, [workerListArgv])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('keeps script and panel warnings in the needs-you tooltip', async () => {
+  const fixture = await controlsFixture(() => [{ ...agent('codex'), state: 'blocked' }], {
+    settings: { profileScript: 'not-absolute' },
+    runExecutable: async (_executable, argv) =>
+      argv[0] === 'orchestration' ? dispatches() : cliOk({ plugins: [] })
+  })
+  try {
+    await fixture.tick()
+    assert.equal(fixture.status()?.text, 'odd: ⚠ needs you')
+    assert.match(fixture.status()?.tooltip ?? '', /^This session is blocked\n[^\n]*profileScript/)
+    assert.ok(typeof await fixture.worker.command(openCommand) === 'object')
+    assert.equal(fixture.status()?.text, 'odd: ⚠ needs you')
+    assert.match(fixture.status()?.tooltip ?? '', /^This session is blocked\n[^\n]*profileScript[^\n]*\nCould not open the odd-flow profiles panel:/)
   } finally {
     await fixture.worker.deactivate()
   }

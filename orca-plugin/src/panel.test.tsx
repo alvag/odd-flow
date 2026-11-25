@@ -419,14 +419,14 @@ test('renders current work without a feature document', async () => {
     objective: 'Review the panel', startedAt: started,
     tasks: [
       { title: 'Collect evidence', status: 'completed', startedAt: started, endedAt: started + 120000 },
-      { title: 'Inspect the panel', status: 'in_progress', startedAt: started + 120000, endedAt: null }
+      { title: 'Inspect the panel', status: 'dispatched', startedAt: started + 120000, endedAt: null }
     ],
     lastResult: { title: 'Collect evidence', subject: 'Evidence collected' }
   } }), (view) => {
     for (const text of ['Current work', 'Review the panel', 'No feature document', 'Collect evidence',
       'Inspect the panel', 'Last result', /Evidence collected/, /feat\/dashboard · 2 changed files · abc1234/,
       'took 2m']) assert.ok(view.find({ text }), String(text))
-    assert.equal(view.find({ type: 'Badge', text: 'completed' })?.props.tone, 'success')
+    assert.equal(view.find({ type: 'Badge', text: 'done' })?.props.tone, 'success')
     assert.ok(view.findAll({ type: 'RelativeTime' }).some(({ props }) =>
       props.at === started + 120000 && props.format === 'duration'))
   })
@@ -441,7 +441,7 @@ test('shows only the git line when there is no work data', async () => {
 
 test('renders worker rows in two lines', async () => {
   const active = { dispatchId: 'active', title: 'Long title for the active worker', agent: 'codex/gpt-6-luna',
-    state: 'working', active: true, needsYou: true, startedAt: started + 1000, endedAt: null }
+    state: 'ready', active: true, needsYou: true, startedAt: started + 1000, endedAt: null }
   const finished: WorkerRow[] = Array.from({ length: 4 }, (_, index) => ({
     ...active, dispatchId: String(index), title: `Finished ${index + 1}`, agent: null,
     state: 'succeeded', active: false, needsYou: false, startedAt: started, endedAt: started + 120000
@@ -473,5 +473,45 @@ test('shows section errors without hiding other sections', async () => {
       assert.equal(view.find({ type: 'Text', text })?.props.tone, 'danger')
     }
     assert.ok(view.find({ text: /feat\/dashboard · 2 changed files · abc1234/ }))
+  })
+})
+
+test('shows a live time and accent badge for a dispatched task and a ready worker', async () => {
+  const taskStart = started + 1000
+  const workerStart = started + 2000
+  await withDashboard(dashboardFixture({
+    current: { objective: 'Run', startedAt: started, lastResult: null, tasks: [
+      { title: 'Run task', status: 'dispatched', startedAt: taskStart, endedAt: null }
+    ] },
+    workers: [{ dispatchId: 'd', title: 'Worker', agent: null, state: 'ready',
+      active: true, needsYou: false, startedAt: workerStart, endedAt: null }]
+  }, 'waiting'), (view) => {
+    assert.equal(view.find({ text: /Time unavailable/ }), null)
+    assert.equal(view.findAll({ type: 'Badge', text: 'working' }).filter(({ props }) => props.tone === 'accent').length, 2)
+    assert.deepEqual(view.findAll({ type: 'RelativeTime' }).map(({ props }) => [props.at, props.format]),
+      [[started, 'duration'], [taskStart, 'duration'], [workerStart, 'duration']])
+  })
+})
+
+test('uses Orca badge labels and tones for current work and dispatch states', async () => {
+  const taskStatuses = ['completed', 'succeeded', 'failed', 'blocked', 'unexpected']
+  const states = ['dispatched', 'running', 'succeeded', 'stopped', 'abandoned', 'lost', 'unsupervised']
+  await withDashboard(dashboardFixture({
+    current: { objective: 'Run', startedAt: started, lastResult: null, tasks: taskStatuses.map((status) =>
+      ({ title: `Task ${status}`, status, startedAt: started, endedAt: started + 60000 })) },
+    workers: states.map((state, index) => ({
+      dispatchId: state, title: `Worker ${state}`, agent: null, state, active: index < 2, needsYou: false,
+      startedAt: started + 1000, endedAt: index < 2 ? null : started + 61000
+    }))
+  }, 'waiting'), async (view) => {
+    await view.toggle(view.find({ type: 'Collapsible' })!)
+    for (const [label, tone, count] of [
+      ['working', 'accent', 2], ['done', 'success', 3], ['failed', 'danger', 1], ['blocked', 'warning', 1],
+      ['stopped', 'danger', 1], ['abandoned', 'danger', 1], ['lost', 'danger', 1],
+      ['unexpected', 'neutral', 1], ['unsupervised', 'neutral', 1]
+    ] as const) {
+      assert.equal(view.findAll({ type: 'Badge', text: label }).filter(({ props }) => props.tone === tone).length, count, label)
+    }
+    assert.equal(view.findAll({ type: 'Text', text: 'took 1m' }).length, 10)
   })
 })

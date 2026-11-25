@@ -40,7 +40,12 @@ export function parseOrcaTime(value: unknown): number | null {
 }
 
 const taskStatuses = ['pending', 'in_progress', 'done', 'blocked', 'dropped'] as const
-const terminalStates = new Set(['succeeded', 'failed', 'cancelled', 'lost'])
+const activeDispatchStates = new Set(['ready', 'dispatched', 'running'])
+type DashboardWorker = WorkerRow & { attentionSince?: number }
+
+export function isActiveDispatch(state: string): boolean {
+  return activeDispatchStates.has(state)
+}
 
 function tableCells(line: string): string[] {
   return line.trim().replace(/^\||(?<!\\)\|$/g, '')
@@ -70,10 +75,11 @@ export function parseFeatureDoc(path: string, markdown: string): FeatureDoc | nu
     for (let j = i + 2; j < lines.length && lines[j].includes('|') && !/^#{1,2}\s/.test(lines[j]); j++) {
       const cells = tableCells(lines[j])
       if (cells.length !== columns.length || !cells[idColumn]) continue
+      const statusWord = cells[statusColumn].split(/\s+/, 1)[0]
       tasks.push({
         id: cells[idColumn],
         work: cells[workColumn],
-        status: taskStatuses.find((status) => status === cells[statusColumn]) ?? 'unknown'
+        status: taskStatuses.find((status) => status === statusWord) ?? 'unknown'
       })
     }
     return { path, title, branch, tasks }
@@ -98,27 +104,28 @@ function newestFirst(a: number | null, b: number | null): number {
 
 export function workerRows(input: {
   dispatches: RawDispatch[]; tasks: RawTask[]; agents: Agent[]; coordinator: string; runs: RawRun[]
-}): WorkerRow[] {
+}): DashboardWorker[] {
   const { dispatches, tasks, agents, coordinator, runs } = input
   const runIds = new Set(runs.filter((run) => run.coordinator_handle === coordinator).map((run) => run.id))
   const taskById = new Map(tasks.map((task) => [task.id, task]))
-  const blockedTerminals = new Set(agents.filter((agent) => agent.state === 'blocked').map((agent) => agent.terminalId))
+  const blockedTerminals = new Map(agents.filter((agent) => agent.state === 'blocked')
+    .map((agent) => [agent.terminalId, agent]))
   const candidates = dispatches.map((dispatch) => {
     const task = taskById.get(dispatch.taskId)
-    return { dispatch, task, active: !terminalStates.has(dispatch.state), startedAt: parseOrcaTime(task?.created_at) }
+    return { dispatch, task, active: isActiveDispatch(dispatch.state), startedAt: parseOrcaTime(task?.created_at) }
   }).sort((a, b) => Number(b.active) - Number(a.active) || newestFirst(a.startedAt, b.startedAt))
 
   const activeTerminals = new Set<string>()
-  const workers: WorkerRow[] = []
+  const workers: DashboardWorker[] = []
   for (const { dispatch, task, active, startedAt } of candidates) {
     const terminal = dispatch.terminal
     const newestActive = active && !!terminal && !activeTerminals.has(terminal)
     if (active && terminal) activeTerminals.add(terminal)
     if (!task || !(task.created_by_terminal_handle === coordinator || (task.run_id && runIds.has(task.run_id)))) continue
 
-    const blocked = newestActive && blockedTerminals.has(terminal ?? null)
+    const blocked = newestActive ? blockedTerminals.get(terminal ?? null) : undefined
     // Orca projects pending questions as input, not as a question category.
-    const needsYou = active && (blocked || (dispatch.attention?.some((item) => item === 'input' || item === 'escalation') ?? false))
+    const needsYou = active && (!!blocked || (dispatch.attention?.some((item) => item === 'input' || item === 'escalation') ?? false))
     workers.push({
       dispatchId: dispatch.dispatchId,
       title: task.task_title,
@@ -127,13 +134,14 @@ export function workerRows(input: {
       active,
       needsYou,
       startedAt,
-      endedAt: active ? null : parseOrcaTime(task.completed_at)
+      endedAt: active ? null : parseOrcaTime(task.completed_at),
+      ...(blocked?.stateStartedAt != null ? { attentionSince: blocked.stateStartedAt } : {})
     })
   }
   return workers
 }
 
-export function attentionItems(coordinator: Agent, workers: WorkerRow[]): Attention[] {
+export function attentionItems(coordinator: Agent, workers: DashboardWorker[]): Attention[] {
   const attention: Attention[] = []
   if (coordinator.state === 'blocked') {
     attention.push({ label: 'This session is blocked', since: coordinator.stateStartedAt ?? null })
@@ -142,7 +150,7 @@ export function attentionItems(coordinator: Agent, workers: WorkerRow[]): Attent
     if (!worker.active || !worker.needsYou) continue
     attention.push({
       label: worker.agent ? `${worker.title} — ${worker.agent}` : worker.title,
-      since: worker.startedAt
+      since: worker.attentionSince ?? worker.startedAt
     })
   }
   return attention

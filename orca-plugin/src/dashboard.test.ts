@@ -155,7 +155,7 @@ test('raises attention for a blocked coordinator and blocked active workers only
   const alerts = attentionItems(agent('coordinator', 'blocked'), workers)
   assert.deepEqual(alerts, [
     { label: 'This session is blocked', since: 123 },
-    { label: 'Task active — codex/gpt-6-luna', since: Date.UTC(2026, 10, 25, 15, 56, 54) }
+    { label: 'Task active — codex/gpt-6-luna', since: 123 }
   ])
   assert.deepEqual(attentionItems(agent('coordinator', 'waiting'), workers), alerts.slice(1))
 })
@@ -164,4 +164,52 @@ test('parses git summary', () => {
   assert.deepEqual(parseGit('main\n', ' M one\n?? two\nR  old -> three\n', 'a1b2345\x001764087654\n'), {
     branch: 'main', changedFiles: 3, lastCommit: { hash: 'a1b2345', at: 1764087654000 }
   })
+})
+
+test('treats stopped, abandoned and unsupervised dispatches as finished', () => {
+  const states = ['stopped', 'abandoned', 'unsupervised']
+  const workers = rows(
+    states.map((state) => dispatch(state, { state })),
+    states.map((state) => task(state, { status: 'failed', completed_at: completed }))
+  )
+  assert.deepEqual(workers.map(({ active }) => active), [false, false, false])
+})
+
+test('counts only ready, dispatched and running dispatches as active', () => {
+  const activeStates = ['ready', 'dispatched', 'running']
+  const settledStates = ['succeeded', 'failed', 'cancelled', 'lost', 'stopped', 'abandoned', 'unsupervised', 'unknown']
+  const states = [...activeStates, ...settledStates]
+  const workers = rows(
+    states.map((state) => dispatch(state, { state, attention: ['input'] })),
+    states.map((state) => task(state, { completed_at: completed }))
+  )
+  assert.deepEqual(workers.filter(({ active }) => active).map(({ state }) => state), activeStates)
+  assert.deepEqual(workers.filter(({ needsYou }) => needsYou).map(({ state }) => state), activeStates)
+  assert.deepEqual(workers.filter(({ endedAt }) => endedAt === Date.parse(completed)).map(({ state }) => state), settledStates)
+})
+
+test('parses the first word of a feature task status cell', () => {
+  const body = [
+    '| T1 | S1 | Done | inline | done (commit 6a01080) | |',
+    '| T2 | S1 | Working | inline | in_progress — follow-up | |',
+    '| T3 | S1 | Unknown | inline | doneish | |'
+  ].join('\n')
+  assert.deepEqual(parseFeatureDoc('annotated', `${header}\n${table}\n${body}`)?.tasks.map(({ status }) => status),
+    ['done', 'in_progress', 'unknown'])
+})
+
+test('uses the blocked time for a blocked worker and the work start for other attention', () => {
+  const workers = rows([
+    dispatch('blocked'), dispatch('without-time'), dispatch('input', { attention: ['input'] })
+  ], [
+    task('blocked'), task('without-time'), task('input')
+  ], [
+    agent('blocked', 'blocked'), { ...agent('without-time', 'blocked'), stateStartedAt: undefined }
+  ])
+  assert.deepEqual(attentionItems(agent('coordinator', 'waiting'), workers), [
+    { label: 'Task blocked', since: 123 },
+    { label: 'Task without-time', since: Date.UTC(2026, 10, 25, 15, 56, 54) },
+    { label: 'Task input', since: Date.UTC(2026, 10, 25, 15, 56, 54) }
+  ])
+  assert.equal(workers[0].startedAt, Date.UTC(2026, 10, 25, 15, 56, 54))
 })
