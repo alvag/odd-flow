@@ -54,6 +54,10 @@ A profile with no `workflow` entry is `organic`. A `workflow` entry for an undef
 
 `show`, `use`, `session-mode` and `mode` print `mode: <mode> (<source>); rules: references/mode-<mode>.md`; `list` shows each profile's saved mode. Binding a profile with `use` drops a session mode, so the new profile's own mode applies. `clear` removes both.
 
+`profile.py list --json` prints one object with `path`, `default`, and `profiles`. Each profile has a `name`, a boolean `default` marker, its saved `mode`, and its configured `roles`. Role entries omit fields absent from the file. If the file is missing, `path` and `default` are null and `profiles` is empty.
+
+`profile.py show --json` prints one object with `profile`, `source`, `session_key` (the variable name, not its value), `agent`, `mode`, `mode_source`, `rules`, `roles`, and `orca_terminal`. It reports the same base roles as text output, with resolved `agent`, `model`, and `effort` for each; an unset model or effort is null. Both JSON commands are read-only. A profile error goes to stderr and exits with status 2.
+
 A switch applies from the next request, with no new session: load the mode file the latest `mode:` line names. In Claude Code the plugin's `UserPromptSubmit` hook restates the mode on every prompt of a full delegation session; organic sessions get no per-prompt line. Runtimes that receive the core block through `init` keep the organic block: there, the mode file is the only source of full delegation rules.
 
 ## Which profile applies
