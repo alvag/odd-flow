@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import { assert, hostError, mockHost, mountWorker, type MockHostOptions } from 'orca/testing'
 import * as main from './worker'
@@ -45,9 +46,14 @@ const workerListArgv = ['orchestration', 'worker-list', '--environment', 'local'
 const fakeOrca = '/fake/orca'
 
 function dispatches(terminals: (string | null)[] = [], nextCursor?: string) {
+  return dispatchResult(terminals.map((terminal, index) => ({ dispatchId: `dispatch-${terminal}-${index}`, terminal })),
+    nextCursor)
+}
+
+function dispatchResult(workers: { dispatchId: string; terminal?: string | null }[], nextCursor?: string) {
   return {
     stdout: JSON.stringify({ ok: true, result: {
-      workers: terminals.map((terminal) => ({ terminal, state: 'succeeded', liveness: 'exited' })),
+      workers: workers.map((row) => ({ ...row, state: 'succeeded', liveness: 'exited' })),
       nextCursor
     } }),
     stderr: ''
@@ -144,10 +150,7 @@ test('marks a taskless row from a later dispatch page and skips its show without
       assert.equal(executable, fakeOrca)
       dispatchArgv.push([...argv])
       if (argv.includes('--cursor')) return dispatches([terminalOnly.terminalId])
-      const page = dispatches([null], 'next')
-      const parsed = JSON.parse(page.stdout)
-      parsed.result.workers.push({ dispatchId: 'without-terminal', state: 'succeeded', liveness: 'unverifiable' })
-      return { ...page, stdout: JSON.stringify(parsed) }
+      return dispatchResult([{ dispatchId: 'null-terminal', terminal: null }, { dispatchId: 'without-terminal' }], 'next')
     }
   })
   try {
@@ -155,6 +158,125 @@ test('marks a taskless row from a later dispatch page and skips its show without
     assert.deepEqual(dispatchArgv, [workerListArgv, [...workerListArgv, '--cursor', 'next']])
     assert.deepEqual(state.agents.map(({ isWorker, odd }) => [isWorker, odd]), [[true, null], [undefined, show]])
     assert.deepEqual(python.map((argv) => argv[2]), ['list', 'show'])
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('stops at the page with a known dispatch ID and rebuilds the full cache on restart', async () => {
+  const cursors: (string | undefined)[] = []
+  let newPage = false
+  const options: Partial<main.WorkerOptions> = {
+    runExecutable: async (_executable, argv) => {
+      const cursor = argv[6]
+      cursors.push(cursor)
+      if (cursor === 'older') return dispatches([terminalOnly.terminalId])
+      if (!cursor && newPage) return dispatches(['new-terminal'], 'known')
+      return dispatchResult([{ dispatchId: 'known-without-terminal' }], 'older')
+    }
+  }
+  const mount = () => fixture({ profileScript: currentScript }, [terminalOnly], options)
+  const worker = await mount()
+  try {
+    assert.equal((await worker.request('state')).agents[0].isWorker, true)
+    assert.deepEqual(cursors.splice(0), [undefined, 'older'])
+    newPage = true
+    assert.equal((await worker.request('state')).agents[0].isWorker, true)
+    assert.deepEqual(cursors.splice(0), [undefined, 'known'])
+  } finally {
+    await worker.deactivate()
+  }
+  const restarted = await mount()
+  try {
+    assert.equal((await restarted.request('state')).agents[0].isWorker, true)
+    assert.deepEqual(cursors, [undefined, 'known', 'older'])
+  } finally {
+    await restarted.deactivate()
+  }
+})
+
+test('marks a newly dispatched row on the next state read and skips its show', async () => {
+  let added = false
+  const commands: string[] = []
+  const cursors: (string | undefined)[] = []
+  const worker = await fixture({ profileScript: currentScript }, [terminalOnly], {
+    run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) },
+    runExecutable: async (_executable, argv) => {
+      cursors.push(argv[6])
+      if (argv[6]) return dispatches(['older-terminal'])
+      return dispatchResult([
+        ...(added ? [{ dispatchId: 'new-dispatch', terminal: terminalOnly.terminalId }] : []),
+        { dispatchId: 'known', terminal: 'unrelated-terminal' }
+      ], 'older')
+    }
+  })
+  try {
+    assert.equal((await worker.request('state')).agents[0].isWorker, undefined)
+    assert.deepEqual(commands.splice(0), ['list', 'show'])
+    assert.deepEqual(cursors.splice(0), [undefined, 'older'])
+    added = true
+    const { agents } = await worker.request('state')
+    assert.deepEqual([agents[0].isWorker, agents[0].odd], [true, null])
+    assert.deepEqual(commands, ['list'])
+    assert.deepEqual(cursors, [undefined])
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('gives each page five seconds and does not cache IDs or terminals from a timed-out read', async () => {
+  let phase: 'seed' | 'timeout' | 'recover' = 'seed'
+  const commands: string[] = []
+  const timeoutBudgets: (number | undefined)[] = []
+  const existing = { dispatchId: 'existing' }
+  const worker = await fixture({ profileScript: currentScript }, [terminalOnly, agent('codex')], {
+    run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) },
+    runExecutable: async (_executable, argv, _env, _signal, timeout) => {
+      if (phase === 'seed') return dispatchResult([existing])
+      if (phase === 'timeout') timeoutBudgets.push(timeout)
+      if (!argv[6]) return dispatchResult(
+        [{ dispatchId: 'tentative', terminal: phase === 'timeout' ? 'codex' : null }], 'next'
+      )
+      if (phase === 'timeout') throw new Error('Orca CLI timed out.')
+      return dispatchResult([{ dispatchId: 'another', terminal: terminalOnly.terminalId }, existing])
+    }
+  })
+  try {
+    await worker.request('state')
+    commands.length = 0
+    phase = 'timeout'
+    const failed = await worker.request('state')
+    assert.match(failed.workerCheckError ?? '', /timed out/)
+    assert.deepEqual(failed.agents.map((row) => row.odd), [null, null])
+    assert.deepEqual(commands, [])
+    phase = 'recover'
+    const recovered = await worker.request('state')
+    assert.equal(recovered.workerCheckError, undefined)
+    assert.deepEqual(recovered.agents.map(({ isWorker, odd }) => [isWorker, odd]), [[true, null], [undefined, show]])
+    assert.deepEqual(timeoutBudgets, [5000, 5000])
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('loads many pages on a cold read even when their elapsed time exceeds five seconds', async () => {
+  let pages = 0
+  const worker = await fixture({ profileScript: currentScript }, [terminalOnly], {
+    runExecutable: async (_executable, _argv, _env, _signal, timeout) => {
+      const page = ++pages
+      const elapsed = page === 1 ? 4800 : 350
+      if (timeout === undefined || timeout < elapsed) throw new Error('Orca CLI timed out.')
+      if (page <= 2) await delay(elapsed)
+      return page === 36
+        ? dispatches([terminalOnly.terminalId])
+        : dispatchResult([{ dispatchId: `dispatch-${page}` }], String(page + 1))
+    }
+  })
+  try {
+    const { agents, workerCheckError } = await worker.request('state')
+    assert.equal(workerCheckError, undefined)
+    assert.equal(agents[0].isWorker, true)
+    assert.equal(pages, 36)
   } finally {
     await worker.deactivate()
   }

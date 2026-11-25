@@ -36,9 +36,13 @@ current agent list and rechecks local dispatches before running Python for a
 mutation. The worker looks for the Orca executable at `ORCA_CLI_COMMAND` (an
 absolute file path), on `PATH`, then in
 `/Applications/Orca.app/Contents/Resources/bin/orca`. It runs the read-only
-`orca orchestration worker-list --environment local --json` command, following
-its pagination within a five-second timeout. It invokes both Orca and
-`python3` directly with argument arrays, without a shell.
+`orca orchestration worker-list --environment local --json` command with a
+five-second timeout per page and a 60-second cap per scan. The first scan
+reads all pages. Later scans start at the newest page and stop after reading
+a page with a known dispatch ID. The cache stays in the worker process's
+memory and is rebuilt on restart. A failed scan leaves the cache unchanged
+and blocks profile reads and mutations for that request. The worker invokes
+both Orca and `python3` directly with argument arrays, without a shell.
 
 ## Develop
 

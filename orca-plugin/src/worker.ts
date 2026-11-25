@@ -20,6 +20,7 @@ const SESSION_KEYS = [
   'ODD_PROFILE', 'ODD_ORCHESTRATOR_MODE', 'ODD_FLOW_AGENT', 'ORCA_TERMINAL_HANDLE'
 ]
 const TIMEOUT_MS = 5000
+const DISPATCH_SCAN_TIMEOUT_MS = 60_000
 const BUNDLED_ORCA = '/Applications/Orca.app/Contents/Resources/bin/orca'
 const WORKER_LIST = ['orchestration', 'worker-list', '--environment', 'local', '--json']
 type Env = Record<string, string | undefined>
@@ -74,7 +75,10 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function dispatchPage(stdout: string): { workers: { terminal?: string | null }[]; nextCursor?: string | null } {
+function dispatchPage(stdout: string): {
+  workers: { dispatchId: string; terminal?: string | null }[]
+  nextCursor?: string | null
+} {
   let parsed
   try {
     parsed = JSON.parse(stdout)
@@ -86,8 +90,8 @@ function dispatchPage(stdout: string): { workers: { terminal?: string | null }[]
   // A concise dispatch record can omit terminal when it never had one.
   if (parsed?.ok !== true || !Array.isArray(result?.workers) ||
       result.workers.some((row: { terminal?: unknown; dispatchId?: unknown } | null) => {
-        if (row?.terminal === undefined) return typeof row?.dispatchId !== 'string' || !row.dispatchId.trim()
-        return row.terminal !== null && (typeof row.terminal !== 'string' || !row.terminal.trim())
+        if (typeof row?.dispatchId !== 'string' || !row.dispatchId.trim()) return true
+        return row.terminal != null && (typeof row.terminal !== 'string' || !row.terminal.trim())
       }) ||
       (result.nextCursor != null && (typeof result.nextCursor !== 'string' || !result.nextCursor.trim()))) {
     throw new Error('Orca CLI returned an invalid dispatch list.')
@@ -157,24 +161,37 @@ export function createWorker({
 
     const getAgents = (signal: AbortSignal) => orca.host.call('agents.list', undefined, { signal })
     const getScript = async () => resolveScript(home, await orca.settings.get('profileScript'))
+    const cachedDispatchIds = new Set<string>()
+    const cachedTerminals = new Set<string>()
 
     async function getDispatches(signal: AbortSignal): Promise<ReadonlySet<string> | string> {
       try {
-        const deadline = performance.now() + TIMEOUT_MS
+        const incremental = cachedDispatchIds.size > 0
+        const deadline = performance.now() + DISPATCH_SCAN_TIMEOUT_MS
+        function remainingBudget() {
+          signal.throwIfAborted()
+          const remaining = Math.floor(deadline - performance.now())
+          if (remaining <= 0) throw new Error('Orca CLI dispatch scan timed out after 60 seconds.')
+          return remaining
+        }
         // Do not let the calling pane bind the CLI's list to a single Run.
         const cliEnv = isolatedEnv()
         const executable = await resolveOrca(cliEnv)
         if (!executable) throw new Error('Orca executable not found.')
+        // Publish only complete scans. A failed page must not advance the next scan's cutoff.
+        const dispatchIds = new Set<string>()
         const terminals = new Set<string>()
         const seenCursors = new Set<string>()
         let cursor: string | null | undefined
+        let reachedKnownPage = false
         do {
-          const remaining = Math.floor(deadline - performance.now())
-          if (remaining <= 0) throw new Error(`Orca CLI timed out after ${TIMEOUT_MS / 1000} seconds.`)
+          const timeout = Math.min(TIMEOUT_MS, remainingBudget())
           const argv = cursor ? [...WORKER_LIST, '--cursor', cursor] : WORKER_LIST
-          const { stdout } = await runExecutable(executable, argv, cliEnv, signal, remaining)
+          const { stdout } = await runExecutable(executable, argv, cliEnv, signal, timeout)
           const page = dispatchPage(stdout)
-          for (const { terminal } of page.workers) {
+          for (const { dispatchId, terminal } of page.workers) {
+            if (incremental && cachedDispatchIds.has(dispatchId)) reachedKnownPage = true
+            dispatchIds.add(dispatchId)
             if (terminal != null) terminals.add(terminal)
           }
           cursor = page.nextCursor
@@ -182,8 +199,11 @@ export function createWorker({
             if (seenCursors.has(cursor)) throw new Error('Orca CLI repeated a dispatch cursor.')
             seenCursors.add(cursor)
           }
-        } while (cursor)
-        return terminals
+        } while (cursor && !reachedKnownPage)
+        remainingBudget()
+        for (const id of dispatchIds) cachedDispatchIds.add(id)
+        for (const terminal of terminals) cachedTerminals.add(terminal)
+        return cachedTerminals
       } catch (error) {
         return `Could not check dispatched workers: ${message(error)}`
       }
