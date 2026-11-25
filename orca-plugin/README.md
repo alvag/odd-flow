@@ -37,6 +37,19 @@ a new fingerprint, despite Orca's approval text saying later code edits don't
 need re-approval. If that happens, review the access again and use the new
 fingerprint.
 
+## Worker dispatch prompts
+
+For Orca orchestration prompts, the `agent.prompt.before` hook takes the first
+matching `# Role: <role>` line and appends `odd-flow-worker: <role>` on its own
+line, with the role in lowercase. It appends rather than prepends so odd-flow
+can still recognize the Orca worker preamble or a role line at the start of
+the original prompt. Prompts outside orchestration, prompts without a matching
+role, and prompts whose last non-empty line is already a worker marker pass
+unchanged. If the hook fails, Orca passes the original prompt through.
+
+Installing or reloading this update requires re-approval because the manifest
+now declares the prompt hook. Review the access Orca reports before approving.
+
 ## Settings
 
 Both settings are optional.

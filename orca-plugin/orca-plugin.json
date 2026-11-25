@@ -31,6 +31,9 @@
       { "on": "agent.status.changed" },
       { "on": "workspace.changed" }
     ],
+    "hooks": [
+      { "event": "agent.prompt.before" }
+    ],
     "statusBarItems": [
       {
         "id": "odd-flow-status",

@@ -7,6 +7,7 @@ import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { attentionItems, currentWork, featureOwners, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc,
   workerRows, type FeatureOwnership, type RawDispatch, type RawRun, type RawTask } from './dashboard'
+import { promptWithWorkerMarker } from './prompt-hook'
 import { isAgentKind, isMode, type Agent, type AgentRow, type Dashboard, type OddState, type ProfileList,
   type MutationResult, type Script, type SessionTarget, type State } from './protocol'
 import { isFile, resolveScript } from './script'
@@ -951,6 +952,10 @@ export function createWorker({
 
 let stop: (() => void) | undefined
 export default function activate(orca: OrcaWorkerApi): void {
+  orca.hooks.on('agent.prompt.before', (event, next) => {
+    const prompt = promptWithWorkerMarker(event)
+    if (prompt !== undefined) return next({ ...event, prompt })
+  })
   stop = createWorker()(orca)
 }
 

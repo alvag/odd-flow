@@ -27,7 +27,10 @@ ORCA_WORKER_PREFIXES = (
     "You are working inside Orca, a multi-agent IDE.",
     "Please carry out this task from my Orca coordinator by following the brief I pasted below.",
 )
-WORKER_ROLE = re.compile(r"# Role: (explore|write|verify|review|refute)", re.IGNORECASE)
+WORKER_ROLES = r"(explore|write|verify|review|refute)"
+WORKER_ROLE = re.compile(rf"# Role: {WORKER_ROLES}", re.IGNORECASE | re.ASCII)
+WORKER_MARKER = re.compile(rf"odd-flow-worker: {WORKER_ROLES}", re.IGNORECASE | re.ASCII)
+PASTED_CONTENT_CLOSE = re.compile(r'</pasted_content id=(?:"[A-Za-z0-9_-]+"|[A-Za-z0-9_-]+)>')
 
 
 def session_marker(session_id, bucket="prompt-sessions"):
@@ -49,8 +52,16 @@ def mark_first_prompt(session_id, prompt):
     if marker is None:
         return
     prompt = prompt.lstrip() if isinstance(prompt, str) else ""
-    first_line = prompt.splitlines()[0].rstrip() if prompt else ""
-    worker = prompt.startswith(ORCA_WORKER_PREFIXES) or WORKER_ROLE.fullmatch(first_line)
+    lines = prompt.rstrip().splitlines()
+    last_line = lines[-1] if lines else ""
+    if PASTED_CONTENT_CLOSE.fullmatch(last_line):
+        # Claude Code can wrap an Orca brief in pasted_content.
+        last_line = next(filter(None, map(str.strip, reversed(lines[:-1]))), "")
+    worker = bool(lines) and (
+        prompt.startswith(ORCA_WORKER_PREFIXES)
+        or WORKER_ROLE.fullmatch(lines[0].rstrip())
+        or WORKER_MARKER.fullmatch(last_line.strip())
+    )
     try:
         marker.parent.mkdir(parents=True, exist_ok=True)
         # Exclusive creation keeps any later prompt from changing the recorded role.

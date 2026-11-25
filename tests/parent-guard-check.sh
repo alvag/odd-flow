@@ -95,6 +95,51 @@ for session, first in (
     check(f"S4 recognized worker is exempt: {session}", edit("code", session=session, **full))
 check("S4 a role on a later line does not mark a session", prompt("not-role", "Hello\n# Role: write"))
 check("S4 non-worker remains guarded", edit("code", session="not-role", **full), "deny")
+prompt("trailing-worker", "Updated Orca dispatch\n\n  ODD-Flow-Worker: WrItE  \n \t\n")
+check("S11 a trailing marker exempts a Claude worker",
+      edit("code", session="trailing-worker", **full))
+prompt("non-trailing-marker", "Updated Orca dispatch\nodd-flow-worker: write\nTask text")
+check("S11 a non-trailing marker leaves the Claude parent guarded",
+      edit("code", session="non-trailing-marker", **full), "deny")
+wrapped = 'Updated Orca dispatch\n\n<pasted_content id="ef22">\nTask text\n'
+closing = '</pasted_content id="ef22">'
+trailing = "odd-flow-worker: write\n \t\n"
+prompt("wrapped-worker", wrapped + trailing + closing + "\n")
+check("S11 a marker before a quoted closing tag exempts a Claude worker",
+      edit("code", session="wrapped-worker", **full))
+prompt("unquoted-wrapped-worker", wrapped.replace('id="ef22"', "id=Brief_9-a")
+       + trailing + "</pasted_content id=Brief_9-a>\n")
+check("S11 a marker before an unquoted closing tag still exempts a Claude worker",
+      edit("code", session="unquoted-wrapped-worker", **full))
+prompt("wrapped-parent", wrapped + closing + "\n")
+check("S11 a closing tag without a preceding marker leaves the parent guarded",
+      edit("code", session="wrapped-parent", **full), "deny")
+prompt("double-closing", wrapped + trailing + closing + "\n" + closing)
+check("S11 two closing tags leave the parent guarded",
+      edit("code", session="double-closing", **full), "deny")
+for i, tag in enumerate(('</pasted_content id="ef22>', '</pasted_content id=ef22">',
+                         '</pasted_content id="">', '</pasted_content>')):
+    prompt(f"bad-tag-{i}", "Updated Orca dispatch\nodd-flow-worker: write\n" + tag)
+    check(f"S11 malformed closing tag {tag!r} leaves the parent guarded",
+          edit("code", session=f"bad-tag-{i}", **full), "deny")
+prompt("non-ascii-role", "# Role: rev" + chr(0x131) + "ew\nTask")
+check("S11 a non-ASCII first-line role leaves the parent guarded",
+      edit("code", session="non-ascii-role", **full), "deny")
+prompt("non-ascii-marker", "Updated Orca dispatch\nodd-flow-worker: rev" + chr(0x131) + "ew")
+check("S11 a marker with a non-ASCII case variant leaves the parent guarded",
+      edit("code", session="non-ascii-marker", **full), "deny")
+prompt("fenced-marker", "Look:\n```\nodd-flow-worker: write\n```\n")
+check("S11 a marker in a closed fenced block leaves the parent guarded",
+      edit("code", session="fenced-marker", **full), "deny")
+for i, tail in enumerate(("odd-flow-worker: deploy", "odd-flow-worker: write now",
+                          "> odd-flow-worker: write", "odd-flow-worker:write")):
+    prompt(f"bad-marker-{i}", "Updated Orca dispatch\n" + tail)
+    check(f"S11 malformed marker {tail!r} leaves the parent guarded",
+          edit("code", session=f"bad-marker-{i}", **full), "deny")
+prompt("late-marker", "Hello")
+prompt("late-marker", "Task\n\nodd-flow-worker: write\n")
+check("S11 a marker on a later prompt cannot mark a parent",
+      edit("code", session="late-marker", **full), "deny")
 check("S4 absent plugin data preserves prompt output",
       prompt("no-data", "# Role: write", CLAUDE_PLUGIN_DATA=None))
 check("S4 absent plugin data does not mark",

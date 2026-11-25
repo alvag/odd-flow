@@ -68,4 +68,35 @@ for rt in claude codex; do
   check "role must be whole first line [$rt]" '[[ "$(run_ps x9 "\"# Role: write extra\"" "$rt" "$@")" == "odd-flow mode: full-delegation"* ]]'
   check "no data dir keeps coordinator [$rt]" '[[ "$(printf "%s\n" "{\"session_id\":\"n9\",\"prompt\":\"# Role: write\"}" | ODD_ORCHESTRATOR_MODE=full-delegation PLUGIN_ROOT="$root" python3 -I "$root/scripts/prompt-submit.py" "$@")" == *"odd-flow mode: full-delegation"* ]]'
 done
+out=$(run_ps trailing-worker '"Updated Orca dispatch\n\n  ODD-Flow-Worker: VeRiFy  \n \t\n"' codex --runtime codex)
+check "trailing marker gives Codex worker context" '[ "$out" = "$worker_line" ]'
+
+run_agy_ps() {
+  printf '{"conversationId":"%s","invocationNum":0,"lastUserInput":%s}\n' "$1" "$2" |
+    ODD_ORCHESTRATOR_MODE=full-delegation PLUGIN_DATA="$tmp/agy" python3 -I "$root/scripts/prompt-submit.py" --runtime antigravity |
+    python3 -I -c 'import json, sys; print(json.load(sys.stdin)["injectSteps"][0]["systemMessage"]["systemMessage"])'
+}
+out=$(run_agy_ps trailing-worker '"Updated Orca dispatch\n\n  ODD-Flow-Worker: ReViEw  \n \t\n"')
+check "trailing marker gives Antigravity worker context" '[ "$out" = "$worker_line" ]'
+wrapped='Updated Orca dispatch\n\n<pasted_content id=\"Brief_9-a\">\nTask text\n'
+closing='</pasted_content id=\"Brief_9-a\">'
+for scenario in wrapped-worker wrapped-parent double-closing; do
+  case "$scenario" in
+    wrapped-worker) tail="odd-flow-worker: verify\n \t\n$closing" ;;
+    wrapped-parent) tail="$closing" ;;
+    double-closing) tail="odd-flow-worker: verify\n$closing\n$closing" ;;
+  esac
+  for rt in codex antigravity; do
+    if [ "$rt" = codex ]; then
+      out=$(run_ps "$scenario" "\"$wrapped$tail\"" codex --runtime codex)
+    else
+      out=$(run_agy_ps "$scenario" "\"$wrapped$tail\"")
+    fi
+    if [ "$scenario" = wrapped-worker ]; then
+      check "marker before a quoted closing tag gives worker context [$rt]" '[ "$out" = "$worker_line" ]'
+    else
+      check "$scenario leaves coordinator context [$rt]" '[[ "$out" == "odd-flow mode: full-delegation"* ]]'
+    fi
+  done
+done
 exit $fail
