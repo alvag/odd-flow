@@ -6,6 +6,8 @@ This file tracks notable changes to odd-flow. It follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-25
+
 ### Changed
 
 - Orca placement opens a fresh split pane or tab for each Claude, Codex, and Antigravity worker launch, using the current layout and terminal width.
