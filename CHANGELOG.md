@@ -6,6 +6,16 @@ This file tracks notable changes to odd-flow. It follows
 
 ## [Unreleased]
 
+### Changed
+
+- The first-prompt hook accepts only a valid, unused token for the marker's role, issued no more than 15 minutes ago and no more than 60 seconds in the future. The hook removes the record on first use and leaves wrong-role or expired records for pruning.
+- Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. The tokened marker requires hooks at 0.4.0 or newer. With mixed versions, worker identification falls back to the Orca preamble or first-line `# Role:` rule, so the plugin still works with 0.3.0 hooks. An older hook leaves the record to expire and be pruned.
+
+### Fixed
+
+- Before reading worker token records, the first-prompt hook rejects a relative `ODD_FLOW_STATE_DIR` and requires a real `worker-tokens` directory (not a symlink), mode `0700`, owned by the running user.
+- The ODD Flow Orca plugin applies the same directory checks before issuing tokens, checking ownership where the platform exposes the user ID. If issuance fails, it leaves the prompt unchanged and logs the role, reason, and directory without including the token.
+
 ## [0.4.0] - 2026-11-25
 
 ### Changed
