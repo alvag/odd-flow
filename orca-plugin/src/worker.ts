@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
-import { access } from 'node:fs/promises'
+import { access, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, delimiter, isAbsolute, resolve } from 'node:path'
+import { basename, delimiter, isAbsolute, join, resolve } from 'node:path'
 import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { isAgentKind, isMode, type Agent, type AgentRow, type OddState, type ProfileList,
+import { attentionItems, currentWork, parseGit, parseOrcaTime, selectFeatureDoc, workerRows,
+  type RawDispatch, type RawRun, type RawTask } from './dashboard'
+import { isAgentKind, isMode, type Agent, type AgentRow, type Dashboard, type OddState, type ProfileList,
   type MutationResult, type Script, type SessionTarget, type State } from './protocol'
 import { isFile, resolveScript } from './script'
 
@@ -24,6 +26,10 @@ const TIMEOUT_MS = 5000
 const DISPATCH_SCAN_TIMEOUT_MS = 60_000
 const BUNDLED_ORCA = '/Applications/Orca.app/Contents/Resources/bin/orca'
 const WORKER_LIST = ['orchestration', 'worker-list', '--environment', 'local', '--json']
+const RUN_LIST = ['orchestration', 'run-list', '--environment', 'local', '--json', '--full']
+const DASHBOARD_TIMEOUT_MS = 15_000
+const DASHBOARD_RUN_LIMIT = 10
+const ACTIVE_DISPATCH = (state: string) => !['succeeded', 'failed', 'cancelled', 'lost'].includes(state)
 const PANEL_ID = 'odd-flow-profiles'
 const STATUS_ID = 'odd-flow-status'
 const STATUS_REFRESH_MS = 15_000
@@ -74,9 +80,9 @@ const exec: ExecutableRunner = (executable, argv, env, signal, timeout = TIMEOUT
     env, signal, timeout, killSignal: 'SIGKILL', encoding: 'utf8', windowsHide: true, shell: false
   }, (error, stdout, stderr) => {
     if (error?.killed && error.signal === 'SIGKILL' && error.code == null && !signal?.aborted) {
-      const program = executable === 'python3' ? 'Python' : 'Orca CLI'
+      const program = executable === 'python3' ? 'Python' : executable === 'git' ? 'Git' : 'Orca CLI'
       reject(new Error(`${program} timed out after ${TIMEOUT_MS / 1000} seconds.`))
-    } else if (error) reject(Object.assign(error, { stderr }))
+    } else if (error) reject(Object.assign(error, { stdout, stderr }))
     else resolve({ stdout, stderr })
   })
 })
@@ -125,6 +131,70 @@ function dispatchPage(stdout: string): {
   }
   if (result.scope?.source === 'bound') throw new Error('Orca CLI returned a Run-scoped dispatch list.')
   return result
+}
+
+function cliErrorCode(stdout: unknown): string | undefined {
+  if (typeof stdout !== 'string') return
+  try {
+    return JSON.parse(stdout)?.error?.code
+  } catch {
+    return undefined
+  }
+}
+
+async function dashboardList<T>(
+  runList: (argv: readonly string[]) => Promise<{ stdout: string }>, argv: readonly string[],
+  key: 'runs' | 'tasks' | 'workers', runId?: string
+): Promise<{ rows: T[]; cursor?: string | number } | null> {
+  let stdout: string
+  try {
+    ({ stdout } = await runList(argv))
+  } catch (error) {
+    // Some CLI commands return the structured error on stdout and exit nonzero.
+    if (runId && error && typeof error === 'object' &&
+        (('stdout' in error && cliErrorCode(error.stdout) === 'run_not_found') ||
+          message(error) === 'run_not_found')) return null
+    throw error
+  }
+  const parsed = JSON.parse(stdout)
+  if (runId && parsed?.error?.code === 'run_not_found') return null
+  const { result } = parsed ?? {}
+  if (parsed?.ok !== true || !Array.isArray(result?.[key]) || (runId &&
+      (key === 'workers' && result.scope && (result.scope.source !== 'flag' || result.scope.run !== runId) ||
+       key === 'tasks' && result.runId != null && result.runId !== runId))) {
+    throw new Error('Unexpected dashboard list response.')
+  }
+  return { rows: result[key], cursor: result.nextCursor ?? undefined }
+}
+
+async function featureDocs(root: string, signal: AbortSignal) {
+  let directory: string
+  try {
+    const canonicalRoot = await realpath(root)
+    const expected = join(canonicalRoot, 'odd', 'tasks')
+    directory = await realpath(expected)
+    if (directory !== expected) throw new Error('Feature document directory is a symbolic link.')
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return []
+    throw error
+  }
+  const docs = []
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    signal.throwIfAborted()
+    if (!entry.isFile() || !entry.name.endsWith('.md')) continue
+    const path = join(directory, entry.name)
+    const { mtimeMs } = await stat(path)
+    docs.push({ path: `odd/tasks/${entry.name}`, text: await readFile(path, { encoding: 'utf8', signal }), mtimeMs })
+  }
+  return docs
+}
+
+function dispatchRoot(workspace: string | null | undefined) {
+  if (typeof workspace !== 'string') return
+  const separator = workspace.indexOf('::')
+  if (separator < 1) return
+  const path = workspace.slice(separator + 2)
+  if (isAbsolute(path)) return path
 }
 
 function isWorker(row: Pick<Agent, 'task' | 'terminalId'>, terminals?: ReadonlySet<string>): boolean {
@@ -359,7 +429,203 @@ export function createWorker({
       }
     }
 
-    async function state(signal: AbortSignal, includeProfiles = true): Promise<State> {
+    const runCache = new Map<string, { tasks: RawTask[]; dispatches: RawDispatch[] }>()
+
+    async function dashboardRuns(coordinatorIds: Set<string>, signal: AbortSignal) {
+      const runs: RawRun[] = []
+      const tasks: RawTask[] = []
+      const dispatches: RawDispatch[] = []
+      const failed = new Set<string>()
+      let listFailed = false
+      try {
+        const cliEnv = isolatedEnv()
+        const executable = await resolveOrca(cliEnv)
+        if (!executable) throw new Error('Orca executable not found.')
+        const runCli = (argv: readonly string[]) => {
+          signal.throwIfAborted()
+          return runExecutable(executable, argv, cliEnv, signal, TIMEOUT_MS)
+        }
+        const listed: RawRun[] = []
+        const cursors = new Set<string>()
+        let args = RUN_LIST
+        while (true) {
+          const page = await dashboardList<RawRun>(runCli, args, 'runs')
+          if (!page) break
+          for (const row of page.rows) {
+            if (typeof row?.id !== 'string' || !row.id || row.id.startsWith('-')) continue
+            listed.push({ id: row.id, objective: row.objective, created_at: row.created_at,
+              coordinator_handle: row.coordinator_handle })
+          }
+          if (page.cursor == null) break
+          const cursor = String(page.cursor)
+          if (cursors.has(cursor)) throw new Error('Orca CLI repeated a run cursor.')
+          cursors.add(cursor)
+          args = [...RUN_LIST, '--cursor', cursor]
+        }
+        const selected = new Set<string>()
+        const owned = [...new Map(listed.filter(({ coordinator_handle }) =>
+          coordinator_handle != null && coordinatorIds.has(coordinator_handle)).map((row) => [row.id, row])).values()]
+          .sort((a, b) => (parseOrcaTime(b.created_at) ?? -Infinity) - (parseOrcaTime(a.created_at) ?? -Infinity))
+        for (const coordinator of coordinatorIds) {
+          for (const row of owned.filter((run) => run.coordinator_handle === coordinator).slice(0, DASHBOARD_RUN_LIMIT)) {
+            selected.add(row.id)
+          }
+        }
+
+        const refreshed = await Promise.all(owned.filter(({ id }) => selected.has(id)).map(async (row) => {
+          const id = row.id
+          const [taskResult, workerResult] = await Promise.allSettled([
+            dashboardList<RawTask>(runCli, ['orchestration', 'task-list', '--environment', 'local',
+              '--run', id, '--json', '--full'], 'tasks', id).then((page) =>
+              // Keep only the fields the pure derivations consume; never retain spec text.
+              page && page.rows.map(({ id, task_title, status, created_at, completed_at,
+                created_by_terminal_handle, run_id, result }) =>
+                ({ id, task_title, status, created_at, completed_at, created_by_terminal_handle, run_id, result }))),
+            scopedDispatches(runCli, id, runCache.get(id)?.dispatches ?? [])
+          ])
+          const runTasks = taskResult.status === 'fulfilled' ? taskResult.value : undefined
+          const runWorkers = workerResult.status === 'fulfilled' ? workerResult.value : undefined
+          if (runTasks === null || runWorkers === null) {
+            runCache.delete(id)
+            return null
+          }
+          const data = { tasks: runTasks ?? [], dispatches: runWorkers ?? [] }
+          if (runTasks && runWorkers) runCache.set(id, data)
+          else if (row.coordinator_handle) failed.add(row.coordinator_handle)
+          return { row, data }
+        }))
+        for (const item of refreshed) {
+          if (!item) continue
+          runs.push(item.row)
+          tasks.push(...item.data.tasks)
+          dispatches.push(...item.data.dispatches)
+        }
+        for (const row of owned) {
+          if (selected.has(row.id)) continue
+          const cached = runCache.get(row.id)
+          if (!cached) continue
+          runs.push(row)
+          tasks.push(...cached.tasks)
+          dispatches.push(...cached.dispatches.filter(({ state }) => !ACTIVE_DISPATCH(state)))
+        }
+        const listedIds = new Set(listed.map(({ id }) => id))
+        for (const id of runCache.keys()) if (!listedIds.has(id)) runCache.delete(id)
+      } catch {
+        listFailed = true
+      }
+      return { runs, tasks, dispatches, failed, listFailed }
+    }
+
+    async function scopedDispatches(
+      runCli: (argv: readonly string[]) => Promise<{ stdout: string }>, id: string, cached: RawDispatch[]
+    ): Promise<RawDispatch[] | null> {
+      const known = new Set(cached.map(({ dispatchId }) => dispatchId))
+      const stillActive = new Set(cached.filter(({ state }) => ACTIVE_DISPATCH(state)).map(({ dispatchId }) => dispatchId))
+      const argv = ['orchestration', 'worker-list', '--environment', 'local', '--run', id, '--json']
+      const cursors = new Set<string>()
+      const fresh = new Map<string, RawDispatch>()
+      let cursor: string | undefined
+      let reachedKnown = false
+      do {
+        const page = await dashboardList<RawDispatch>(runCli, cursor ? [...argv, '--cursor', cursor] : argv, 'workers', id)
+        if (!page) return null
+        for (const { dispatchId, taskId, state, agent, terminal, workspace, attention } of page.rows) {
+          if (typeof dispatchId !== 'string' || typeof taskId !== 'string' || typeof state !== 'string' ||
+              (attention != null && !Array.isArray(attention))) throw new Error('Invalid dashboard dispatch row.')
+          if (known.has(dispatchId)) reachedKnown = true
+          stillActive.delete(dispatchId)
+          fresh.set(dispatchId, { dispatchId, taskId, state, agent, terminal, workspace, attention })
+        }
+        cursor = typeof page.cursor === 'string' && page.cursor ? page.cursor : undefined
+        if (cursor) {
+          if (cursors.has(cursor)) throw new Error('Orca CLI repeated a dispatch cursor.')
+          cursors.add(cursor)
+        }
+      } while (cursor && (!reachedKnown || stillActive.size > 0))
+      // Only reuse older settled rows when an incremental cutoff was reached.
+      if (cursor) for (const row of cached) if (!fresh.has(row.dispatchId)) fresh.set(row.dispatchId, row)
+      return [...fresh.values()]
+    }
+
+    async function workspaceRoot(signal: AbortSignal) {
+      try {
+        const context = await orca.host.call('workspace.readContext', undefined, { signal })
+        if (context?.workspaceId) {
+          const { workspaces } = await orca.host.call('workspace.list', undefined, { signal })
+          const matched = workspaces.find(({ id }) => id === context.workspaceId)
+          if (matched?.hostId && matched.hostId !== 'local') return { remote: true }
+          if (matched && isAbsolute(matched.path)) return { root: matched.path, branch: context.branch }
+        }
+      } catch {
+        // A scoped dispatch may still identify the local workspace.
+      }
+      return {}
+    }
+
+    async function workspaceData(root: string, fallbackBranch: string | undefined, signal: AbortSignal) {
+      const gitEnv = { ...isolatedEnv(), GIT_OPTIONAL_LOCKS: '0',
+        GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false' }
+      const git = async (...argv: string[]) => {
+        signal.throwIfAborted()
+        return (await runExecutable('git', ['-C', root, ...argv], gitEnv, signal, TIMEOUT_MS)).stdout
+      }
+      const branch = git('branch', '--show-current')
+      const [summary, feature] = await Promise.allSettled([
+        Promise.all([branch, git('status', '--porcelain'), git('log', '-1', '--format=%h%x00%ct')])
+          .then(([name, porcelain, log]) => parseGit(name, porcelain, log)),
+        branch.catch(() => fallbackBranch ?? '').then(async (name) =>
+          name.trim() ? selectFeatureDoc(await featureDocs(root, signal), name.trim()) : null)
+      ])
+      return { summary, feature }
+    }
+
+    async function dashboardsFor(snapshot: State, signal: AbortSignal): Promise<Record<string, Dashboard>> {
+      const rows = coordinators(snapshot).filter((row): row is typeof row & { terminalId: string } => !!row.terminalId)
+      if (!rows.length) return {}
+      const deadline = AbortSignal.any([signal, AbortSignal.timeout(DASHBOARD_TIMEOUT_MS)])
+      const workspaces = new Map<string, ReturnType<typeof workspaceData>>()
+      function loadWorkspace(root: string, branch?: string) {
+        let data = workspaces.get(root)
+        if (!data) {
+          data = workspaceData(root, branch, deadline)
+          workspaces.set(root, data)
+        }
+        return data
+      }
+      const [workspace, sources] = await Promise.all([
+        workspaceRoot(deadline).then((workspace) => {
+          if (workspace.root) void loadWorkspace(workspace.root, workspace.branch)
+          return workspace
+        }),
+        dashboardRuns(new Set(rows.map(({ terminalId }) => terminalId)), deadline)
+      ])
+      const { runs, tasks, dispatches, failed, listFailed } = sources
+      const byDispatch = new Map(dispatches.map((row) => [row.dispatchId, row]))
+      const entries = await Promise.all(rows.map(async (row): Promise<[string, Dashboard]> => {
+        const terminalId = row.terminalId
+        const workers = workerRows({ dispatches, tasks, agents: snapshot.agents, coordinator: terminalId, runs })
+        const dashboard: Dashboard = {
+          terminalId, workers, attention: attentionItems(row, workers), feature: null, current: null, git: null, errors: {}
+        }
+        if (listFailed || failed.has(terminalId)) dashboard.errors.workers = 'Could not load all Orca work for this session.'
+        const root = workspace.root ?? (!workspace.remote ? workers.map(({ dispatchId }) =>
+          dispatchRoot(byDispatch.get(dispatchId)?.workspace)).find((path) => path !== undefined) : undefined)
+        if (!root) {
+          dashboard.errors.workspace = 'Workspace path is unavailable.'
+          return [terminalId, dashboard]
+        }
+        const { summary, feature } = await loadWorkspace(root, workspace.branch)
+        if (summary.status === 'fulfilled') dashboard.git = summary.value
+        else dashboard.errors.git = 'Could not read Git status for this workspace.'
+        if (feature.status === 'fulfilled') dashboard.feature = feature.value
+        else dashboard.errors.feature = 'Could not read feature documents for this workspace.'
+        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId)
+        return [terminalId, dashboard]
+      }))
+      return Object.fromEntries(entries)
+    }
+
+    async function state(signal: AbortSignal, includeProfiles = true, includeDashboards = includeProfiles): Promise<State> {
       try {
         const [listed, script] = await Promise.all([getAgents(signal), getScript()])
         const cleanEnv = isolatedEnv()
@@ -368,14 +634,16 @@ export function createWorker({
         const [profiles, agents] = await Promise.all([
           includeProfiles && !workerCheckError && 'path' in script
             ? readJson<ProfileList>(run, script.path, 'list', cleanEnv, signal) : null,
-          Promise.all(listed.agents.map(({ terminalId, title, agent, state, sessionId, task }) =>
+          Promise.all(listed.agents.map(({ terminalId, title, agent, state, stateStartedAt, sessionId, task }) =>
             agentRow({
-              terminalId, title, agent, state, sessionId: sessionId ?? null,
+              terminalId, title, agent, state, stateStartedAt, sessionId: sessionId ?? null,
               ...(task != null ? { task: { title: task.title } } : {})
             }, dispatches, script, cleanEnv, run, signal)
           ))
         ])
-        return { script, profiles, agents, ...(workerCheckError ? { workerCheckError } : {}) }
+        const snapshot: State = { script, profiles, agents, ...(workerCheckError ? { workerCheckError } : {}) }
+        if (includeDashboards && !workerCheckError) snapshot.dashboards = await dashboardsFor(snapshot, signal)
+        return snapshot
       } catch (cause) {
         const error = message(cause)
         return { script: { error }, profiles: null, agents: [], error }
@@ -535,7 +803,7 @@ export function createWorker({
           if (error) return error
         }
         await run(['-I', script.path, command, ...args], sessionEnv(cleanEnv, { agent, sessionId }), signal)
-        const snapshot = await state(signal)
+        const snapshot = await state(signal, true, !soleCoordinator)
         void refreshStatus(signal.aborted ? undefined : snapshot)
         return { state: snapshot }
       } catch (cause) {

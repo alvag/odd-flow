@@ -110,9 +110,7 @@ test('uses the focused workspace and maps Claude, Codex and Antigravity to one c
   })
   const state = await worker.request('state')
   assert.deepEqual(state.profiles, list)
-  assert.deepEqual(state.agents.map(({ odd, ...identity }) => ({ odd, ...identity })), agents.map(
-    ({ stateStartedAt, ...identity }) => ({ ...identity, odd: show })
-  ))
+  assert.deepEqual(state.agents, agents.map((identity) => ({ ...identity, odd: show })))
   assert.deepEqual(worker.host.callsOf('agents.list'), [undefined])
   assert.deepEqual(calls, [
     { argv: ['-I', script, 'list', '--json'], env: { ODD_FLOW_HOME: '/keep' } },
@@ -161,13 +159,14 @@ test('marks a taskless row from a later dispatch page and skips its show without
     runExecutable: async (executable, argv) => {
       assert.equal(executable, fakeOrca)
       dispatchArgv.push([...argv])
+      if (argv[1] === 'run-list') return cliOk({ runs: [] })
       if (argv.includes('--cursor')) return dispatches([terminalOnly.terminalId])
       return dispatchResult([{ dispatchId: 'null-terminal', terminal: null }, { dispatchId: 'without-terminal' }], 'next')
     }
   })
   try {
     const state = await worker.request('state')
-    assert.deepEqual(dispatchArgv, [workerListArgv, [...workerListArgv, '--cursor', 'next']])
+    assert.deepEqual(dispatchArgv, [workerListArgv, [...workerListArgv, '--cursor', 'next'], runListArgv])
     assert.deepEqual(state.agents.map(({ isWorker, odd }) => [isWorker, odd]), [[true, null], [undefined, show]])
     assert.deepEqual(python.map((argv) => argv[2]), ['list', 'show'])
   } finally {
@@ -214,6 +213,7 @@ test('marks a newly dispatched row on the next state read and skips its show', a
   const worker = await fixture({ profileScript: currentScript }, [terminalOnly], {
     run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) },
     runExecutable: async (_executable, argv) => {
+      if (argv[1] === 'run-list') return cliOk({ runs: [] })
       cursors.push(argv[6])
       if (argv[6]) return dispatches(['older-terminal'])
       return dispatchResult([
@@ -244,6 +244,7 @@ test('gives each page five seconds and does not cache IDs or terminals from a ti
   const worker = await fixture({ profileScript: currentScript }, [terminalOnly, agent('codex')], {
     run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) },
     runExecutable: async (_executable, argv, _env, _signal, timeout) => {
+      if (argv[1] === 'run-list') return cliOk({ runs: [] })
       if (phase === 'seed') return dispatchResult([existing])
       if (phase === 'timeout') timeoutBudgets.push(timeout)
       if (!argv[6]) return dispatchResult(
@@ -639,7 +640,11 @@ for (const [name, request] of [
     const commands: string[] = []
     const worker = await fixture({ profileScript: currentScript }, [terminalOnly], {
       run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) },
-      runExecutable: async () => { checks++; return dispatches(dispatchedNow ? [terminalOnly.terminalId] : []) }
+      runExecutable: async (_executable, argv) => {
+        if (argv[1] === 'run-list') return cliOk({ runs: [] })
+        checks++
+        return dispatches(dispatchedNow ? [terminalOnly.terminalId] : [])
+      }
     })
     try {
       assert.equal((await worker.request('state')).agents[0].isWorker, undefined)
@@ -1083,12 +1088,11 @@ test('A throwing logger does not change either command result, status, or subpro
 test('Toggle mode flips a sole coordinator using the mutation path, and panel mutations refresh status', async () => {
   let mode = 'organic'
   const mutations: { argv: readonly string[]; env: Record<string, string | undefined> }[] = []
-  let scans = 0
+  const cliCalls: (readonly string[])[] = []
   const fixture = await controlsFixture(() => [agent('codex'), dispatched], {
     runExecutable: async (_executable, argv) => {
-      assert.deepEqual(argv, workerListArgv)
-      scans++
-      return dispatches()
+      cliCalls.push(argv)
+      return argv[1] === 'run-list' ? cliOk({ runs: [] }) : dispatches()
     },
     run: async (argv, env) => {
       if (argv[2] === 'list') return fakeRun(argv, env)
@@ -1112,7 +1116,7 @@ test('Toggle mode flips a sole coordinator using the mutation path, and panel mu
       argv: ['-I', currentScript, 'session-mode', mode],
       env: { ODD_FLOW_HOME: '/keep', CODEX_THREAD_ID: 'codex' }
     })))
-    assert.equal(scans, 8)
+    assert.deepEqual(cliCalls, [...Array(8).fill(workerListArgv), runListArgv])
     assert.equal(fixture.worker.host.callsOf('agents.list').length, 8)
     assert.deepEqual(fixture.worker.logs, [
       `${toggleCommand} started`, `${toggleCommand} ended: success; switched to full-delegation`,
@@ -1306,6 +1310,169 @@ test('Toggle mode logs a state read error without host text', async () => {
   try {
     assert.deepEqual(await fixture.worker.command(toggleCommand), { error: 'agents host down' })
     assert.deepEqual(fixture.worker.logs, [`${toggleCommand} started`, `${toggleCommand} ended: error; could not read workspace state`])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+const runListArgv = ['orchestration', 'run-list', '--environment', 'local', '--json', '--full']
+const taskSpecMarker = 'private-task-spec-not-for-the-panel'
+
+async function dashboardFixture(
+  root: string | null, { failGit = false, matchWorkspace = true } = {}
+) {
+  const started = '2026-11-25T16:00:00Z'
+  const timestamp = Date.parse(started)
+  const coordinator = { ...agent('codex'), state: 'blocked' as const, stateStartedAt: timestamp }
+  const agents = [coordinator, agent('claude'), dispatched]
+  const calls: string[][] = []
+  const worker = await fixture({ profileScript: currentScript }, agents, {
+    runExecutable: async (executable, argv, childEnv, _signal, timeout) => {
+      calls.push([...argv])
+      assert.deepEqual(childEnv, executable === 'git'
+        ? { ODD_FLOW_HOME: '/keep', GIT_OPTIONAL_LOCKS: '0', GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false' } : { ODD_FLOW_HOME: '/keep' })
+      const run = argv[argv.indexOf('--run') + 1]
+      if (argv[1] === 'worker-list') {
+        return cliOk({ workers: [{
+          dispatchId: 'dispatch-1', taskId: 'task-1', state: 'running', terminal: 'worker-terminal',
+          agent: 'codex/gpt-6-luna', attention: ['input'], workspace: root && `workspace::${root}`,
+          spec: taskSpecMarker
+        }] })
+      }
+      assert.equal(timeout, 5000)
+      if (argv[1] === 'run-list') {
+        assert.deepEqual(argv, runListArgv)
+        return cliOk({ runs: [
+          { id: 'run-1', objective: 'Build dashboard', coordinator_handle: 'codex', created_at: started },
+          { id: 'removed', objective: 'Deleted Run', coordinator_handle: 'codex', created_at: '2026-11-25T16:05:00Z' },
+          { id: 'unrelated', objective: 'Other session', coordinator_handle: 'other', created_at: started }
+        ] })
+      }
+      if (argv[1] === 'task-list') {
+        assert.deepEqual(argv, ['orchestration', 'task-list', '--environment', 'local', '--run', run, '--json', '--full'])
+        if (run === 'removed') {
+          throw Object.assign(new Error('run unavailable'), {
+            stdout: JSON.stringify({ ok: false, error: { code: 'run_not_found' } })
+          })
+        }
+        assert.equal(run, 'run-1')
+        return cliOk({ tasks: [{
+          id: 'task-1', task_title: 'Gather data', status: 'in_progress', created_at: started,
+          completed_at: null, created_by_terminal_handle: 'codex', run_id: 'run-1', result: null,
+          spec: taskSpecMarker
+        }] })
+      }
+      assert.equal(executable, 'git')
+      assert.deepEqual(argv.slice(0, 2), ['-C', root])
+      if (argv.includes('branch')) return { stdout: 'feature/dashboard\n', stderr: '' }
+      if (failGit) throw new Error('git status failed')
+      return { stdout: argv.includes('status') ? ' M changed\n' : 'abc123\x001764086400\n', stderr: '' }
+    }
+  }, {
+    'agents.list': { agents },
+    'workspace.readContext': {
+      workspaceId: 'focus', branch: 'feature/dashboard', displayName: 'Dashboard',
+      terminals: [{ id: 'codex' }, { id: 'claude' }]
+    },
+    'workspace.list': {
+      workspaces: root && matchWorkspace ? [{
+        id: 'focus', kind: 'worktree', name: 'Dashboard', path: root, branch: 'feature/dashboard', hostId: 'local'
+      }] : [],
+      truncated: false
+    }
+  })
+  return { worker, calls, timestamp }
+}
+
+test('attaches a dashboard per coordinator', async (t) => {
+  const root = await temp(t)
+  const doc = await scriptAt(join(root, 'odd/tasks/dashboard.md'))
+  await writeFile(doc, '# Dashboard\n\nBranch: `feature/dashboard`\n\n## Tasks\n| ID | Work | Status |\n| --- | --- | --- |\n| T2 | Gather sources | in_progress |\n')
+  const { worker, calls, timestamp } = await dashboardFixture(root)
+  try {
+    const state = await worker.request('state')
+    assert.deepEqual(Object.keys(state.dashboards ?? {}).sort(), ['claude', 'codex'])
+    assert.equal(state.agents[0].stateStartedAt, timestamp)
+    const dashboard = state.dashboards?.codex
+    assert.equal(dashboard?.terminalId, 'codex')
+    assert.equal(dashboard?.feature?.path, 'odd/tasks/dashboard.md')
+    assert.deepEqual(dashboard?.feature?.tasks, [{ id: 'T2', work: 'Gather sources', status: 'in_progress' }])
+    assert.equal(dashboard?.current, null)
+    assert.equal(dashboard?.git?.changedFiles, 1)
+    assert.equal(dashboard?.git?.lastCommit?.hash, 'abc123')
+    assert.deepEqual(dashboard?.workers.map(({ title, agent, needsYou }) => [title, agent, needsYou]),
+      [['Gather data', 'codex/gpt-6-luna', true]])
+    assert.deepEqual(dashboard?.attention, [
+      { label: 'This session is blocked', since: timestamp },
+      { label: 'Gather data — codex/gpt-6-luna', since: timestamp }
+    ])
+    assert.deepEqual(dashboard?.errors, {})
+    assert.deepEqual(state.dashboards?.claude.workers, [])
+    assert.deepEqual(calls.filter((argv) => argv[1] === 'worker-list' && argv.includes('--run')), [
+      [...workerListArgv.slice(0, 4), '--run', 'removed', '--json'],
+      [...workerListArgv.slice(0, 4), '--run', 'run-1', '--json']
+    ])
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('keeps other sections when one source fails', async (t) => {
+  const { worker } = await dashboardFixture(await temp(t), { failGit: true, matchWorkspace: false })
+  try {
+    const { dashboards } = await worker.request('state')
+    assert.ok(dashboards?.codex.errors.git)
+    assert.equal(dashboards?.codex.errors.workspace, undefined)
+    assert.equal(dashboards?.codex.git, null)
+    assert.equal(dashboards?.codex.current?.objective, 'Build dashboard')
+    assert.equal(dashboards?.codex.current?.tasks[0].title, 'Gather data')
+    assert.equal(dashboards?.codex.workers[0].title, 'Gather data')
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('hides tasks and git when the workspace path is unknown', async () => {
+  const { worker, calls } = await dashboardFixture(null)
+  try {
+    const { dashboards } = await worker.request('state')
+    assert.ok(dashboards?.codex.errors.workspace)
+    assert.equal(dashboards?.codex.feature, null)
+    assert.equal(dashboards?.codex.current, null)
+    assert.equal(dashboards?.codex.git, null)
+    assert.equal(dashboards?.codex.workers[0].title, 'Gather data')
+    assert.equal(calls.some((argv) => argv[0] === '-C'), false)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('never sends task specs to the panel', async (t) => {
+  const { worker } = await dashboardFixture(await temp(t))
+  try {
+    const state = await worker.request('state')
+    assert.equal(state.dashboards?.codex.workers[0].title, 'Gather data')
+    assert.equal(JSON.stringify(state).includes(taskSpecMarker), false)
+    assert.equal(JSON.stringify(state).includes('"spec":'), false)
+    assert.equal(worker.logs.some((line) => line.includes(taskSpecMarker)), false)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('status refresh runs no task-list, run-list or git', async () => {
+  const calls: [string, ...string[]][] = []
+  const fixture = await controlsFixture(() => [agent('codex')], {
+    runExecutable: async (executable, argv) => {
+      calls.push([executable, ...argv])
+      return dispatches()
+    }
+  })
+  try {
+    await fixture.tick()
+    assert.deepEqual(calls, [[fakeOrca, ...workerListArgv]])
+    assert.equal(fixture.status()?.text, 'odd: test · organic')
   } finally {
     await fixture.worker.deactivate()
   }
