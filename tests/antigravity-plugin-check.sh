@@ -219,6 +219,13 @@ class AntigravityPluginCheck(unittest.TestCase):
         self.assertEqual(prompt("preamble", "You are working inside Orca, a multi-agent IDE.\nTask"), worker)
         self.assertEqual(prompt("first-line-role", "# Role: review\nTask"), worker)
 
+        token = "0" * 32
+        record = issue(token)
+        tokens.chmod(0o755)
+        with self.subTest(scenario="loose-worker-tokens"):
+            parent(marker_context("loose-worker-tokens", f"odd-flow-worker: review {token}"))
+            self.assertTrue(record.is_file())
+
     def test_malformed_input_stays_valid(self):
         for stdin in ("not json", "", "[]", '{"conversationId": 7}'):
             with self.subTest(stdin=stdin):

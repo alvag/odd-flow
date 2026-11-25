@@ -55,9 +55,19 @@ def consume_worker_token(line):
         return False
     role, token = match.groups()
     try:
-        state_dir = os.environ.get("ODD_FLOW_STATE_DIR") or Path.home() / ".odd-flow"
+        getuid = getattr(os, "getuid", None)
+        if getuid is None:
+            return False
+        state_dir = os.environ.get("ODD_FLOW_STATE_DIR")
+        if state_dir and not Path(state_dir).is_absolute():
+            return False
+        tokens_dir = Path(state_dir or Path.home() / ".odd-flow") / "worker-tokens"
+        directory = tokens_dir.lstat()
+        if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != getuid()
+                or stat.S_IMODE(directory.st_mode) != 0o700):
+            return False
         key = hashlib.sha256(token.encode("ascii")).hexdigest()
-        record = Path(state_dir) / "worker-tokens" / key
+        record = tokens_dir / key
         if not stat.S_ISREG(record.lstat().st_mode):
             return False
         data = json.loads(record.read_text(encoding="utf-8"))

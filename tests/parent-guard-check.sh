@@ -111,9 +111,14 @@ def issue(token, role="write", age_ms=0):
     return record
 
 
-def marker_check(session, tail, expected=None):
-    check(f"S8 {session} prompt stays silent", prompt(session, "Updated Orca dispatch\n" + tail))
+def marker_check(session, tail, expected=None, **overrides):
+    check(f"S8 {session} prompt stays silent", prompt(session, "Updated Orca dispatch\n" + tail, **overrides))
     check(f"S8 {session} guard decision", edit("code", session=session, **full), expected)
+
+
+def session_decision(session):
+    marker = data / "prompt-sessions" / hashlib.sha256(session.encode("ascii")).hexdigest()
+    return marker.read_text() if marker.is_file() else None
 
 
 token = "1" * 32
@@ -128,7 +133,8 @@ marker_check("reused-token", f"odd-flow-worker: write {token}", "deny")
 
 token = "b" * 32
 record = issue(token)
-dispatch = f"You are working inside Orca, a multi-agent IDE.\n# Role: write\n\nodd-flow-worker: write {token}"
+dispatch_prefix = "You are working inside Orca, a multi-agent IDE.\n# Role: write\n\n"
+dispatch = f"{dispatch_prefix}odd-flow-worker: write {token}"
 for session in ("tokened-dispatch", "reused-tokened-dispatch"):
     check(f"S8 {session} prompt stays silent", prompt(session, dispatch))
     check(f"S8 {session} is an exempt worker", edit("code", session=session, **full))
@@ -137,6 +143,38 @@ for session in ("tokened-dispatch", "reused-tokened-dispatch"):
         print(f"FAIL S8 {session} left the token record behind")
     else:
         print(f"PASS S8 {session} left no token record")
+check("S17 copied marker prompt stays silent",
+      prompt("copied-dispatch-marker", f"odd-flow-worker: write {token}"))
+decision = session_decision("copied-dispatch-marker")
+if decision == "parent":
+    print("PASS S17 copied marker records the new session as parent")
+else:
+    failed += 1
+    print(f"FAIL S17 copied marker: decision={decision}")
+check("S17 copied marker leaves the new session guarded",
+      edit("code", session="copied-dispatch-marker", **full), "deny")
+
+session = "no-getuid"
+token = "bc" * 16
+record = issue(token)
+result = subprocess.run(
+    [sys.executable, "-I", "-c", "import os, runpy, sys; del os.getuid; "
+     "runpy.run_path(sys.argv[1], run_name='__main__')", str(root / "scripts/prompt-submit.py")],
+    cwd=scratch, env=env | full, capture_output=True, text=True, timeout=12,
+    input=json.dumps({"session_id": session, "prompt": f"{dispatch_prefix}odd-flow-worker: write {token}"}),
+)
+decision = session_decision(session)
+expected_context = {"hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "You are a dispatched worker. Follow your spec's role rules, "
+                         "not the coordinator rules from session start.",
+}}
+if (decision == "worker" and record.is_file() and result.returncode == 0 and not result.stderr
+        and result.stdout == json.dumps(expected_context) + "\n"):
+    print("PASS S8/S12 without getuid: worker fallback and first-prompt context, token record kept")
+else:
+    failed += 1
+    print(f"FAIL S8/S12 without getuid: decision={decision!r}, record exists={record.is_file()}, {result!r}")
 
 spec = importlib.util.spec_from_file_location("prompt_submit", root / "scripts/prompt-submit.py")
 prompt_submit = importlib.util.module_from_spec(spec)
@@ -209,6 +247,29 @@ if not record.is_file():
     print("FAIL S8 a later prompt consumed the token record")
 else:
     print("PASS S8 a later prompt did not consume the token record")
+
+symlink_state = scratch / "symlink-state"
+symlink_state.mkdir()
+(symlink_state / "worker-tokens").symlink_to(tokens, target_is_directory=True)
+for session, pair, state_dir, mode in (
+    ("relative-state-dir", "00", ".", 0o700),
+    ("symlinked-worker-tokens", "aa", str(symlink_state), 0o700),
+    ("loose-worker-tokens", "bb", str(scratch), 0o755),
+    ("setgid-worker-tokens", "0c", str(scratch), 0o2700),
+    ("sticky-worker-tokens", "0d", str(scratch), 0o1700),
+):
+    token = pair * 16
+    record = issue(token)
+    tokens.chmod(mode)
+    marker_check(session, f"odd-flow-worker: write {token}", "deny", ODD_FLOW_STATE_DIR=state_dir)
+    decision = session_decision(session)
+    if decision == "parent" and record.is_file():
+        print(f"PASS S12 {session} records parent and keeps the token record")
+    else:
+        failed += 1
+        print(f"FAIL S12 {session}: decision={decision}, record exists={record.is_file()}")
+tokens.chmod(0o700)
+
 check("S4 absent plugin data preserves prompt output",
       prompt("no-data", "# Role: write", CLAUDE_PLUGIN_DATA=None))
 check("S4 absent plugin data does not mark",
