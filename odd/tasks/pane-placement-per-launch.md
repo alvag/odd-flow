@@ -22,8 +22,8 @@ Profile: `claude-gpt`.
 
 ## Follow-ups (out of scope)
 
-- R4-001: Orca calls in `pane.py` (`terminal list`, `split`, `create`) run under the exclusive pane lock with no subprocess timeout; a hung call blocks every parallel launch.
-- `orca-dispatch.md` does not say that `task-create` needs an Orca Run: it failed with `run_required` until `orchestration run-create` ran (observed 2026-11-25).
+- [x] R4-001 (done in c76b83f, `odd/tasks/pane-dispatch-hardening.md` T1): Orca calls in `pane.py` (`terminal list`, `split`, `create`) run under the exclusive pane lock with no subprocess timeout; a hung call blocks every parallel launch.
+- [x] (done in fdeeb19, `odd/tasks/pane-dispatch-hardening.md` T3) `orca-dispatch.md` does not say that `task-create` needs an Orca Run: it failed with `run_required` until `orchestration run-create` ran (observed 2026-11-25).
 
 ## Log
 
