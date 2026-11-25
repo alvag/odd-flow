@@ -1461,6 +1461,115 @@ test('never sends task specs to the panel', async (t) => {
   }
 })
 
+test('reloads dashboard workers across repeated state requests and cached older runs', async (t) => {
+  const root = await temp(t)
+  const started = '2026-11-25T16:00:00Z'
+  const runs = Array.from({ length: 10 }, (_, index) => ({
+    id: `run_${index}`,
+    objective: `Run ${index}`,
+    coordinator_handle: 'codex',
+    created_at: `2026-11-25T16:${String(index).padStart(2, '0')}:00Z`
+  }))
+  let includeNewRun = false
+  const worker = await fixture({ profileScript: currentScript }, [agent('codex')], {
+    runExecutable: async (executable, argv) => {
+      if (executable === 'git') {
+        return { stdout: argv.includes('branch') ? 'feature/dashboard\n' : argv.includes('status') ? '' : 'abc123\x001764086400\n', stderr: '' }
+      }
+      if (argv[1] === 'worker-list' && !argv.includes('--run')) {
+        return cliOk({ workers: [{ dispatchId: 'd_0', terminal: 't_0', state: 'succeeded', liveness: 'unverifiable' }], nextCursor: null })
+      }
+      if (argv[1] === 'run-list') {
+        const all = includeNewRun
+          ? [{ id: 'run_new', objective: 'Newest', coordinator_handle: 'codex', created_at: '2026-11-25T17:00:00Z' }, ...runs]
+          : runs
+        return cliOk({ runs: all, nextCursor: null })
+      }
+      const run = argv[argv.indexOf('--run') + 1]
+      if (argv[1] === 'task-list') {
+        return cliOk({
+          runId: run,
+          tasks: [{
+            id: `task_${run}`, parent_id: null, created_by_terminal_handle: 'codex',
+            task_title: `Task ${run}`, display_name: `Task ${run}`, spec: taskSpecMarker,
+            status: 'completed', created_at: started, completed_at: started, run_id: run, result: null
+          }]
+        })
+      }
+      return cliOk({
+        workers: [{
+          dispatchId: `ctx_${run}`, taskId: `task_${run}`, state: 'succeeded', liveness: 'unverifiable',
+          terminal: 't_0', terminalState: 'retained', workspace: `ws::${root}`, host: 'local',
+          attention: ['unverifiable']
+        }],
+        scope: { run, source: 'flag' }
+      })
+    }
+  }, {
+    'agents.list': { agents: [agent('codex')] },
+    'workspace.readContext': { workspaceId: 'focus', branch: 'feature/dashboard', displayName: 'Dashboard', terminals: [{ id: 'codex' }] },
+    'workspace.list': {
+      workspaces: [{ id: 'focus', kind: 'worktree', name: 'Dashboard', path: root, branch: 'feature/dashboard', hostId: 'local' }],
+      truncated: false
+    }
+  })
+  try {
+    const first = await worker.request('state')
+    assert.deepEqual(first.dashboards?.codex.errors, {})
+    assert.equal(first.dashboards?.codex.workers.length, 10)
+
+    includeNewRun = true
+    const second = await worker.request('state')
+    assert.deepEqual(second.dashboards?.codex.errors, {})
+    assert.equal(second.dashboards?.codex.workers.length, 11)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('names the failing command and reason in dashboard workers error without private values', async (t) => {
+  const root = await temp(t)
+  const started = '2026-11-25T16:00:00Z'
+  const sessionUuid = '12345678-1234-1234-1234-1234567890ab'
+  const worker = await fixture({ profileScript: currentScript }, [agent('codex')], {
+    runExecutable: async (executable, argv) => {
+      if (executable === 'git') {
+        return { stdout: argv.includes('branch') ? 'feature/dashboard\n' : argv.includes('status') ? '' : 'abc123\x001764086400\n', stderr: '' }
+      }
+      if (argv[1] === 'worker-list' && !argv.includes('--run')) {
+        return cliOk({ workers: [] })
+      }
+      if (argv[1] === 'run-list') {
+        return cliOk({ runs: [{ id: 'run_1', objective: 'Build', coordinator_handle: 'codex', created_at: started }] })
+      }
+      if (argv[1] === 'task-list') {
+        throw Object.assign(new Error('ignored'), {
+          stderr: `boom on task_deadbeef\nfor session ${sessionUuid} ` + 'x'.repeat(200)
+        })
+      }
+      return cliOk({ workers: [], scope: { run: 'run_1', source: 'flag' } })
+    }
+  }, {
+    'agents.list': { agents: [agent('codex')] },
+    'workspace.readContext': { workspaceId: 'focus', branch: 'feature/dashboard', displayName: 'Dashboard', terminals: [{ id: 'codex' }] },
+    'workspace.list': {
+      workspaces: [{ id: 'focus', kind: 'worktree', name: 'Dashboard', path: root, branch: 'feature/dashboard', hostId: 'local' }],
+      truncated: false
+    }
+  })
+  try {
+    const { dashboards } = await worker.request('state')
+    const err = dashboards?.codex.errors.workers ?? ''
+    assert.match(err, /^Could not load all Orca work for this session: task-list: boom on/)
+    assert.equal(/[\r\n]/.test(err), false)
+    assert.equal(err.includes('task_deadbeef'), false)
+    assert.equal(err.includes(sessionUuid), false)
+    assert.ok(err.length <= 220)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
 test('status refresh runs no task-list, run-list or git', async () => {
   const calls: [string, ...string[]][] = []
   const fixture = await controlsFixture(() => [agent('codex')], {

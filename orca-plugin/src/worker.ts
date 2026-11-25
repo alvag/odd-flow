@@ -491,12 +491,22 @@ export function createWorker({
 
     const runCache = new Map<string, { tasks: RawTask[]; dispatches: RawDispatch[] }>()
 
+    function formatWorkerError(command: string | null, error: unknown): string {
+      const cleaned = message(error)
+        .replace(new RegExp(SESSION_UUID.source, 'gi'), '[session]')
+        .replace(/\btask_[a-z0-9]+\b/gi, '[task]')
+        .replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, ' ')
+        .trim() || 'Unknown error.'
+      return ellipsize(command ? `${command}: ${cleaned}` : cleaned, 160)
+    }
+
     async function dashboardRuns(coordinatorIds: Set<string>, signal: AbortSignal) {
       const runs: RawRun[] = []
       const tasks: RawTask[] = []
       const dispatches: RawDispatch[] = []
-      const failed = new Set<string>()
-      let listFailed = false
+      const failed = new Map<string, string>()
+      let listError: string | undefined
+      let command: string | null = null
       try {
         const cliEnv = isolatedEnv()
         const executable = await resolveOrca(cliEnv)
@@ -505,6 +515,7 @@ export function createWorker({
           signal.throwIfAborted()
           return runExecutable(executable, argv, cliEnv, signal, TIMEOUT_MS)
         }
+        command = 'run-list'
         const listed: RawRun[] = []
         const cursors = new Set<string>()
         let args = RUN_LIST
@@ -551,7 +562,14 @@ export function createWorker({
           }
           const data = { tasks: runTasks ?? [], dispatches: runWorkers ?? [] }
           if (runTasks && runWorkers) runCache.set(id, data)
-          else if (row.coordinator_handle) failed.add(row.coordinator_handle)
+          else if (row.coordinator_handle && !failed.has(row.coordinator_handle)) {
+            const detail = taskResult.status === 'rejected'
+              ? formatWorkerError('task-list', taskResult.reason)
+              : workerResult.status === 'rejected'
+                ? formatWorkerError('worker-list', workerResult.reason)
+                : 'Unknown error.'
+            failed.set(row.coordinator_handle, detail)
+          }
           return { row, data }
         }))
         for (const item of refreshed) {
@@ -566,21 +584,21 @@ export function createWorker({
           if (!cached) continue
           runs.push(row)
           tasks.push(...cached.tasks)
-          dispatches.push(...cached.dispatches.filter(({ state }) => !ACTIVE_DISPATCH(state)))
+          dispatches.push(...cached.dispatches.filter(({ state }) => !isActiveDispatch(state)))
         }
         const listedIds = new Set(listed.map(({ id }) => id))
         for (const id of runCache.keys()) if (!listedIds.has(id)) runCache.delete(id)
-      } catch {
-        listFailed = true
+      } catch (error) {
+        listError = formatWorkerError(command, error)
       }
-      return { runs, tasks, dispatches, failed, listFailed }
+      return { runs, tasks, dispatches, failed, listError }
     }
 
     async function scopedDispatches(
       runCli: (argv: readonly string[]) => Promise<{ stdout: string }>, id: string, cached: RawDispatch[]
     ): Promise<RawDispatch[] | null> {
       const known = new Set(cached.map(({ dispatchId }) => dispatchId))
-      const stillActive = new Set(cached.filter(({ state }) => ACTIVE_DISPATCH(state)).map(({ dispatchId }) => dispatchId))
+      const stillActive = new Set(cached.filter(({ state }) => isActiveDispatch(state)).map(({ dispatchId }) => dispatchId))
       const argv = ['orchestration', 'worker-list', '--environment', 'local', '--run', id, '--json']
       const cursors = new Set<string>()
       const fresh = new Map<string, RawDispatch>()
@@ -659,7 +677,7 @@ export function createWorker({
         }),
         dashboardRuns(new Set(rows.map(({ terminalId }) => terminalId)), deadline)
       ])
-      const { runs, tasks, dispatches, failed, listFailed } = sources
+      const { runs, tasks, dispatches, failed, listError } = sources
       const byDispatch = new Map(dispatches.map((row) => [row.dispatchId, row]))
       const entries = await Promise.all(rows.map(async (row): Promise<[string, Dashboard]> => {
         const terminalId = row.terminalId
@@ -667,7 +685,8 @@ export function createWorker({
         const dashboard: Dashboard = {
           terminalId, workers, attention: attentionItems(row, workers), feature: null, current: null, git: null, errors: {}
         }
-        if (listFailed || failed.has(terminalId)) dashboard.errors.workers = 'Could not load all Orca work for this session.'
+        const workerError = listError ?? failed.get(terminalId)
+        if (workerError) dashboard.errors.workers = `Could not load all Orca work for this session: ${workerError}`
         const root = workspace.root ?? (!workspace.remote ? workers.map(({ dispatchId }) =>
           dispatchRoot(byDispatch.get(dispatchId)?.workspace)).find((path) => path !== undefined) : undefined)
         if (!root) {
