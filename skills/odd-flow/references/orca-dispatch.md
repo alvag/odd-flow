@@ -25,6 +25,7 @@
      For a dependent unit, create the Task up front with terminal step 1. Once it can launch (see When Orca wakes you), use `ORCA orchestration worker-start --environment local --task <taskId> --worktree current <flags>` instead, without `--spec-file` or `--task-title`.
    - Terminal steps: use the handle from placement when available. `worker-start --agent codex` starts Codex in a sandbox that blocks the connection to Orca, so the worker could never report. Start it in a terminal instead.
      1. `ORCA orchestration task-create --environment local --spec-file <file> --task-title "<T# role: short title>" --json`, and keep `taskId`.
+        If no Run is bound for this request, `task-create` fails with `run_required`. In that case, run `ORCA orchestration run-create --environment local --objective "<short goal>" --json` once before the first `task-create` and reuse that Run for the request's later Tasks.
         Only for a [unit](delegation.md#units) that depends on another unit of this request, add `--deps '<JSON array of dependency taskIds>'` when creating the Task up front. Use IDs from the same Run and record the new `taskId`. Defer placement and the remaining terminal steps until it can launch; resume at the applicable terminal step without creating the Task again. Launch independent units as usual.
      2. Only for paths that still need to open a terminal (such as Project folders without Git), run `ORCA terminal create --worktree current --title "<T# role: short title>" --command "$CMD" --json`, and keep the terminal `handle`. Set `CMD` in the same shell command straight from the resolve JSON (for example `CMD=$(python3 <skill-dir>/scripts/profile.py resolve <role> --json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["terminal_command"])')`); never paste its text inside the quotes, because the parent's shell would expand `$`, backticks or `"` in it.
      3. `ORCA terminal wait --terminal <handle> --for tui-idle --timeout-ms 60000 --json`.
@@ -34,7 +35,7 @@
 
         ```text
         Hooks need review
-        2 hooks are new or changed
+        N hooks are new or changed
         Hooks can run outside the sandbox after you trust them.
         1. Review hooks
         2. Trust all and continue
