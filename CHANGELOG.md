@@ -8,6 +8,7 @@ This file tracks notable changes to odd-flow. It follows
 
 ### Changed
 
+- Orca placement opens a fresh split pane or tab for each Claude, Codex, and Antigravity worker launch, using the current layout and terminal width.
 - Stops and limits apply only to the work they name; independent authorized work continues.
 - Writers make only the changes the spec requires, reported bugs are reproduced before fixing, and testable changes need observed local proof before a requested push, pull request or deploy.
 - Claude Code, Codex, and Antigravity recognize a trailing `odd-flow-worker: <role>` marker on the first prompt, so Orca dispatches with that marker still identify workers if the preamble changes. The ODD Flow Orca plugin registers an `agent.prompt.before` hook to append the marker. Reinstalling the plugin requires a new approval.
