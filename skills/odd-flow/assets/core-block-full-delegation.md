@@ -15,7 +15,7 @@ Organic Driven Development (ODD) is the default workflow for every request, run 
 - An authorized outcome includes its in-scope implementation, documentation and verification steps; continue them without asking for approval at each step.
 - Never end a turn only announcing a next step you can run now; run it.
 - Read short replies ("yes", "go ahead", "eso mismo") against the immediately preceding proposal. Accepting a preference alone does not authorize implementation.
-- Stop only for a real human decision, an explicit stop, a denial, missing consent or an exhausted limit. Never infer permission to publish, run destructive actions or widen scope.
+- Stop only for a real human decision, an explicit stop, a denial, missing consent or an exhausted limit. A stop or limit binds only the work it names; continue independent authorized work. Never infer permission to publish, run destructive actions or widen scope.
 
 ### Language
 

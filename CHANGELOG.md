@@ -6,6 +6,10 @@ This file tracks notable changes to odd-flow. It follows
 
 ## [Unreleased]
 
+### Changed
+
+- Stops and limits apply only to the work they name; independent authorized work continues.
+
 ## [0.3.0] - 2026-11-25
 
 ### Added
