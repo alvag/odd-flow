@@ -11,20 +11,21 @@
    `python3 <skill-dir>/scripts/profile.py resolve <role> --json`
    Use its `flags` exactly and print its `notice`. On a non-zero exit, stop and report the error; do not launch with guessed flags.
 2. Build the spec from `assets/spec-template.md` and `assets/roles/<role>.md`. Write it with the file tool to a scratch file outside the worktree (for example `$TMPDIR/odd-flow/<session>/<task-id>.md`). Never use heredocs. In `task-create` and `worker-start`, pass the resolved literal path to `--spec-file`, quoted if needed, not a variable (such as `$SPEC`), command substitution, or glob. In Claude Code, a guard denial means the launch did not run: fix the spec or pass a readable literal path and retry; do not bypass the guard. The hook checks the declaration at launch, not subsequent edits.
-3. For a writer in a folder without Git, use Project folders without Git below. Otherwise choose a placement:
+3. For a writer in a folder without Git, use Project folders without Git below. Otherwise run placement for this launch:
    `python3 <skill-dir>/scripts/pane.py open --role <role> --title "<T# role: short title>" --json`
-   On a non-zero exit, report the error and do not launch. If the split reply cannot be parsed or has no handle, a pane may have opened; check `terminal list` and close it. Report any `title_error`, but continue with the opened pane.
-   - `split-right` or `split-below`: keep the returned `handle` and run terminal steps 1, 3 and 4 below. Skip `terminal create`. Use this path for Claude, Codex and Antigravity.
-   - `tab`: start by the `launch` field of the resolve result.
+   A handle starts one worker. Run `pane.py open` again for every launch; never reuse a placement result or handle.
+   On a non-zero exit, report the error and do not launch. If the split or create reply cannot be parsed or has no handle, a terminal may have opened; check `terminal list` and close it. Report any `title_error`, but continue with the opened terminal.
+   - A returned `handle` (Claude, Codex and Antigravity): use it for terminal steps 1, 3 and 4 below, whether it is a split pane or a tab. Skip step 2.
+   - Only when `handle` is `null`: start by the `launch` field of the resolve result.
 
    A profile entry counts as the user naming the model, so its model and effort are allowed.
    - `worker-start`:
      `ORCA orchestration worker-start --environment local --spec-file <file> --task-title "<T# role: short title>" --worktree current <flags>`
      For a dependent unit, create the Task up front with terminal step 1. Once it can launch (see When Orca wakes you), use `ORCA orchestration worker-start --environment local --task <taskId> --worktree current <flags>` instead, without `--spec-file` or `--task-title`.
-   - Terminal steps: for an opened pane or a tab with `launch: terminal` (Codex). `worker-start --agent codex` starts Codex in a sandbox that blocks the connection to Orca, so the worker could never report. Start it in a terminal instead. For a Codex tab, use the resolve result's `terminal_command`, which already carries the model and effort.
+   - Terminal steps: use the handle from placement when available. `worker-start --agent codex` starts Codex in a sandbox that blocks the connection to Orca, so the worker could never report. Start it in a terminal instead.
      1. `ORCA orchestration task-create --environment local --spec-file <file> --task-title "<T# role: short title>" --json`, and keep `taskId`.
         Only for a [unit](delegation.md#units) that depends on another unit of this request, add `--deps '<JSON array of dependency taskIds>'` when creating the Task up front. Use IDs from the same Run and record the new `taskId`. Defer placement and the remaining terminal steps until it can launch; resume at the applicable terminal step without creating the Task again. Launch independent units as usual.
-     2. `ORCA terminal create --worktree current --title "<T# role: short title>" --command "$CMD" --json`, and keep the terminal `handle`. Set `CMD` in the same shell command straight from the resolve JSON (for example `CMD=$(python3 <skill-dir>/scripts/profile.py resolve <role> --json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["terminal_command"])')`); never paste its text inside the quotes, because the parent's shell would expand `$`, backticks or `"` in it.
+     2. Only for paths that still need to open a terminal (such as Project folders without Git), run `ORCA terminal create --worktree current --title "<T# role: short title>" --command "$CMD" --json`, and keep the terminal `handle`. Set `CMD` in the same shell command straight from the resolve JSON (for example `CMD=$(python3 <skill-dir>/scripts/profile.py resolve <role> --json | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["terminal_command"])')`); never paste its text inside the quotes, because the parent's shell would expand `$`, backticks or `"` in it.
      3. `ORCA terminal wait --terminal <handle> --for tui-idle --timeout-ms 60000 --json`.
         With Codex CLI 0.171.0 and the odd-flow Codex plugin (verified 2026-11-23), new interactive Codex sessions, including Orca workers, showed `Hooks need review` after the first install and after a reinstall that changed a hook script. Codex runs a cached copy of the plugin: local edits do not change the installed hooks until reinstall, and trust persists until the hooks change again.
 

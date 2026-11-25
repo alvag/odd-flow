@@ -21,6 +21,13 @@ printf '%s\n' \
   'printf "%s\n" "$@" >>"$ORCA_LOG"' \
   'case "$1 $2" in' \
   '  "terminal list") cat "$ORCA_LAYOUT" ;;' \
+  '  "terminal create")' \
+  '    case "${ORCA_FAIL_CREATE:-}" in' \
+  '      1) echo "{\"ok\":false,\"error\":{\"message\":\"create refused\"}}"; exit 1 ;;' \
+  '      garbage) echo "not json"; exit 0 ;;' \
+  '      nohandle) echo "{\"ok\":true,\"result\":{\"terminal\":{}}}"; exit 0 ;;' \
+  '    esac' \
+  '    echo "{\"ok\":true,\"result\":{\"terminal\":{\"handle\":\"term_tab\"}}}" ;;' \
   '  "terminal split")' \
   '    case "${ORCA_FAIL_SPLIT:-}" in' \
   '      garbage) echo "not json"; exit 0 ;;' \
@@ -84,7 +91,7 @@ open_pane() {
   env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" \
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
-    ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} \
+    ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
     "${command[@]}" open --title 'T1 verify: example' --json "$@" 2>&1
 }
 calls() {
@@ -99,10 +106,32 @@ calls() {
 
 p=$(leaf term_parent); r1=$(leaf term_r1); r2=$(leaf term_r2); r3=$(leaf term_r3)
 list_call=$'\nargv:\nterminal\nlist\n--include-visual-layouts\n--json'
+tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\n--command\nclaude\n--json'
 right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\nclaude\n--json'
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
 
 layout "$p"
+out=$(widths='118' settle_ms=0 open_pane --role verify); ec=$?
+expect "consecutive launches: first sample at 118 columns creates a titled tab" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
+
+out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
+expect "consecutive launches: measure again and split right at 219 columns" 0 "$ec" \
+  '"placement": "split-right", "handle": "term_new"' \
+  "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\n0 True'
+
+out=$(fail_create=1 open_pane --role verify --cols 118); ec=$?
+expect "tab create refusal is visible" 1 "$ec" 'Orca terminal create: create refused' \
+  "$list_call$tab_call"$'\n\nend argv'
+
+out=$(fail_create=garbage open_pane --role verify --cols 118); ec=$?
+expect "non-JSON tab create reply warns that a terminal may have opened" 1 "$ec" \
+  'A terminal may have opened. Check terminal list and close it.' "$list_call$tab_call"$'\n\nend argv'
+
+out=$(fail_create=nohandle open_pane --role verify --cols 118); ec=$?
+expect "tab create reply without a handle warns that a terminal may have opened" 1 "$ec" \
+  'missing terminal handle. A terminal may have opened' "$list_call$tab_call"$'\n\nend argv'
+
 out=$(widths='81 165' settle_ms=100 open_pane --role verify); ec=$?
 expect "width settles under lock: split right using the new width" 0 "$ec" \
   '"cols": 165, "min_cols": 160' "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\n0 True\n100 True'
@@ -110,12 +139,12 @@ expect "width settles under lock: split right using the new width" 0 "$ec" \
 out=$(widths='80 81 82' settle_ms=200 open_pane --role verify); ec=$?
 expect "width stays narrow: tab at the bound using the last width" 0 "$ec" \
   '"cols": 82, "min_cols": 160, "reason": "parent terminal is 82 columns wide (minimum 160)"' \
-  "$list_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
+  "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
 
 out=$(widths='unknown' settle_ms=1000 open_pane --role verify); ec=$?
 expect "unknown first width: tab without retrying" 0 "$ec" \
   '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
-  "$list_call"$'\n\nend argv\nsamples:\n0 True'
+  "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
 
 out=$(widths='81' settle_ms=1000 open_pane --role review); ec=$?
 expect "no split command: one sample and no Orca call" 0 "$ec" \
@@ -131,12 +160,12 @@ expect "antigravity with model and effort: split right with agy flags" 0 "$ec" '
 
 out=$(widths='80 80 80' settle_ms=150 open_pane --role verify); ec=$?
 expect "partial last step stays within the bound" 0 "$ec" \
-  '"cols": 80' "$list_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n150 True'
+  '"cols": 80' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n150 True'
 
 out=$(widths='80 unknown' settle_ms=500 open_pane --role verify); ec=$?
 expect "width lost mid-wait: tab with unknown width" 0 "$ec" \
   '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
-  "$list_call"$'\n\nend argv\nsamples:\n0 True\n100 True'
+  "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True'
 
 for value in -1 invalid; do
   out=$(settle_ms=$value open_pane --role verify --cols 160); ec=$?
@@ -153,7 +182,7 @@ expect "wide parent: split right and set title" 0 "$ec" '"placement": "split-rig
   "$list_call$right_call$title_call"$'\n\nend argv'
 
 out=$(widths='' settle_ms=100 open_pane --role verify --cols 159); ec=$?
-expect "fixed narrow width: tab without sampling" 0 "$ec" '"placement": "tab", "handle": null' "$list_call"$'\n\nend argv'
+expect "fixed narrow width: tab without sampling" 0 "$ec" '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv'
 
 out=$(min_cols=159 open_pane --role verify --cols 159); ec=$?
 expect "override makes the narrow parent split" 0 "$ec" '"placement": "split-right"'
@@ -172,7 +201,7 @@ out=$(open_pane --role verify --cols 80); ec=$?
 expect "split the later leaf on a tie" 0 "$ec" '"target": "term_r2"' $'\nsplit\n--terminal\nterm_r2\n'
 
 out=$(open_pane --role review --cols 200); ec=$?
-expect "unsupported agent: tab and no Orca call" 0 "$ec" '"placement": "tab"' $'\nargv:\n\nend argv'
+expect "unsupported agent: tab without a handle or Orca call" 0 "$ec" '"placement": "tab", "handle": null' $'\nargv:\n\nend argv'
 
 out=$(fail_split=1 open_pane --role verify --cols 200); ec=$?
 expect "split failure is visible" 1 "$ec" "split refused"
@@ -198,6 +227,10 @@ expect "uncertain split reply reports possible open pane" 1 "$hint_ec" "$hint"
 printf '{"ok":true,"result":{"visualLayouts":[{"root":{"type":"group","tabs":null}}]}}\n' >"$T/layout"
 out=$(open_pane --role verify --cols 200); ec=$?
 expect "malformed layout reports an odd-flow error" 1 "$ec" "odd-flow: malformed Orca terminal layout" "$list_call"$'\n\nend argv'
+
+per_launch_rule='Run `pane.py open` again for every launch; never reuse a placement result or handle.'
+out=$(grep -F -- "$per_launch_rule" "$ROOT/skills/odd-flow/references/orca-dispatch.md"); ec=$?
+expect "dispatch guide requires fresh placement on every launch" 0 "$ec" "$per_launch_rule"
 
 echo "scratch: $T"
 echo "passed=$pass failed=$fail"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Place an Orca worker beside its parent or recommend a separate tab."""
+"""Open an Orca worker in a split pane or a separate tab."""
 
 import argparse
 import fcntl
@@ -19,6 +19,7 @@ from profile import ProfileError, load_profiles, orca_line, orca_terminal, resol
 
 
 SPLIT_HINT = "A pane may have opened. Check terminal list and close it."
+CREATE_HINT = "A terminal may have opened. Check terminal list and close it."
 
 
 def terminal(*args):
@@ -34,6 +35,8 @@ def terminal(*args):
         detail = proc.stderr.strip() or proc.stdout.strip() or str(exc)
         if args[0] == "split":
             detail = f"{detail}. {SPLIT_HINT}"
+        elif args[0] == "create":
+            detail = f"{detail}. {CREATE_HINT}"
         raise RuntimeError(f"Orca terminal {args[0]}: {detail}") from exc
     if proc.returncode or data.get("ok") is False:
         detail = data.get("error") or proc.stderr.strip() or proc.stdout.strip()
@@ -184,16 +187,23 @@ def open_pane(args):
         if target:
             result.update(placement="split-below", target=target, reason="right column exists")
             direction = "horizontal"
-        elif cols is None:
-            result["reason"] = "parent terminal width is unknown"
-            return result
-        elif cols < min_cols:
-            result["reason"] = f"parent terminal is {cols} columns wide (minimum {min_cols})"
-            return result
-        else:
+        elif cols is not None and cols >= min_cols:
             result.update(placement="split-right", target=parent,
                           reason=f"parent terminal has at least {min_cols} columns")
             direction = "vertical"
+        else:
+            result["reason"] = (
+                "parent terminal width is unknown" if cols is None
+                else f"parent terminal is {cols} columns wide (minimum {min_cols})"
+            )
+            created = terminal("create", "--worktree", "current", "--title", args.title,
+                               "--command", command)
+            tab = created.get("terminal") if isinstance(created, dict) else None
+            handle = tab.get("handle") if isinstance(tab, dict) else None
+            if not isinstance(handle, str) or not handle:
+                raise RuntimeError(f"Orca terminal create: missing terminal handle. {CREATE_HINT}")
+            result["handle"] = handle
+            return result
         split = terminal("split", "--terminal", result["target"], "--direction", direction,
                          "--command", command)
         pane = split.get("split") if isinstance(split, dict) else None
@@ -212,7 +222,7 @@ def open_pane(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    open_cmd = sub.add_parser("open", help="open a split pane or recommend a tab")
+    open_cmd = sub.add_parser("open", help="open a split pane or tab")
     open_cmd.add_argument("--role", required=True)
     open_cmd.add_argument("--title", required=True)
     open_cmd.add_argument("--cols", type=int, help="override the measured parent width")
