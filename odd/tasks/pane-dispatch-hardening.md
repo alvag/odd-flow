@@ -12,6 +12,7 @@ Profile: `claude-gpt`.
 - S5 (Max, verbatim): "Keep CHANGELOG edits to your own bullets under [Unreleased]."
 - S6 (Max, verbatim): "Risk: R4-001 changes launch behavior; get an independent verify before merge_ready."
 - S8 (bot, verbatim, 2026-11-25): "On the count: orca-dispatch.md is in your surface, so you may reword that line to not depend on an exact hook count (for example \"N hooks are new or changed\"). Keep it to that line."
+- S9 (Max via bot, verbatim, 2026-11-25): "2 Fix R3-001 first" — "Commit the fix on the branch like the others (Max approved per-unit commits), run the scoped re-verify, then send merge_ready again. R4-001 and R3-002 stay as follow-ups in your task doc."
 - S7 (assumption): the "both tests" of S3 are (a) a record with a future mtime is not reused and (b) a record just inside the 10-minute window is reused while one just outside it is not.
 
 ## Tasks
@@ -24,6 +25,8 @@ Profile: `claude-gpt`.
 | T4 | S6 | Independent verify of T1-T3 candidate | orca:verify (Verification trigger, item 4) | done | task_13e68df6de2c; S1-S8 met, no blockers; 1140-case placement differential identical except future-mtime; base b1c3bf0, candidate fdeeb19 |
 | T4b | S1 | Verify follow-ups: add its lock-release regression test; say a timed-out split/create can open a pane late | orca:write (T1 correction, Codex pane closed: relaunch) | done | task_6c2a5974ecf5; new test RED on base pane.py, GREEN 49/0 (spot check 49/0, no leftover process); commit 6894094 |
 | T5 | S6 | Review and refute after verify | orca:review, orca:refute (Review trigger) | done | range b1c3bf0..6894094; resilience: R4-001 WARNING; reliability: R3-001 WARNING, R3-002 SUGGESTION; no BLOCKER/CRITICAL, so no refute and no correction |
+| T6 | S9 | R3-001: lock-release test proves the second launch waited on the lock | orca:write (Max chose option 2) | done | task_4fa084868446; strengthened test fails without flock and on base, passes 49/0 (spot check 49/0); commit 9668b78 |
+| T7 | S9 | Scoped re-verify of T6 | orca:verify | done | task_4bca39b2b181; S9 met: candidate 10/10 + 12 parallel pass, no-flock copy fails 10/10, base pane.py fails 10/10 |
 
 ## Log
 
@@ -44,6 +47,9 @@ Profile: `claude-gpt`.
 ## Follow-ups (out of scope)
 
 - R4-001 (WARNING): after a split/create timeout, a pane Orca opens late runs the worker command with no Task, no title and no identifier in the error; the guide's recheck is bound to the next launch only.
-- R3-001 (WARNING): make the lock-release test prove the second launch waited on the lock (for example by checking that its first Orca call comes after the first launch's timeout).
+- R3-001 (WARNING, fixed in T6): make the lock-release test prove the second launch waited on the lock (for example by checking that its first Orca call comes after the first launch's timeout).
 - R3-002 (SUGGESTION): no test pins the 30 s default.
 - Unverified live: real Orca split/create timeout; run_required from task-create without a Run.
+- 2026-11-25: merge_ready sent (msg_fe34c115932c); bot ended its turn without answering. Not resent; waiting for Max's answer. No merge or push.
+- 2026-11-25: Max chose option 2 (S9). T6 committed 9668b78 test: prove the second launch waits on the pane lock. T7 scoped re-verify launched. Bot: main moved to 20e70c2 (worker-token-hardening merged, 4 CHANGELOG bullets); rebase onto it before the merge request, keeping both sets of bullets. Rebase waits until T7 reports so the verifier's live tree does not move.
+- 2026-11-25: T7 passed, no blockers. Advisories: macOS mktemp -d ignores TMPDIR so pane-check.sh scratch lands in /var/folders and is never deleted (pre-existing); the 1 s start-wait loop could fail visibly under extreme load. Next: rebase onto main 20e70c2 keeping both CHANGELOG bullet sets.
