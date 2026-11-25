@@ -183,7 +183,7 @@ def open_pane(args):
                       cols=cols, min_cols=min_cols, reason=None, title_error=None)
         if command is None:
             result["reason"] = f"no split command for {role['agent']}"
-            return result
+            return result, role
         if target:
             result.update(placement="split-below", target=target, reason="right column exists")
             direction = "horizontal"
@@ -203,7 +203,7 @@ def open_pane(args):
             if not isinstance(handle, str) or not handle:
                 raise RuntimeError(f"Orca terminal create: missing terminal handle. {CREATE_HINT}")
             result["handle"] = handle
-            return result
+            return result, role
         split = terminal("split", "--terminal", result["target"], "--direction", direction,
                          "--command", command)
         pane = split.get("split") if isinstance(split, dict) else None
@@ -216,7 +216,7 @@ def open_pane(args):
         terminal("set-pane-title", "--terminal", handle, "--title", args.title)
     except (OSError, RuntimeError) as exc:
         result["title_error"] = str(exc)
-    return result
+    return result, role
 
 
 def main():
@@ -229,7 +229,7 @@ def main():
     open_cmd.add_argument("--json", action="store_true")
     args = parser.parse_args()
     try:
-        result = open_pane(args)
+        result, role = open_pane(args)
     except ProfileError as exc:
         print(f"odd-flow: {exc}", file=sys.stderr)
         return 2
@@ -237,11 +237,13 @@ def main():
         print(f"odd-flow: {exc}", file=sys.stderr)
         return 1
     if args.json:
+        result.update({key: role[key] for key in ("role", "agent", "model", "effort")})
         print(json.dumps(result))
     else:
         line = f"pane: {result['placement']} {result['handle'] or '-'}: {result['reason']}"
         if result["title_error"]:
             line += f"; {result['title_error']}"
+        line += " | " + role["notice"].split(" | ", 1)[1]
         print(line.replace("\n", " "))
     return 0
 

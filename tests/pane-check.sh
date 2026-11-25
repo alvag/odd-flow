@@ -82,9 +82,12 @@ layout() {
   printf '{"ok":true,"result":{"visualLayouts":[{"root":{"type":"group","tabs":[]}},{"root":{"type":"split","first":{"type":"group","tabs":[]},"second":{"type":"group","tabs":[{"panes":%s}]}}}]}}\n' "$1" >"$T/layout"
 }
 open_pane() {
-  local command=(python3 -I "$P")
+  local command=(python3 -I "$P") format=(--json)
   if [[ -n "${widths+x}" ]]; then
     command=(python3 -I "$T/sample.py" "$P" "$widths")
+  fi
+  if [[ -n "${text_output+x}" ]]; then
+    format=()
   fi
   : >"$T/argv"
   : >"$T/argv.samples"
@@ -92,7 +95,7 @@ open_pane() {
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
-    "${command[@]}" open --title 'T1 verify: example' --json "$@" 2>&1
+    "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
 }
 calls() {
   printf '\nargv:\n'
@@ -114,6 +117,8 @@ layout "$p"
 out=$(widths='118' settle_ms=0 open_pane --role verify); ec=$?
 expect "consecutive launches: first sample at 118 columns creates a titled tab" 0 "$ec" \
   '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
+expect "created tab reports the resolved verify role and null defaults" 0 "$ec" \
+  '"role": "verify", "agent": "claude", "model": null, "effort": null'
 
 out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
 expect "consecutive launches: measure again and split right at 219 columns" 0 "$ec" \
@@ -157,6 +162,12 @@ expect "antigravity without model: split right with agy" 0 "$ec" '"placement": "
 out=$(widths='200' settle_ms=100 open_pane --role explore); ec=$?
 expect "antigravity with model and effort: split right with agy flags" 0 "$ec" '"placement": "split-right", "handle": "term_new"' \
   $'\n--command\nagy --model \'gemini-4\' --effort \'low\'\n--json'
+expect "right split reports the resolved explore role, model and effort" 0 "$ec" \
+  '"role": "explore", "agent": "antigravity", "model": "gemini-4", "effort": "low"'
+
+out=$(text_output=1 open_pane --role explore --cols 200); ec=$?
+expect "text preserves placement and appends the resolved role notice" 0 "$ec" \
+  'pane: split-right term_new: parent terminal has at least 160 columns | explore -> antigravity / gemini-4 / effort low'
 
 out=$(widths='80 80 80' settle_ms=150 open_pane --role verify); ec=$?
 expect "partial last step stays within the bound" 0 "$ec" \
@@ -191,6 +202,8 @@ layout "$(split vertical "$p" "$r1")"
 out=$(widths='80' settle_ms=100 open_pane --role verify); ec=$?
 expect "existing column: split below without retrying" 0 "$ec" '"placement": "split-below"' \
   $'\nsplit\n--terminal\nterm_r1\n--direction\nhorizontal\n'
+expect "lower split reports the resolved verify role and null defaults" 0 "$ec" \
+  '"role": "verify", "agent": "claude", "model": null, "effort": null'
 
 layout "$(split vertical "$p" "$(split horizontal "$r1" "$(split horizontal "$r2" "$r3")")")"
 out=$(open_pane --role verify --cols 80); ec=$?
@@ -202,6 +215,8 @@ expect "split the later leaf on a tie" 0 "$ec" '"target": "term_r2"' $'\nsplit\n
 
 out=$(open_pane --role review --cols 200); ec=$?
 expect "unsupported agent: tab without a handle or Orca call" 0 "$ec" '"placement": "tab", "handle": null' $'\nargv:\n\nend argv'
+expect "tab without a handle reports the resolved review role and null defaults" 0 "$ec" \
+  '"role": "review", "agent": "pi", "model": null, "effort": null'
 
 out=$(fail_split=1 open_pane --role verify --cols 200); ec=$?
 expect "split failure is visible" 1 "$ec" "split refused"
@@ -231,6 +246,15 @@ expect "malformed layout reports an odd-flow error" 1 "$ec" "odd-flow: malformed
 per_launch_rule='Run `pane.py open` again for every launch; never reuse a placement result or handle.'
 out=$(grep -F -- "$per_launch_rule" "$ROOT/skills/odd-flow/references/orca-dispatch.md"); ec=$?
 expect "dispatch guide requires fresh placement on every launch" 0 "$ec" "$per_launch_rule"
+
+role_rule='Pass the unit’s own role to `--role`; never hardcode a role in a reused helper or loop.'
+mismatch_rule='Before `task-create`, compare the returned `agent`, `model` and `effort` with the resolve notice for that role in step 1. On a mismatch, close the returned handle, if any, with `ORCA terminal close --terminal <handle>` and report the mismatch without launching.'
+out=$(grep -F -e "$role_rule" -e "$mismatch_rule" "$ROOT/skills/odd-flow/references/orca-dispatch.md")
+ec=1
+if [[ "$out" == *"$role_rule"* && "$out" == *"$mismatch_rule"* ]]; then
+  ec=0
+fi
+expect "dispatch guide checks the unit role before task creation" 0 "$ec" "$mismatch_rule"
 
 echo "scratch: $T"
 echo "passed=$pass failed=$fail"
