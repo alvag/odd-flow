@@ -1,6 +1,6 @@
 import type { OrcaFrameApi } from 'orca/frame'
 import { isAgentKind, isMode, type AgentKind, type MutationResult, type State } from '../protocol'
-import { render, type Feedback } from './render'
+import { elapsed, render, type Feedback } from './render'
 import { styles } from './styles'
 
 export type FrameHost = Pick<OrcaFrameApi, 'on' | 'plugin'>
@@ -26,11 +26,59 @@ export function mountPanel(
   let activeRequest: AbortController | undefined
   let activeMutation: AbortController | undefined
   let refreshQueued = false
+  let drawDeferred = false
+  let selectOpen = false
   let disposed = false
   let inFlight: Promise<void> = Promise.resolve()
 
-  function draw(): void {
+  function isControlTag(el: unknown): boolean {
+    const tag = (el as { tagName?: string } | null)?.tagName?.toUpperCase()
+    return tag === 'SELECT' || tag === 'BUTTON' || tag === 'SUMMARY'
+  }
+
+  function isControlFocused(): boolean {
+    if (typeof document === 'undefined') return false
+    const active = document.activeElement
+    if (!active) return false
+    if (typeof root.contains === 'function' && !root.contains(active as unknown as Node)) return false
+    return isControlTag(active)
+  }
+
+  function isInteracting(): boolean {
+    return selectOpen || isControlFocused()
+  }
+
+  function syncExpanded(): void {
+    if (typeof root.querySelectorAll !== 'function') return
+    for (const el of root.querySelectorAll('details[data-fold]')) {
+      const key = el.getAttribute('data-fold')
+      if (!key) continue
+      if ((el as HTMLDetailsElement).open) expanded.add(key)
+      else expanded.delete(key)
+    }
+  }
+
+  function updateTimes(): void {
+    if (disposed || typeof root.querySelectorAll !== 'function') return
+    const now = Date.now()
+    for (const el of root.querySelectorAll('[data-time-since]')) {
+      const raw = el.getAttribute('data-time-since')
+      if (!raw) continue
+      const since = Number(raw)
+      if (Number.isFinite(since)) {
+        el.textContent = elapsed(since, now)
+      }
+    }
+  }
+
+  function draw(force = false): void {
     if (disposed) return
+    if (!force && isInteracting()) {
+      drawDeferred = true
+      return
+    }
+    drawDeferred = false
+    syncExpanded()
     root.innerHTML = render(currentState, {
       pending,
       feedback,
@@ -59,7 +107,7 @@ export function mountPanel(
     return null
   }
 
-  function refresh(): Promise<void> {
+  function refresh(forceDraw = false): Promise<void> {
     if (disposed) return Promise.resolve()
     if (activeMutation) {
       refreshQueued = true
@@ -69,7 +117,7 @@ export function mountPanel(
     const controller = new AbortController()
     activeRequest = controller
     pending = true
-    draw()
+    draw(forceDraw)
 
     const run = (async () => {
       try {
@@ -84,7 +132,7 @@ export function mountPanel(
         if (activeRequest === controller) {
           activeRequest = undefined
           pending = false
-          draw()
+          draw(forceDraw)
         }
       }
     })()
@@ -103,7 +151,7 @@ export function mountPanel(
     activeMutation = controller
     pending = true
     feedback = null
-    draw()
+    draw(true)
 
     const run = (async () => {
       try {
@@ -129,7 +177,7 @@ export function mountPanel(
             await refresh()
           } else {
             pending = false
-            draw()
+            draw(true)
           }
         }
       }
@@ -158,7 +206,7 @@ export function mountPanel(
     if (!actionEl) return
     const action = actionEl.dataset.action
     if (action === 'refresh') {
-      void refresh()
+      void refresh(true)
       return
     }
     const rowId = actionEl.dataset.row
@@ -185,6 +233,7 @@ export function mountPanel(
       | (HTMLSelectElement & { dataset: Record<string, string | undefined> })
       | null
     if (!select) return
+    selectOpen = false
     const rowId = select.dataset.row
     const profile = select.value
     if (!rowId || !profile) return
@@ -195,8 +244,62 @@ export function mountPanel(
     )
   }
 
+  const onMouseDown = (event: Event) => {
+    const rawTarget = event.target as { closest?: (selector: string) => HTMLElement | null } | null
+    if (rawTarget?.closest?.('select[data-action="use"]')) {
+      selectOpen = true
+    }
+  }
+
+  const onKeyDown = (event: Event) => {
+    const rawTarget = event.target as { closest?: (selector: string) => HTMLElement | null } | null
+    const key = (event as { key?: string }).key
+    if (
+      rawTarget?.closest?.('select[data-action="use"]') &&
+      (key === ' ' || key === 'Enter' || key === 'ArrowDown' || key === 'ArrowUp')
+    ) {
+      selectOpen = true
+    }
+  }
+
+  const onBlur = (event: Event) => {
+    selectOpen = false
+    if (!drawDeferred) return
+    const related = (event as { relatedTarget?: unknown }).relatedTarget
+    if (related && typeof root.contains === 'function' && root.contains(related as Node) && isControlTag(related)) {
+      return
+    }
+    if (typeof document !== 'undefined' && document.activeElement !== event.target && isControlFocused()) {
+      return
+    }
+    drawDeferred = false
+    draw(true)
+  }
+
+  const onToggle = (event: Event) => {
+    const details = event.target as { getAttribute?: (name: string) => string | null; open?: boolean } | null
+    const key = details?.getAttribute?.('data-fold')
+    if (!key) return
+    if (details?.open) expanded.add(key)
+    else expanded.delete(key)
+  }
+
+  const onVisibilityChange = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible' && currentState) {
+      updateTimes()
+    }
+  }
+
   root.addEventListener('click', onClick)
   root.addEventListener('change', onChange)
+  root.addEventListener('mousedown', onMouseDown)
+  root.addEventListener('keydown', onKeyDown)
+  root.addEventListener('focusout', onBlur)
+  root.addEventListener('blur', onBlur, true)
+  root.addEventListener('toggle', onToggle, true)
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', onVisibilityChange)
+  }
 
   const subs = [
     host.on('agent.status.changed', () => refresh()),
@@ -209,7 +312,7 @@ export function mountPanel(
     intervalMs > 0
       ? setInterval(() => {
           if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-          if (currentState) draw()
+          if (currentState) updateTimes()
         }, intervalMs)
       : undefined
 
@@ -226,6 +329,14 @@ export function mountPanel(
       if (timer !== undefined) clearInterval(timer)
       root.removeEventListener('click', onClick)
       root.removeEventListener('change', onChange)
+      root.removeEventListener('mousedown', onMouseDown)
+      root.removeEventListener('keydown', onKeyDown)
+      root.removeEventListener('focusout', onBlur)
+      root.removeEventListener('blur', onBlur, true)
+      root.removeEventListener('toggle', onToggle, true)
+      if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('visibilitychange', onVisibilityChange)
+      }
       for (const sub of subs) sub.dispose()
     }
   }

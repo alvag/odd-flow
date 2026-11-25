@@ -38,12 +38,17 @@ export function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function elapsed(start: number, end: number): string {
+export function elapsed(start: number, end: number): string {
   const seconds = Math.max(0, Math.floor((end - start) / 1000))
   const minutes = Math.floor(seconds / 60)
   const hours = Math.floor(minutes / 60)
   if (hours > 0) return `${hours}h${minutes % 60 ? ` ${minutes % 60}m` : ''}`
   return minutes > 0 ? `${minutes}m` : `${seconds}s`
+}
+
+function renderLiveTime(since: number, now: number, className?: string): string {
+  const cls = className ? ` class="${className}"` : ''
+  return `<span${cls} data-time-since="${since}">${escapeHtml(elapsed(since, now))}</span>`
 }
 
 function badge(label: string, tone: Tone): string {
@@ -92,8 +97,8 @@ function orcaWorkBadge(status: string, working: boolean, needsYou = false): stri
 
 function formatRunTime(start: number | null, end: number | null, active: boolean, now: number): string {
   if (start === null) return 'Time unavailable'
-  if (active) return elapsed(start, now)
-  if (end !== null) return `took ${elapsed(start, end)}`
+  if (active) return renderLiveTime(start, now)
+  if (end !== null) return escapeHtml(`took ${elapsed(start, end)}`)
   return 'Time unavailable'
 }
 
@@ -101,15 +106,15 @@ function renderAttention(items: Attention[], now: number): string {
   if (items.length === 0) return ''
   const lines = items
     .map(({ label, since }) => {
-      const time = since !== null ? ` · ${elapsed(since, now)}` : ''
-      return `<div class="callout-item">${escapeHtml(label)}${escapeHtml(time)}</div>`
+      const time = since !== null ? ` · ${renderLiveTime(since, now)}` : ''
+      return `<div class="callout-item">${escapeHtml(label)}${time}</div>`
     })
     .join('')
   return `<div class="callout" role="alert"><div class="callout-title">⚠ Needs you</div>${lines}</div>`
 }
 
 function renderSessionState(state: Agent['state'], stateStartedAt: number | undefined, now: number): string {
-  const time = stateStartedAt != null ? `<span class="mu">${escapeHtml(elapsed(stateStartedAt, now))}</span>` : ''
+  const time = stateStartedAt != null ? renderLiveTime(stateStartedAt, now, 'mu') : ''
   if (state === 'waiting' || state === 'done') {
     return `${badge('waiting for you', 'neutral')}${time}`
   }
@@ -188,7 +193,7 @@ function renderCurrentWork(current: CurrentWork, git: GitSummary | null, now: nu
     .map((task) => {
       const working = task.status === 'dispatched'
       const time = formatRunTime(task.startedAt, task.endedAt, working, now)
-      return `<div class="it"><div class="l1">${orcaWorkBadge(task.status, working)}<span class="t">${escapeHtml(task.title)}</span></div><div class="l2">${escapeHtml(time)}</div></div>`
+      return `<div class="it"><div class="l1">${orcaWorkBadge(task.status, working)}<span class="t">${escapeHtml(task.title)}</span></div><div class="l2">${time}</div></div>`
     })
     .join('')
   const lastResult = current.lastResult
@@ -210,8 +215,8 @@ function renderCurrentWork(current: CurrentWork, git: GitSummary | null, now: nu
 function renderGitLine(git: GitSummary, now: number): string {
   const branch = git.branch ?? 'Detached HEAD'
   const files = `${git.changedFiles} changed ${git.changedFiles === 1 ? 'file' : 'files'}`
-  const commit = git.lastCommit ? ` · ${git.lastCommit.hash} · ${elapsed(git.lastCommit.at, now)} ago` : ''
-  return `<div class="mu git-line">⎇ ${escapeHtml(branch)} · ${escapeHtml(files)}${escapeHtml(commit)}</div>`
+  const commit = git.lastCommit ? ` · ${escapeHtml(git.lastCommit.hash)} · ${renderLiveTime(git.lastCommit.at, now)} ago` : ''
+  return `<div class="mu git-line">⎇ ${escapeHtml(branch)} · ${escapeHtml(files)}${commit}</div>`
 }
 
 function renderWorkSection(dashboard: Dashboard, id: string, ui: RenderUi): string {
@@ -232,11 +237,11 @@ function renderWorkSection(dashboard: Dashboard, id: string, ui: RenderUi): stri
 
 function renderWorkerLine(worker: WorkerRow, now: number): string {
   const time = formatRunTime(worker.startedAt, worker.endedAt, worker.active, now)
-  const line2 = worker.agent ? `${worker.agent} · ${time}` : time
+  const line2 = worker.agent ? `${escapeHtml(worker.agent)} · ${time}` : time
   return [
     '<div class="it">',
     `<div class="l1">${orcaWorkBadge(worker.state, isActiveDispatch(worker.state), worker.needsYou)}<span class="t">${escapeHtml(worker.title)}</span></div>`,
-    `<div class="l2">${escapeHtml(line2)}</div>`,
+    `<div class="l2">${line2}</div>`,
     '</div>'
   ].join('')
 }
@@ -288,6 +293,10 @@ function renderSessionCard(
     const selectDisabled = ui.pending || !target || profiles.length === 0 ? ' disabled' : ''
     const actionDisabled = ui.pending || !target ? ' disabled' : ''
     const placeholder = `<option value=""${!current?.profile ? ' selected' : ''} disabled>Choose a profile</option>`
+    const missingOption =
+      current?.profile && !profile
+        ? `<option value="${escapeHtml(current.profile)}" selected disabled>${escapeHtml(current.profile)} (not found)</option>`
+        : ''
     const options = profiles
       .map(({ name }) => `<option value="${escapeHtml(name)}"${current?.profile === name ? ' selected' : ''}>${escapeHtml(name)}</option>`)
       .join('')
@@ -302,7 +311,7 @@ function renderSessionCard(
         : ''
 
     controls = [
-      `<label class="field-label">Profile<select class="select" data-action="use" data-row="${escapeHtml(id)}" title="Applies to the next worker launch"${selectDisabled}>${placeholder}${options}</select></label>`,
+      `<label class="field-label">Profile<select class="select" data-action="use" data-row="${escapeHtml(id)}" title="Applies to the next worker launch"${selectDisabled}>${placeholder}${missingOption}${options}</select></label>`,
       renderRoles(profile, id, ui.expanded),
       '<div class="field-label">Mode</div>',
       `<div class="seg" role="group" aria-label="Mode" title="Reaches the agent on its next prompt">${modeButtons}</div>`,

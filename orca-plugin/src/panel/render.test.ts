@@ -234,13 +234,13 @@ test('renders the attention callout only when needed', () => {
   )
   assert.match(alerted, /class="callout"/)
   assert.match(alerted, /Needs you/)
-  assert.match(alerted, /This session is blocked · 2m/)
-  assert.match(alerted, /Review task — claude\/opus · 1m/)
+  assert.match(alerted, /This session is blocked · <span[^>]*>2m<\/span>/)
+  assert.match(alerted, /Review task — claude\/opus · <span[^>]*>1m<\/span>/)
 })
 
 test('shows the session state badges (waiting/done -> waiting for you, blocked -> needs you), trimmed role routes, segmented mode with tooltips, source line, and feedback', () => {
   const waitingHtml = render(dashboardFixture({}, 'waiting'), ui({ feedback: { row: 'coordinator:codex:session', text: 'Profile switched.', failed: false } }))
-  assert.match(waitingHtml, /<div class="row-inline"><span class="bd badge-neutral">codex<\/span><span class="bd badge-neutral">waiting for you<\/span><span class="mu">2m<\/span><\/div>/)
+  assert.match(waitingHtml, /<div class="row-inline"><span class="bd badge-neutral">codex<\/span><span class="bd badge-neutral">waiting for you<\/span><span class="mu"[^>]*>2m<\/span><\/div>/)
   assert.match(waitingHtml, /badge-neutral[^>]*>waiting for you</)
   assert.match(waitingHtml, /2m/)
   assert.match(waitingHtml, /explore → codex · gpt-6-luna · medium/)
@@ -330,7 +330,7 @@ test('renders current work without a feature document and git-only fallback', ()
   assert.match(currentHtml, /1m/)
   assert.match(currentHtml, /Last result/)
   assert.match(currentHtml, /Evidence collected/)
-  assert.match(currentHtml, /feat\/dashboard · 2 changed files · abc1234 · 2m ago/)
+  assert.match(currentHtml, /feat\/dashboard · 2 changed files · abc1234 · <span[^>]*>2m<\/span> ago/)
 
   const gitOnly = render(dashboardFixture({ git }), ui())
   assert.match(gitOnly, /feat\/dashboard · 2 changed files · abc1234/)
@@ -365,7 +365,7 @@ test('renders two-line worker rows, badge tones, and folded finished workers', (
   assert.match(html, /Workers/)
   assert.match(html, /1 active/)
   assert.match(html, /badge-warning[^>]*>needs you</)
-  assert.match(html, /codex\/gpt-6-luna · 1m/)
+  assert.match(html, /codex\/gpt-6-luna · <span[^>]*>1m<\/span>/)
   assert.match(html, /took 2m/)
   assert.match(html, /1 finished earlier/)
 })
@@ -414,4 +414,18 @@ test('escapes untrusted strings from State before inserting into HTML', () => {
   )
   assert.ok(!/<img src=x/.test(html))
   assert.match(html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/)
+})
+
+test('A3: renders a selected disabled option when session profile is missing from profiles list', () => {
+  const state = dashboardFixture()
+  const odd = state.agents[0].odd
+  assert.ok(odd && typeof odd === 'object')
+  odd.profile = 'missing<profile>'
+  const html = render(state, ui())
+  assert.match(
+    html,
+    /<option value="missing&lt;profile&gt;" selected disabled>missing&lt;profile&gt; \(not found\)<\/option>/
+  )
+  assert.ok(!/<option value=""[^>]*selected/.test(html))
+  assert.ok(!/<option value="team"[^>]*selected/.test(html))
 })

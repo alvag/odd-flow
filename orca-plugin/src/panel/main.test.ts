@@ -39,10 +39,59 @@ function baseState(): State {
 
 type Listener = (payload: unknown) => void
 
+class FakeTimeNode {
+  textContent: string
+  constructor(
+    private readonly since: string,
+    initial: string
+  ) {
+    this.textContent = initial
+  }
+  getAttribute(name: string): string | null {
+    return name === 'data-time-since' ? this.since : null
+  }
+}
+
+class FakeDetailsNode {
+  open: boolean
+  constructor(
+    private readonly fold: string,
+    open: boolean
+  ) {
+    this.open = open
+  }
+  getAttribute(name: string): string | null {
+    return name === 'data-fold' ? this.fold : null
+  }
+}
+
 class FakeElement {
-  innerHTML = ''
+  private html = ''
+  writes = 0
   listeners = new Map<string, Listener[]>()
   attrs = new Map<string, string>()
+  timeNodes: FakeTimeNode[] = []
+  detailsNodes: FakeDetailsNode[] = []
+  contained = new Set<unknown>()
+
+  get innerHTML(): string {
+    return this.html
+  }
+
+  set innerHTML(value: string) {
+    this.html = value
+    this.writes++
+    this.timeNodes = [...value.matchAll(/data-time-since="([^"]+)"[^>]*>([^<]*)</g)].map(
+      ([, since, text]) => new FakeTimeNode(since, text)
+    )
+    this.detailsNodes = [...value.matchAll(/<details data-fold="([^"]+)"([^>]*)>/g)].map(
+      ([, fold, attrs]) => new FakeDetailsNode(fold, /\bopen\b/.test(attrs))
+    )
+  }
+
+  contains(node: unknown): boolean {
+    return this.contained.has(node)
+  }
 
   addEventListener(type: string, listener: Listener): void {
     const list = this.listeners.get(type) ?? []
@@ -59,13 +108,15 @@ class FakeElement {
     )
   }
 
-  querySelectorAll(): FakeElement[] {
+  querySelectorAll(selector?: string): unknown[] {
+    if (selector === '[data-time-since]') return this.timeNodes
+    if (selector === 'details[data-fold]') return this.detailsNodes
     return []
   }
 
-  dispatch(type: string, target: Record<string, unknown>): void {
+  dispatch(type: string, target: Record<string, unknown>, extra: Record<string, unknown> = {}): void {
     for (const listener of this.listeners.get(type) ?? []) {
-      listener({ target })
+      listener({ target, ...extra })
     }
   }
 }
@@ -205,4 +256,153 @@ test('sends use, sessionMode, and clear requests, disables controls while saving
     { agent: 'codex', sessionId: 'sid' }
   ])
   handle.dispose()
+})
+
+test('A1: 15s tick updates only time text nodes without replacing root.innerHTML', async () => {
+  const realNow = Date.now
+  const baseNow = Date.UTC(2026, 10, 25, 16, 0)
+  Date.now = () => baseNow
+  try {
+    const state = baseState()
+    state.agents[0].stateStartedAt = baseNow - 60_000
+    const root = new FakeElement()
+    const { host } = makeHost({ state: () => state })
+    const handle = mountPanel(root as unknown as HTMLElement, host, { intervalMs: 20 })
+    await handle.settled()
+
+    const writesAfterMount = root.writes
+    assert.equal(root.timeNodes.length, 1)
+    assert.equal(root.timeNodes[0].textContent, '1m')
+
+    Date.now = () => baseNow + 10 * 60_000
+    await new Promise((resolve) => setTimeout(resolve, 60))
+
+    assert.equal(root.writes, writesAfterMount, '15s tick must not replace innerHTML')
+    assert.equal(root.timeNodes[0].textContent, '11m', 'time node textContent must update')
+    handle.dispose()
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('A1: defers full redraw while a panel control has focus and applies on blur; preserves details open state', async () => {
+  const g = globalThis as unknown as Record<string, unknown>
+  const prevDoc = g.document
+  let title = 'Initial'
+  const state = () => {
+    const s = baseState()
+    s.agents[0].title = title
+    const profiles = typeof s.profiles === 'object' && s.profiles !== null ? s.profiles.profiles : []
+    profiles[0].roles = {
+      explore: { agent: 'codex', model: 'm1', effort: 'low' },
+      write: { agent: 'codex', model: 'm2', effort: 'medium' },
+      verify: { agent: 'claude', model: 'm3', effort: 'high' },
+      review: { agent: 'claude', model: 'm4', effort: 'high' }
+    }
+    return s
+  }
+
+  const root = new FakeElement()
+  const selectEl = { tagName: 'SELECT' }
+  root.contained.add(selectEl)
+  const docListeners = new Map<string, Listener[]>()
+  const fakeDoc = {
+    visibilityState: 'visible',
+    activeElement: null as unknown,
+    addEventListener(type: string, listener: Listener) {
+      docListeners.set(type, [...(docListeners.get(type) ?? []), listener])
+    },
+    removeEventListener(type: string, listener: Listener) {
+      docListeners.set(
+        type,
+        (docListeners.get(type) ?? []).filter((item) => item !== listener)
+      )
+    }
+  }
+  g.document = fakeDoc
+
+  try {
+    const { host, emit } = makeHost({ state })
+    const handle = mountPanel(root as unknown as HTMLElement, host, { intervalMs: 0 })
+    await handle.settled()
+    assert.match(root.innerHTML, /Initial/)
+    assert.equal(root.detailsNodes.length, 1)
+
+    // Open <details> and focus <select>
+    root.detailsNodes[0].open = true
+    fakeDoc.activeElement = selectEl
+
+    title = 'Updated'
+    const writesBeforeRefresh = root.writes
+    await emit('agent.status.changed', {})
+    await handle.settled()
+
+    assert.equal(root.writes, writesBeforeRefresh, 'redraw must be deferred while control has focus')
+    assert.ok(!/Updated/.test(root.innerHTML))
+
+    // Blur the control -> deferred redraw applies and preserves <details open>
+    fakeDoc.activeElement = null
+    root.dispatch('focusout', selectEl)
+
+    assert.ok(root.writes > writesBeforeRefresh, 'deferred redraw must apply on blur')
+    assert.match(root.innerHTML, /Updated/)
+    assert.match(root.innerHTML, /<details data-fold="roles:one:codex:sid" open>/)
+
+    handle.dispose()
+  } finally {
+    if (prevDoc === undefined) delete g.document
+    else g.document = prevDoc
+  }
+})
+
+test('A6: visibilitychange to visible updates times immediately', async () => {
+  const g = globalThis as unknown as Record<string, unknown>
+  const prevDoc = g.document
+  const realNow = Date.now
+  const baseNow = Date.UTC(2026, 10, 25, 16, 0)
+  Date.now = () => baseNow
+
+  const docListeners = new Map<string, Listener[]>()
+  const fakeDoc = {
+    visibilityState: 'hidden',
+    activeElement: null,
+    addEventListener(type: string, listener: Listener) {
+      docListeners.set(type, [...(docListeners.get(type) ?? []), listener])
+    },
+    removeEventListener(type: string, listener: Listener) {
+      docListeners.set(
+        type,
+        (docListeners.get(type) ?? []).filter((item) => item !== listener)
+      )
+    }
+  }
+  g.document = fakeDoc
+
+  try {
+    const state = baseState()
+    state.agents[0].stateStartedAt = baseNow - 60_000
+    const root = new FakeElement()
+    const { host } = makeHost({ state: () => state })
+    const handle = mountPanel(root as unknown as HTMLElement, host, { intervalMs: 0 })
+    await handle.settled()
+
+    assert.equal(root.timeNodes[0].textContent, '1m')
+    const writesBefore = root.writes
+
+    Date.now = () => baseNow + 10 * 60_000
+    fakeDoc.visibilityState = 'visible'
+    for (const listener of docListeners.get('visibilitychange') ?? []) {
+      listener({})
+    }
+
+    assert.equal(root.writes, writesBefore, 'visibilitychange must not replace innerHTML')
+    assert.equal(root.timeNodes[0].textContent, '11m', 'times must update immediately on becoming visible')
+
+    handle.dispose()
+    assert.equal(docListeners.get('visibilitychange')?.length ?? 0, 0, 'visibilitychange listener cleaned up')
+  } finally {
+    Date.now = realNow
+    if (prevDoc === undefined) delete g.document
+    else g.document = prevDoc
+  }
 })
