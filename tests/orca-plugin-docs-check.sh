@@ -34,6 +34,14 @@ done
 require_text "$readme" '| **Reset to defaults** |'
 require_text "$readme" 'An agent launched with `ODD_PROFILE` or `ODD_ORCHESTRATOR_MODE` keeps using'
 require_text "$readme" 'those values after a reset, even though the panel shows the file default.'
+require_text "$readme" "Orca may ask for approval again when the plugin's code changes."
+require_text "$readme" 'the default `onError`, `"pass"`'
+require_text "$readme" 'The tokened marker requires odd-flow 0.4.0 or newer hooks.'
+require_text "$readme" 'Update the ODD Flow Orca plugin and the odd-flow hooks together'
+require_text "$readme" 'falls back to the Orca preamble or first-line `# Role:` rule.'
+require_text "$readme" 'An older hook leaves the record to expire and be pruned.'
+require_text "$readme" 'relative `ODD_FLOW_STATE_DIR`'
+require_text "$readme" 'directory (not a symlink), mode `0700`, and owned by the running user.'
 
 require_text "$manifest" '"key": "Mod+Alt+Shift+O"'
 if grep -nE '(^|[^[:alnum:]_])[TSL][0-9]+([^[:alnum:]_]|$)' "$readme" README.md CHANGELOG.md; then
