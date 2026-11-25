@@ -5,8 +5,8 @@ import { homedir } from 'node:os'
 import { basename, delimiter, isAbsolute, join, resolve } from 'node:path'
 import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { attentionItems, currentWork, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc, workerRows,
-  type RawDispatch, type RawRun, type RawTask } from './dashboard'
+import { attentionItems, currentWork, featureOwners, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc,
+  workerRows, type FeatureOwnership, type RawDispatch, type RawRun, type RawTask } from './dashboard'
 import { isAgentKind, isMode, type Agent, type AgentRow, type Dashboard, type OddState, type ProfileList,
   type MutationResult, type Script, type SessionTarget, type State } from './protocol'
 import { isFile, resolveScript } from './script'
@@ -548,10 +548,10 @@ export function createWorker({
           const [taskResult, workerResult] = await Promise.allSettled([
             dashboardList<RawTask>(runCli, ['orchestration', 'task-list', '--environment', 'local',
               '--run', id, '--json', '--full'], 'tasks', id).then((page) =>
-              // Keep only the fields the pure derivations consume; never retain spec text.
+              // Keep only the fields the pure derivations consume; never expose spec text in State or logs.
               page && page.rows.map(({ id, task_title, status, created_at, completed_at,
-                created_by_terminal_handle, run_id, result }) =>
-                ({ id, task_title, status, created_at, completed_at, created_by_terminal_handle, run_id, result }))),
+                created_by_terminal_handle, run_id, result, spec }) =>
+                ({ id, task_title, status, created_at, completed_at, created_by_terminal_handle, run_id, result, spec }))),
             scopedDispatches(runCli, id, runCache.get(id)?.dispatches ?? [])
           ])
           const runTasks = taskResult.status === 'fulfilled' ? taskResult.value : undefined
@@ -648,13 +648,13 @@ export function createWorker({
         return (await runExecutable('git', ['-C', root, ...argv], gitEnv, signal, TIMEOUT_MS)).stdout
       }
       const branch = git('branch', '--show-current')
-      const [summary, feature] = await Promise.allSettled([
+      const [summary, featureSource] = await Promise.allSettled([
         Promise.all([branch, git('status', '--porcelain'), git('log', '-1', '--format=%h%x00%ct')])
           .then(([name, porcelain, log]) => parseGit(name, porcelain, log)),
-        branch.catch(() => fallbackBranch ?? '').then(async (name) =>
-          name.trim() ? selectFeatureDoc(await featureDocs(root, signal), name.trim()) : null)
+        Promise.all([featureDocs(root, signal), branch.catch(() => fallbackBranch ?? '')])
+          .then(([docs, name]) => ({ docs, branch: name.trim() }))
       ])
-      return { summary, feature }
+      return { summary, featureSource }
     }
 
     async function dashboardsFor(snapshot: State, signal: AbortSignal): Promise<Record<string, Dashboard>> {
@@ -662,6 +662,7 @@ export function createWorker({
       if (!rows.length) return {}
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(DASHBOARD_TIMEOUT_MS)])
       const workspaces = new Map<string, ReturnType<typeof workspaceData>>()
+      const ownershipByRoot = new Map<string, FeatureOwnership>()
       function loadWorkspace(root: string, branch?: string) {
         let data = workspaces.get(root)
         if (!data) {
@@ -679,6 +680,7 @@ export function createWorker({
       ])
       const { runs, tasks, dispatches, failed, listError } = sources
       const byDispatch = new Map(dispatches.map((row) => [row.dispatchId, row]))
+      const openSessions = rows.map(({ terminalId }) => terminalId)
       const entries = await Promise.all(rows.map(async (row): Promise<[string, Dashboard]> => {
         const terminalId = row.terminalId
         const workers = workerRows({ dispatches, tasks, agents: snapshot.agents, coordinator: terminalId, runs })
@@ -693,11 +695,21 @@ export function createWorker({
           dashboard.errors.workspace = 'Workspace path is unavailable.'
           return [terminalId, dashboard]
         }
-        const { summary, feature } = await loadWorkspace(root, workspace.branch)
+        const { summary, featureSource } = await loadWorkspace(root, workspace.branch)
         if (summary.status === 'fulfilled') dashboard.git = summary.value
         else dashboard.errors.git = 'Could not read Git status for this workspace.'
-        if (feature.status === 'fulfilled') dashboard.feature = feature.value
-        else dashboard.errors.feature = 'Could not read feature documents for this workspace.'
+        if (featureSource.status === 'fulfilled') {
+          let owners = ownershipByRoot.get(root)
+          if (!owners) {
+            owners = featureOwners({ docs: featureSource.value.docs, tasks, runs, openSessions })
+            ownershipByRoot.set(root, owners)
+          }
+          dashboard.feature = selectFeatureDoc(featureSource.value.docs, featureSource.value.branch, {
+            owners, session: terminalId
+          })
+        } else {
+          dashboard.errors.feature = 'Could not read feature documents for this workspace.'
+        }
         if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId)
         return [terminalId, dashboard]
       }))

@@ -9,6 +9,14 @@ export type RawTask = {
   created_by_terminal_handle: string | null
   run_id: string | null
   result: string | null
+  spec?: string | null
+}
+
+export type RawFeatureDoc = { path: string; mtimeMs: number; text: string }
+
+export type FeatureOwnership = {
+  bySession: Map<string, FeatureDoc>
+  ownedPaths: Set<string>
 }
 
 export type RawRun = {
@@ -87,8 +95,99 @@ export function parseFeatureDoc(path: string, markdown: string): FeatureDoc | nu
   return null
 }
 
-export function selectFeatureDoc(docs: { path: string; mtimeMs: number; text: string }[], branch: string): FeatureDoc | null {
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function specCitesPath(spec: string, path: string): boolean {
+  if (!spec.includes(path)) return false
+  return new RegExp(
+    `(?<![A-Za-z0-9_./-])${escapeRegExp(path)}(?![A-Za-z0-9_/-]|\\.[A-Za-z0-9_/-])`
+  ).test(spec)
+}
+
+function compareCitationOrder(
+  a: { createdAt: number | null; completedAt: number | null; session: string },
+  b: { createdAt: number | null; completedAt: number | null; session: string }
+): number {
+  return newestFirst(a.createdAt, b.createdAt)
+    || newestFirst(a.completedAt, b.completedAt)
+    || (a.session < b.session ? -1 : a.session > b.session ? 1 : 0)
+}
+
+export function featureOwners(input: {
+  docs: RawFeatureDoc[]
+  tasks: RawTask[]
+  runs: RawRun[]
+  openSessions: Iterable<string>
+}): FeatureOwnership {
+  const open = new Set(input.openSessions)
+  const runCoordinator = new Map(
+    input.runs.filter((run) => run.coordinator_handle != null)
+      .map((run) => [run.id, run.coordinator_handle!])
+  )
+  const openTasks: { spec: string; session: string; createdAt: number | null; completedAt: number | null }[] = []
+  for (const task of input.tasks) {
+    if (typeof task.spec !== 'string' || !task.spec) continue
+    const session = (task.created_by_terminal_handle && open.has(task.created_by_terminal_handle))
+      ? task.created_by_terminal_handle
+      : (task.run_id ? runCoordinator.get(task.run_id) : undefined)
+    if (!session || !open.has(session)) continue
+    openTasks.push({
+      spec: task.spec,
+      session,
+      createdAt: parseOrcaTime(task.created_at),
+      completedAt: parseOrcaTime(task.completed_at)
+    })
+  }
+
+  const ownedPaths = new Set<string>()
+  const bestPerSession = new Map<string, {
+    feature: FeatureDoc
+    mtimeMs: number
+    createdAt: number | null
+    completedAt: number | null
+  }>()
+
+  for (const doc of input.docs) {
+    const feature = parseFeatureDoc(doc.path, doc.text)
+    if (!feature) continue
+    let winner: (typeof openTasks)[number] | null = null
+    for (const candidate of openTasks) {
+      if (!specCitesPath(candidate.spec, doc.path)) continue
+      if (!winner || compareCitationOrder(candidate, winner) < 0) winner = candidate
+    }
+    if (!winner) continue
+    ownedPaths.add(doc.path)
+    const current = bestPerSession.get(winner.session)
+    if (!current || (
+      newestFirst(winner.createdAt, current.createdAt)
+      || newestFirst(winner.completedAt, current.completedAt)
+      || newestFirst(doc.mtimeMs, current.mtimeMs)
+    ) < 0) {
+      bestPerSession.set(winner.session, {
+        feature,
+        mtimeMs: doc.mtimeMs,
+        createdAt: winner.createdAt,
+        completedAt: winner.completedAt
+      })
+    }
+  }
+
+  const bySession = new Map<string, FeatureDoc>()
+  for (const [session, entry] of bestPerSession) bySession.set(session, entry.feature)
+  return { bySession, ownedPaths }
+}
+
+export function selectFeatureDoc(
+  docs: RawFeatureDoc[],
+  branch: string,
+  ownership?: { owners: FeatureOwnership; session: string }
+): FeatureDoc | null {
+  const owned = ownership?.owners.bySession.get(ownership.session)
+  if (owned) return owned
   for (const doc of [...docs].sort((a, b) => b.mtimeMs - a.mtimeMs)) {
+    if (ownership?.owners.ownedPaths.has(doc.path)) continue
     const feature = parseFeatureDoc(doc.path, doc.text)
     if (feature?.branch === branch) return feature
   }

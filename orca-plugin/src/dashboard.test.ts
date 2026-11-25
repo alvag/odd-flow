@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import { assert } from 'orca/testing'
-import { attentionItems, currentWork, parseFeatureDoc, parseGit, parseOrcaTime, selectFeatureDoc, workerRows } from './dashboard'
+import {
+  attentionItems, currentWork, featureOwners, parseFeatureDoc, parseGit, parseOrcaTime, selectFeatureDoc, workerRows
+} from './dashboard'
 import type { RawDispatch, RawTask } from './dashboard'
 import type { Agent } from './protocol'
 
@@ -212,4 +214,91 @@ test('uses the blocked time for a blocked worker and the work start for other at
     { label: 'Task input', since: Date.UTC(2026, 10, 25, 15, 56, 54) }
   ])
   assert.equal(workers[0].startedAt, Date.UTC(2026, 10, 25, 15, 56, 54))
+})
+
+test('newest citing session owns the doc', () => {
+  const doc = { path: 'odd/tasks/a.md', mtimeMs: 1, text: `${header}\n${table}` }
+  const runs = [
+    { id: 'r1', objective: 'One', coordinator_handle: 's1', created_at: '2026-11-25T15:00:00Z' },
+    { id: 'r2', objective: 'Two', coordinator_handle: 's2', created_at: '2026-11-25T15:00:00Z' }
+  ]
+  const tasks = [
+    task('t1', { created_by_terminal_handle: 's1', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'Spec: odd/tasks/a.md, S1' }),
+    task('t2', { created_by_terminal_handle: 's2', run_id: 'r2', created_at: '2026-11-25T15:20:00Z', spec: 'Spec: odd/tasks/a.md, S2' })
+  ]
+  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['s1', 's2'] })
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 's2' })?.path, 'odd/tasks/a.md')
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 's1' }), null)
+})
+
+test('a second session that cites nothing gets no card while the owner is open', () => {
+  const doc = { path: 'odd/tasks/a.md', mtimeMs: 1, text: `${header}\n${table}` }
+  const runs = [{ id: 'r1', objective: 'One', coordinator_handle: 'owner', created_at: '2026-11-25T15:00:00Z' }]
+  const tasks = [
+    task('t1', { created_by_terminal_handle: 'owner', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'Spec: odd/tasks/a.md' })
+  ]
+  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['owner', 'research'] })
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 'owner' })?.path, 'odd/tasks/a.md')
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 'research' }), null)
+})
+
+test('ownership moves when another session creates a newer citing task', () => {
+  const doc = { path: 'odd/tasks/a.md', mtimeMs: 1, text: `${header}\n${table}` }
+  const runs = [
+    { id: 'r1', objective: 'One', coordinator_handle: 'claude', created_at: '2026-11-25T15:00:00Z' },
+    { id: 'r2', objective: 'Two', coordinator_handle: 'codex', created_at: '2026-11-25T15:30:00Z' }
+  ]
+  const initialTasks = [
+    task('t1', { created_by_terminal_handle: 'claude', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'odd/tasks/a.md' })
+  ]
+  const before = featureOwners({ docs: [doc], tasks: initialTasks, runs, openSessions: ['claude', 'codex'] })
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners: before, session: 'claude' })?.path, 'odd/tasks/a.md')
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners: before, session: 'codex' }), null)
+
+  const afterTasks = [
+    ...initialTasks,
+    task('t2', { created_by_terminal_handle: 'codex', run_id: 'r2', created_at: '2026-11-25T15:40:00Z', spec: 'odd/tasks/a.md' })
+  ]
+  const after = featureOwners({ docs: [doc], tasks: afterTasks, runs, openSessions: ['claude', 'codex'] })
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners: after, session: 'codex' })?.path, 'odd/tasks/a.md')
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners: after, session: 'claude' }), null)
+})
+
+test('when the owner closes the doc falls back to the branch rule for remaining sessions', () => {
+  const doc = { path: 'odd/tasks/a.md', mtimeMs: 1, text: `${header}\n${table}` }
+  const runs = [{ id: 'r1', objective: 'One', coordinator_handle: 'closed-owner', created_at: '2026-11-25T15:00:00Z' }]
+  const tasks = [
+    task('t1', { created_by_terminal_handle: 'closed-owner', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'odd/tasks/a.md' })
+  ]
+  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['remaining'] })
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 'remaining' })?.path, 'odd/tasks/a.md')
+})
+
+test('a session owning one doc does not also get a branch-fallback doc', () => {
+  const ownedOtherBranch = {
+    path: 'odd/tasks/owned.md', mtimeMs: 1,
+    text: `${header.replace('feat/orca-profile-plugin', 'other-branch')}\n${table}`
+  }
+  const unownedCurrentBranch = { path: 'odd/tasks/fallback.md', mtimeMs: 2, text: `${header}\n${table}` }
+  const docs = [ownedOtherBranch, unownedCurrentBranch]
+  const runs = [{ id: 'r1', objective: 'One', coordinator_handle: 's1', created_at: '2026-11-25T15:00:00Z' }]
+  const tasks = [
+    task('t1', { created_by_terminal_handle: 's1', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'odd/tasks/owned.md' })
+  ]
+  const owners = featureOwners({ docs, tasks, runs, openSessions: ['s1', 's2'] })
+  assert.equal(selectFeatureDoc(docs, 'feat/orca-profile-plugin', { owners, session: 's1' })?.path, 'odd/tasks/owned.md')
+  assert.equal(selectFeatureDoc(docs, 'feat/orca-profile-plugin', { owners, session: 's2' })?.path, 'odd/tasks/fallback.md')
+})
+
+test('a cited path that is only a prefix of another path does not match', () => {
+  const shortDoc = { path: 'odd/tasks/a.md', mtimeMs: 1, text: `${header}\n${table}` }
+  const longDoc = { path: 'odd/tasks/a.md-plan.md', mtimeMs: 2, text: `${header}\n${table}` }
+  const docs = [shortDoc, longDoc]
+  const runs = [{ id: 'r1', objective: 'One', coordinator_handle: 's1', created_at: '2026-11-25T15:00:00Z' }]
+  const tasks = [
+    task('t1', { created_by_terminal_handle: 's1', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'See odd/tasks/a.md-plan.md for details' })
+  ]
+  const owners = featureOwners({ docs, tasks, runs, openSessions: ['s1', 's2'] })
+  assert.equal(selectFeatureDoc(docs, 'feat/orca-profile-plugin', { owners, session: 's1' })?.path, 'odd/tasks/a.md-plan.md')
+  assert.equal(selectFeatureDoc(docs, 'feat/orca-profile-plugin', { owners, session: 's2' })?.path, 'odd/tasks/a.md')
 })

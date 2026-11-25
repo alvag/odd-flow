@@ -1461,6 +1461,65 @@ test('never sends task specs to the panel', async (t) => {
   }
 })
 
+test('assigns a cited feature doc only to its owning session while keeping specs out of state', async (t) => {
+  const root = await temp(t)
+  const doc = await scriptAt(join(root, 'odd/tasks/dashboard.md'))
+  await writeFile(doc, '# Dashboard\n\nBranch: `feature/dashboard`\n\n## Tasks\n| ID | Work | Status |\n| --- | --- | --- |\n| T1 | Build | in_progress |\n')
+  const started = '2026-11-25T16:00:00Z'
+  const worker = await fixture({ profileScript: currentScript }, [agent('codex'), agent('claude')], {
+    runExecutable: async (executable, argv) => {
+      if (executable === 'git') {
+        return { stdout: argv.includes('branch') ? 'feature/dashboard\n' : argv.includes('status') ? '' : 'abc123\x001764086400\n', stderr: '' }
+      }
+      if (argv[1] === 'worker-list' && !argv.includes('--run')) return cliOk({ workers: [] })
+      if (argv[1] === 'run-list') {
+        return cliOk({ runs: [
+          { id: 'run-codex', objective: 'Codex work', coordinator_handle: 'codex', created_at: started },
+          { id: 'run-claude', objective: 'Research work', coordinator_handle: 'claude', created_at: started }
+        ] })
+      }
+      const run = argv[argv.indexOf('--run') + 1]
+      if (argv[1] === 'task-list') {
+        return cliOk({
+          runId: run,
+          tasks: run === 'run-codex'
+            ? [{
+                id: 'task-1', task_title: 'Implement', status: 'dispatched', created_at: started,
+                completed_at: null, created_by_terminal_handle: 'codex', run_id: 'run-codex', result: null,
+                spec: `Spec: odd/tasks/dashboard.md ${taskSpecMarker}`
+              }]
+            : [{
+                id: 'task-2', task_title: 'Research', status: 'completed', created_at: started,
+                completed_at: started, created_by_terminal_handle: 'claude', run_id: 'run-claude', result: null,
+                spec: 'Investigate unrelated topic'
+              }]
+        })
+      }
+      return cliOk({ workers: [], scope: { run, source: 'flag' } })
+    }
+  }, {
+    'agents.list': { agents: [agent('codex'), agent('claude')] },
+    'workspace.readContext': {
+      workspaceId: 'focus', branch: 'feature/dashboard', displayName: 'Dashboard',
+      terminals: [{ id: 'codex' }, { id: 'claude' }]
+    },
+    'workspace.list': {
+      workspaces: [{ id: 'focus', kind: 'worktree', name: 'Dashboard', path: root, branch: 'feature/dashboard', hostId: 'local' }],
+      truncated: false
+    }
+  })
+  try {
+    const state = await worker.request('state')
+    assert.equal(state.dashboards?.codex.feature?.path, 'odd/tasks/dashboard.md')
+    assert.equal(state.dashboards?.claude.feature, null)
+    assert.equal(state.dashboards?.claude.current?.objective, 'Research work')
+    assert.equal(JSON.stringify(state).includes(taskSpecMarker), false)
+    assert.equal(JSON.stringify(state).includes('"spec":'), false)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
 test('reloads dashboard workers across repeated state requests and cached older runs', async (t) => {
   const root = await temp(t)
   const started = '2026-11-25T16:00:00Z'
