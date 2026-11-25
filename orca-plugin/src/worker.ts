@@ -3,9 +3,10 @@ import { constants } from 'node:fs'
 import { access } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { delimiter, isAbsolute, resolve } from 'node:path'
+import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { isAgentKind, isMode, type Agent, type AgentRow, type OddState, type ProfileList,
-  type Script, type SessionTarget, type State } from './protocol'
+  type MutationResult, type Script, type SessionTarget, type State } from './protocol'
 import { isFile, resolveScript } from './script'
 
 const SESSION_VARIABLE = {
@@ -23,8 +24,13 @@ const TIMEOUT_MS = 5000
 const DISPATCH_SCAN_TIMEOUT_MS = 60_000
 const BUNDLED_ORCA = '/Applications/Orca.app/Contents/Resources/bin/orca'
 const WORKER_LIST = ['orchestration', 'worker-list', '--environment', 'local', '--json']
+const PANEL_ID = 'odd-flow-profiles'
+const STATUS_ID = 'odd-flow-status'
+const STATUS_REFRESH_MS = 15_000
 type Env = Record<string, string | undefined>
 type Mutation = 'use' | 'session-mode' | 'clear'
+type Status = Omit<HostMethods['statusBar.update']['params'], 'id'>
+type MutationOutcome = MutationResult | { openPanel: true }
 
 export type Runner = (
   argv: readonly string[], env: Env, signal?: AbortSignal
@@ -40,6 +46,14 @@ export type WorkerOptions = {
   resolveOrca: (env: Env) => Promise<string | undefined>
   env: Env
   home: string
+  scheduleRefresh: (refresh: () => Promise<void>) => () => void
+}
+
+const scheduleStatusRefresh: WorkerOptions['scheduleRefresh'] = (refresh) => {
+  void refresh()
+  const timer = setInterval(() => { void refresh() }, STATUS_REFRESH_MS)
+  timer.unref()
+  return () => clearInterval(timer)
 }
 
 const exec: ExecutableRunner = (executable, argv, env, signal, timeout = TIMEOUT_MS) => new Promise((resolve, reject) => {
@@ -104,6 +118,59 @@ function isWorker(row: Pick<Agent, 'task' | 'terminalId'>, terminals?: ReadonlyS
   return row.task != null || (row.terminalId != null && terminals?.has(row.terminalId) === true)
 }
 
+function hasSession<T extends Pick<Agent, 'agent'> & Partial<Pick<Agent, 'sessionId'>>>(row: T): row is T & SessionTarget {
+  return isAgentKind(row.agent) && !!row.sessionId?.trim()
+}
+
+function coordinators({ agents }: State) {
+  return agents.filter((row): row is AgentRow & SessionTarget => !row.isWorker && hasSession(row))
+}
+
+function readableShow(odd: AgentRow['odd']): OddState | { error: string } {
+  if (typeof odd === 'string') return { error: odd }
+  if (!odd || !isMode(odd.mode) || (odd.profile !== null && typeof odd.profile !== 'string') ||
+      typeof odd.source !== 'string' || typeof odd.mode_source !== 'string') {
+    return { error: 'profile.py show did not return a readable profile and mode.' }
+  }
+  return odd
+}
+
+function statusFor(snapshot: State, panelOpenError?: string): Status {
+  const warning = (text: string, tooltip: string, tone: 'warning' | 'danger' = 'warning'): Status =>
+    ({ visible: true, text, tooltip, tone })
+  if (snapshot.workerCheckError) {
+    const detail = [snapshot.workerCheckError, panelOpenError].filter(Boolean).join('\n')
+    return warning('odd: worker check failed', detail, 'danger')
+  }
+  if (snapshot.error) return warning('odd: status unavailable', snapshot.error, 'danger')
+  const rows = coordinators(snapshot)
+  if (!rows.length) return { visible: false, tone: 'neutral', text: '', tooltip: '' }
+  if ('error' in snapshot.script) return warning('odd: script unavailable', snapshot.script.error)
+  if (panelOpenError) return warning('odd: panel unavailable', panelOpenError)
+  if (rows.length > 1) {
+    return { visible: true, tone: 'neutral', text: `odd: ${rows.length} sessions`, tooltip: 'Open the odd-flow profiles panel' }
+  }
+  const odd = readableShow(rows[0].odd)
+  if ('error' in odd) return warning('odd: show failed', odd.error)
+  return {
+    visible: true, tone: 'neutral', text: `odd: ${odd.profile ?? '(no profile)'} · ${odd.mode}`,
+    tooltip: `Profile source: ${odd.source}\nMode source: ${odd.mode_source}`
+  }
+}
+
+function pluginResult(stdout: string): { plugins?: unknown } {
+  let parsed
+  try {
+    parsed = JSON.parse(stdout)
+  } catch {
+    throw new Error('Orca CLI returned invalid JSON.')
+  }
+  if (parsed?.ok !== true) {
+    throw new Error(typeof parsed?.error?.message === 'string' ? parsed.error.message : 'Orca CLI reported failure.')
+  }
+  return parsed.result ?? {}
+}
+
 async function readJson<T>(
   run: Runner, path: string, command: 'list' | 'show', env: Env, signal: AbortSignal
 ): Promise<T | string> {
@@ -150,9 +217,10 @@ async function agentRow(
 }
 
 export function createWorker({
-  run = runPython, runExecutable = exec, resolveOrca = resolveOrcaExecutable, env = process.env, home = homedir()
+  run = runPython, runExecutable = exec, resolveOrca = resolveOrcaExecutable, env = process.env, home = homedir(),
+  scheduleRefresh = scheduleStatusRefresh
 }: Partial<WorkerOptions> = {}) {
-  return (orca: OrcaWorkerApi): void => {
+  return (orca: OrcaWorkerApi): (() => void) => {
     function isolatedEnv(): Env {
       const cleanEnv = { ...env }
       for (const key of SESSION_KEYS) delete cleanEnv[key]
@@ -209,14 +277,15 @@ export function createWorker({
       }
     }
 
-    async function state(signal: AbortSignal): Promise<State> {
+    async function state(signal: AbortSignal, includeProfiles = true): Promise<State> {
       try {
         const [listed, script] = await Promise.all([getAgents(signal), getScript()])
         const cleanEnv = isolatedEnv()
         const dispatches = await getDispatches(signal)
         const workerCheckError = typeof dispatches === 'string' ? dispatches : undefined
         const [profiles, agents] = await Promise.all([
-          !workerCheckError && 'path' in script ? readJson<ProfileList>(run, script.path, 'list', cleanEnv, signal) : null,
+          includeProfiles && !workerCheckError && 'path' in script
+            ? readJson<ProfileList>(run, script.path, 'list', cleanEnv, signal) : null,
           Promise.all(listed.agents.map(({ terminalId, title, agent, state, sessionId, task }) =>
             agentRow({
               terminalId, title, agent, state, sessionId: sessionId ?? null,
@@ -231,7 +300,86 @@ export function createWorker({
       }
     }
 
-    async function mutate(command: Mutation, input: unknown, signal: AbortSignal) {
+    const lifetime = new AbortController()
+    let panelOpenError: string | undefined
+    let refreshing: Promise<void> | undefined
+    let refreshAgain = false
+
+    function refreshStatus(snapshot?: State): Promise<void> {
+      const { signal } = lifetime
+      if (signal.aborted) return Promise.resolve()
+      if (refreshing) {
+        // Focus or a binding might have changed after the current read began.
+        refreshAgain = true
+        return refreshing
+      }
+      refreshing = (async () => {
+        try {
+          do {
+            refreshAgain = false
+            const current = snapshot ?? await state(signal, false)
+            snapshot = undefined
+            if (signal.aborted) return
+            try {
+              await orca.host.call('statusBar.update', { id: STATUS_ID, ...statusFor(current, panelOpenError) }, { signal })
+            } catch (error) {
+              if (!signal.aborted) orca.log(`Could not update odd-flow status: ${message(error)}`)
+            }
+          } while (refreshAgain)
+        } finally {
+          refreshing = undefined
+        }
+      })()
+      return refreshing
+    }
+
+    async function openPanel(signal: AbortSignal) {
+      try {
+        const cliEnv = isolatedEnv()
+        delete cliEnv.ORCA_ENVIRONMENT
+        delete cliEnv.ORCA_PAIRING_CODE
+        const executable = await resolveOrca(cliEnv)
+        if (!executable) throw new Error('Orca executable not found.')
+        const configured = await orca.settings.get('pluginKey')
+        if (configured !== undefined && typeof configured !== 'string') {
+          throw new Error('The pluginKey setting must be a string.')
+        }
+        let key = configured?.trim()
+        if (!key) {
+          const { stdout } = await runExecutable(executable, ['plugin', 'list', '--json'], cliEnv, signal)
+          const { plugins } = pluginResult(stdout)
+          if (!Array.isArray(plugins)) throw new Error('Orca CLI returned an invalid plugin list.')
+          const matches = plugins.filter((entry) => typeof entry?.pluginKey === 'string' &&
+            entry.pluginKey.endsWith(`.${PANEL_ID}`) && typeof entry.status === 'string' && entry.status !== 'disabled')
+          if (matches.length !== 1) {
+            throw new Error(`Found ${matches.length} enabled odd-flow profiles plugins. Set pluginKey in Orca Settings.`)
+          }
+          key = matches[0].pluginKey as string
+        }
+        if (!key || key.startsWith('-')) throw new Error('The pluginKey setting must name an installed plugin, not an option.')
+        signal.throwIfAborted()
+        const { stdout } = await runExecutable(executable, ['plugin', 'open', key, '--panel', PANEL_ID, '--json'], cliEnv, signal)
+        pluginResult(stdout)
+        if (panelOpenError) {
+          panelOpenError = undefined
+          await refreshStatus()
+        }
+        return 'Opened the odd-flow profiles panel.'
+      } catch (error) {
+        const detail = `Could not open the odd-flow profiles panel: ${message(error)}`
+        if (!signal.aborted) {
+          panelOpenError = detail
+          await refreshStatus()
+        }
+        return { error: detail }
+      }
+    }
+
+    async function mutate(command: Mutation, input: unknown, signal: AbortSignal): Promise<MutationResult>
+    async function mutate(command: Mutation, input: unknown, signal: AbortSignal, soleCoordinator: true): Promise<MutationOutcome>
+    async function mutate(
+      command: Mutation, input: unknown, signal: AbortSignal, soleCoordinator = false
+    ): Promise<MutationOutcome> {
       if (!input || typeof input !== 'object') return { error: 'Invalid session request.' }
       const { agent, sessionId, profile, mode } = input as Record<string, unknown>
       if (!isAgentKind(agent)) return { error: 'Unsupported agent kind.' }
@@ -247,14 +395,19 @@ export function createWorker({
         args.push('--', profile)
       }
 
-      async function targetError() {
+      async function targetError(): Promise<MutationOutcome | undefined> {
         const { agents } = await getAgents(signal)
         const matches = agents.filter((row) => row.agent === agent && row.sessionId === sessionId)
-        if (!matches.length) return { error: 'This agent session is not reported in the focused workspace.' }
+        if (!matches.length) return soleCoordinator ? { openPanel: true }
+          : { error: 'This agent session is not reported in the focused workspace.' }
         const dispatches = await getDispatches(signal)
-        if (typeof dispatches === 'string') return { error: dispatches, workerCheckUnavailable: true as const }
+        if (typeof dispatches === 'string') return soleCoordinator ? { openPanel: true }
+          : { error: dispatches, workerCheckUnavailable: true }
         if (matches.some((row) => isWorker(row, dispatches))) {
-          return { error: 'Dispatched worker sessions cannot be changed.' }
+          return soleCoordinator ? { openPanel: true } : { error: 'Dispatched worker sessions cannot be changed.' }
+        }
+        if (soleCoordinator && agents.filter((row) => hasSession(row) && !isWorker(row, dispatches)).length !== 1) {
+          return { openPanel: true }
         }
       }
       try {
@@ -274,7 +427,9 @@ export function createWorker({
           if (error) return error
         }
         await run(['-I', script.path, command, ...args], sessionEnv(cleanEnv, { agent, sessionId }), signal)
-        return { state: await state(signal) }
+        const snapshot = await state(signal)
+        void refreshStatus(signal.aborted ? undefined : snapshot)
+        return { state: snapshot }
       } catch (cause) {
         return { error: `Could not run ${command}: ${message(cause)}` }
       }
@@ -284,7 +439,36 @@ export function createWorker({
     orca.panels.handle('use', (input, { signal }) => mutate('use', input, signal))
     orca.panels.handle('sessionMode', (input, { signal }) => mutate('session-mode', input, signal))
     orca.panels.handle('clear', (input, { signal }) => mutate('clear', input, signal))
+    orca.commands.register('odd-flow.openProfiles', (_args, { signal }) => openPanel(signal))
+    orca.commands.register('odd-flow.toggleMode', async (_args, { signal }) => {
+      const snapshot = await state(signal, false)
+      if (snapshot.error) return { error: snapshot.error }
+      const rows = coordinators(snapshot)
+      if (snapshot.workerCheckError || rows.length !== 1) return openPanel(signal)
+      const { agent, sessionId } = rows[0]
+      const odd = readableShow(rows[0].odd)
+      if ('error' in odd) return odd
+      const mode = odd.mode === 'organic' ? 'full-delegation' : 'organic'
+      const result = await mutate('session-mode', { agent, sessionId, mode }, signal, true)
+      if ('openPanel' in result) return openPanel(signal)
+      return result.error ? { error: result.error } : `Switched odd-flow mode to ${mode}.`
+    })
+    orca.events.on('agent.status.changed', () => refreshStatus())
+    orca.events.on('workspace.changed', () => refreshStatus())
+    const stopRefresh = scheduleRefresh(refreshStatus)
+    return () => {
+      lifetime.abort()
+      stopRefresh()
+    }
   }
 }
 
-export default createWorker()
+let stop: (() => void) | undefined
+export default function activate(orca: OrcaWorkerApi): void {
+  stop = createWorker()(orca)
+}
+
+export function deactivate(): void {
+  stop?.()
+  stop = undefined
+}

@@ -24,6 +24,22 @@ For a non-worker Claude, Codex, or Antigravity row with a reported session ID:
 The panel does not send an agent prompt. It changes only session bindings, not
 `profiles.json`, saved profiles, or the file default.
 
+## Status bar and commands
+
+- The status bar shows `odd: <profile> · <mode>` for a single coordinator
+  (hover to see where both values came from), or `odd: <n> sessions` for
+  several. It is hidden when there are no coordinators and reports dispatch,
+  script, and profile lookup errors. Agent and workspace events, panel changes,
+  and a 15-second fallback keep it current.
+- **odd-flow: Open profiles panel** opens the panel from the command palette,
+  the status bar, or **Mod+Alt+Shift+O** (Cmd on macOS, Ctrl elsewhere). The
+  command looks up the single enabled plugin with a key ending in
+  `.odd-flow-profiles`. If none or more than one match, set `pluginKey` in the
+  plugin's Orca settings to the installed key you want to open.
+- **odd-flow: Toggle mode** switches the active mode for a single coordinator.
+  If there are zero or several coordinators, or the worker check is unavailable,
+  it opens the panel instead. Pick a different profile in the panel.
+
 ## Profile script
 
 By default the worker looks for `profile.py` in the newest semver directory in the
@@ -59,5 +75,7 @@ orca plugin dev watch orca-plugin --json
 worker** execution, which runs Node, the Orca CLI, and the configured Python
 script with your user account's access on the Orca host, plus `agent:read` and `workspace:read`
 for the focused workspace's agents and events, and `settings:own` for its own
-setting. Only approve code and script paths you trust. Press Ctrl-C to end the
+settings. This version adds commands, a shortcut, status bar and event
+subscriptions, so Orca requires a new approval. Only approve code and script
+paths you trust. Press Ctrl-C to end the
 watch. Orca generates local typings under `.orca/`; do not commit them.

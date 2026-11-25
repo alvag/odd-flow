@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
+import type { HostMethods } from 'orca/host'
 import { assert, hostError, mockHost, mountWorker, type MockHostOptions } from 'orca/testing'
 import * as main from './worker'
 import type { Agent } from './protocol'
@@ -44,6 +45,11 @@ const dispatched = { ...agent('claude', 'worker-sid'), task }
 const terminalOnly = { ...dispatched, task: null }
 const workerListArgv = ['orchestration', 'worker-list', '--environment', 'local', '--json']
 const fakeOrca = '/fake/orca'
+const statusHostResults = {
+  // Drive status events explicitly instead of delivering the automatic initial snapshot.
+  'workspace.readContext': () => { throw hostError('unavailable', 'No initial snapshot in this fixture.') },
+  'statusBar.update': { ok: true as const }
+}
 
 function dispatches(terminals: (string | null)[] = [], nextCursor?: string) {
   return dispatchResult(terminals.map((terminal, index) => ({ dispatchId: `dispatch-${terminal}-${index}`, terminal })),
@@ -67,14 +73,20 @@ async function fixture(
   results: MockHostOptions['results'] = { 'agents.list': { agents } }
 ) {
   const host = mockHost({
-    capabilities: ['agent:read', 'settings:own'],
+    capabilities: ['agent:read', 'workspace:read', 'settings:own'],
     settings,
-    results
+    results: { ...statusHostResults, ...results }
   })
   const defaults = {
-    env, run: fakeRun, resolveOrca: async () => fakeOrca, runExecutable: async () => dispatches()
+    env, run: fakeRun, resolveOrca: async () => fakeOrca, runExecutable: async () => dispatches(),
+    scheduleRefresh: () => () => {}
   }
-  return mountWorker({ default: main.createWorker({ ...defaults, ...options }) }, { host })
+  let stop: (() => void) | undefined
+  const activate = main.createWorker({ ...defaults, ...options })
+  return mountWorker({
+    default: (api) => { stop = activate(api) },
+    deactivate: () => stop?.()
+  }, { host })
 }
 
 async function temp(t: { after: (cleanup: () => Promise<void>) => void }): Promise<string> {
@@ -508,11 +520,13 @@ test('runs each matching mutation with isolated argv and session env, then retur
     ['clear', 'clear', 'antigravity', 'ANTIGRAVITY_CONVERSATION_ID', []]
   ] as const) {
     calls.length = 0
+    const beforeRefresh = worker.host.callsOf('statusBar.update').length
     const input = { agent: kind, sessionId: kind }
     const result = request === 'use' ? await worker.request('use', { ...input, profile: 'test' })
       : request === 'sessionMode' ? await worker.request('sessionMode', { ...input, mode: 'full-delegation' })
       : await worker.request('clear', input)
     assert.ok(result.state)
+    assert.equal(worker.host.callsOf('statusBar.update').length, beforeRefresh + 1)
     assert.deepEqual(result.state.agents.map(({ odd }) => odd), agents.map(() => ({ ...show, source: command })))
     assert.deepEqual(calls.map(({ argv }) => argv[2]),
       [...(request === 'use' ? ['list'] : []), command, 'list', 'show', 'show', 'show'])
@@ -698,4 +712,267 @@ test('binds a listed profile whose name looks like an option', async (t) => {
     assert.deepEqual([odd.profile, odd.source], [profile, 'session (CLAUDE_CODE_SESSION_ID)'])
   }
   await worker.deactivate()
+})
+
+const openCommand = 'odd-flow.openProfiles'
+const toggleCommand = 'odd-flow.toggleMode'
+const pluginListArgv = ['plugin', 'list', '--json']
+const openArgv = (key = 'local.odd-flow-profiles') =>
+  ['plugin', 'open', key, '--panel', 'odd-flow-profiles', '--json']
+const cliOk = (result: unknown = {}) => ({ stdout: JSON.stringify({ ok: true, result }), stderr: '' })
+const installed = (pluginKey: string, status = 'running') => ({ pluginKey, status })
+const workspaceEvent = { context: null }
+const agentEvent = { workspaceId: null, paneKey: 'pane', state: 'waiting', receivedAt: 1 } as const
+
+async function controlsFixture(
+  agents: () => ReturnType<typeof agent>[],
+  options: {
+    settings?: MockHostOptions['settings']
+    env?: main.WorkerOptions['env']
+    run?: main.Runner
+    runExecutable?: main.WorkerOptions['runExecutable']
+  } = {}
+) {
+  const host = mockHost({
+    capabilities: ['agent:read', 'workspace:read', 'settings:own'],
+    settings: { profileScript: currentScript, ...options.settings },
+    results: { ...statusHostResults, 'agents.list': () => ({ agents: agents() }) }
+  })
+  const runExecutable: main.WorkerOptions['runExecutable'] = async (_executable, argv) => {
+    if (argv[0] === 'orchestration') return dispatches()
+    if (argv[1] === 'list') return cliOk({ plugins: [installed('local.odd-flow-profiles')] })
+    return cliOk()
+  }
+  let stop: (() => void) | undefined
+  let tick: (() => void | Promise<void>) | undefined
+  const activate = main.createWorker({
+    env: options.env ?? env,
+    resolveOrca: async () => fakeOrca,
+    run: options.run ?? fakeRun,
+    runExecutable: options.runExecutable ?? runExecutable,
+    scheduleRefresh: (refresh) => {
+      tick = refresh
+      return () => { tick = undefined }
+    }
+  })
+  const worker = await mountWorker({ default: (orca) => { stop = activate(orca) }, deactivate: () => stop?.() }, {
+    host, events: ['agent.status.changed', 'workspace.changed'], commands: [openCommand, toggleCommand]
+  })
+  return {
+    worker,
+    tick: () => tick?.(),
+    status: () => host.callsOf('statusBar.update').at(-1) as HostMethods['statusBar.update']['params'] | undefined
+  }
+}
+
+test('status bar follows the focused coordinator count on agent and workspace events', async () => {
+  let rows = [dispatched, agent('pi'), agent('codex', null)]
+  const fixture = await controlsFixture(() => rows)
+  try {
+    await fixture.worker.emit('workspace.changed', workspaceEvent)
+    assert.equal(fixture.status()?.visible, false)
+    rows = [agent('codex'), dispatched]
+    await fixture.worker.emit('agent.status.changed', agentEvent)
+    assert.deepEqual(fixture.status(), {
+      id: 'odd-flow-status', visible: true, text: 'odd: test · organic', tone: 'neutral',
+      tooltip: 'Profile source: file default\nMode source: default'
+    })
+    rows = [agent('codex'), agent('antigravity'), dispatched]
+    await fixture.worker.emit('workspace.changed', workspaceEvent)
+    assert.equal(fixture.status()?.visible, true)
+    assert.equal(fixture.status()?.tone, 'neutral')
+    assert.equal(fixture.status()?.text, 'odd: 2 sessions')
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('status bar reports failed dispatch checks, missing scripts and Show errors, then clears the error tone', async () => {
+  for (const [options, label, tone, detail] of [
+    [{ runExecutable: async () => { throw new Error('dispatch offline') } },
+      'odd: worker check failed', 'danger', /dispatch offline/],
+    [{ settings: { profileScript: 'not-absolute' } },
+      'odd: script unavailable', 'warning', /profileScript/],
+    [{ run: async (argv: readonly string[], env: Record<string, string | undefined>) => {
+      if (argv[2] === 'show') throw new Error('show offline')
+      return fakeRun(argv, env)
+    } }, 'odd: show failed', 'warning', /show offline/]
+  ] as const) {
+    let rows = [agent('codex')]
+    const fixture = await controlsFixture(() => rows, options)
+    try {
+      await fixture.tick()
+      assert.equal(fixture.status()?.visible, true)
+      assert.equal(fixture.status()?.text, label)
+      assert.equal(fixture.status()?.tone, tone)
+      assert.match(fixture.status()?.tooltip ?? '', detail)
+      if (tone === 'warning') {
+        rows = []
+        await fixture.tick()
+        assert.equal(fixture.status()?.visible, false)
+        assert.equal(fixture.status()?.tone, 'neutral')
+      }
+    } finally {
+      await fixture.worker.deactivate()
+    }
+  }
+})
+
+test('coalesces overlapping event and timer refreshes into one trailing read', async () => {
+  let reads = 0
+  let active = 0
+  let maxActive = 0
+  let rows = [agent('codex')]
+  let started!: () => void
+  let release!: () => void
+  const startedRead = new Promise<void>((resolve) => { started = resolve })
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const fixture = await controlsFixture(() => rows, {
+    runExecutable: async () => {
+      maxActive = Math.max(maxActive, ++active)
+      if (++reads === 1) {
+        started()
+        await gate
+      }
+      active--
+      return dispatches()
+    }
+  })
+  try {
+    const first = fixture.tick()
+    assert.ok(first, 'the worker registered a fallback timer')
+    await startedRead
+    rows = [agent('codex'), agent('antigravity')]
+    const followups = [
+      fixture.worker.emit('agent.status.changed', agentEvent),
+      fixture.worker.emit('workspace.changed', workspaceEvent),
+      fixture.tick()
+    ]
+    release()
+    await Promise.all([first, ...followups])
+    assert.equal(reads, 2)
+    assert.equal(maxActive, 1)
+    assert.equal(fixture.status()?.text, 'odd: 2 sessions')
+  } finally {
+    release()
+    await fixture.worker.deactivate()
+  }
+})
+
+test('Open profiles panel discovers one enabled key at command time or uses the override, always with argv', async () => {
+  for (const override of ['', 'custom.odd-flow-profiles']) {
+    const calls: (readonly string[])[] = []
+    const fixture = await controlsFixture(() => [], {
+      settings: { pluginKey: override },
+      env: { ...env, ORCA_ENVIRONMENT: 'paired', ORCA_PAIRING_CODE: 'fake' },
+      runExecutable: async (executable, argv, childEnv) => {
+        assert.equal(executable, fakeOrca)
+        assert.deepEqual(childEnv, { ODD_FLOW_HOME: '/keep' })
+        calls.push(argv)
+        return argv[1] === 'list'
+          ? cliOk({ plugins: [
+            installed('disabled.odd-flow-profiles', 'disabled'),
+            installed('unrelated.other'), installed('git.odd-flow-profiles', 'idle')
+          ] })
+          : cliOk()
+      }
+    })
+    try {
+      assert.deepEqual(calls, [])
+      await fixture.worker.command(openCommand)
+      assert.deepEqual(calls, override ? [openArgv(override)] : [pluginListArgv, openArgv('git.odd-flow-profiles')])
+    } finally {
+      await fixture.worker.deactivate()
+    }
+  }
+})
+
+test('Open profiles panel refuses zero or multiple discovered keys and names the setting', async () => {
+  for (const plugins of [[], [installed('dev.odd-flow-profiles'), installed('git.odd-flow-profiles')]]) {
+    const calls: (readonly string[])[] = []
+    const fixture = await controlsFixture(() => [agent('codex')], {
+      runExecutable: async (_executable, argv) => {
+        if (argv[0] === 'orchestration') return dispatches()
+        calls.push(argv)
+        return cliOk({ plugins })
+      }
+    })
+    try {
+      assert.match(JSON.stringify(await fixture.worker.command(openCommand)), /pluginKey/)
+      assert.deepEqual(calls, [pluginListArgv])
+      assert.match(fixture.status()?.tooltip ?? '', /pluginKey/)
+    } finally {
+      await fixture.worker.deactivate()
+    }
+  }
+})
+
+test('Toggle mode flips a sole coordinator using the mutation path, and panel mutations refresh status', async () => {
+  let mode = 'organic'
+  const mutations: { argv: readonly string[]; env: Record<string, string | undefined> }[] = []
+  let scans = 0
+  const fixture = await controlsFixture(() => [agent('codex'), dispatched], {
+    runExecutable: async (_executable, argv) => {
+      assert.deepEqual(argv, workerListArgv)
+      scans++
+      return dispatches()
+    },
+    run: async (argv, env) => {
+      if (argv[2] === 'list') return fakeRun(argv, env)
+      if (argv[2] === 'show') return { stdout: JSON.stringify({ ...show, mode }), stderr: '' }
+      mutations.push({ argv, env })
+      mode = argv[3]
+      return { stdout: '', stderr: '' }
+    }
+  })
+  try {
+    await fixture.worker.command(toggleCommand)
+    assert.equal(fixture.status()?.text, 'odd: test · full-delegation')
+    await fixture.worker.command(toggleCommand)
+    assert.equal(fixture.status()?.text, 'odd: test · organic')
+    const result = await fixture.worker.request('sessionMode', {
+      agent: 'codex', sessionId: 'codex', mode: 'full-delegation'
+    })
+    assert.ok(result.state)
+    assert.equal(fixture.status()?.text, 'odd: test · full-delegation')
+    assert.deepEqual(mutations, ['full-delegation', 'organic', 'full-delegation'].map((mode) => ({
+      argv: ['-I', currentScript, 'session-mode', mode],
+      env: { ODD_FLOW_HOME: '/keep', CODEX_THREAD_ID: 'codex' }
+    })))
+    assert.equal(scans, 8)
+    assert.equal(fixture.worker.host.callsOf('agents.list').length, 8)
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('Toggle mode opens the panel for no or several coordinators, workers, or unavailable worker checks', async () => {
+  for (const { rows, unavailable = false, dispatchScanChanges = false } of [
+    { rows: [] }, { rows: [agent('codex'), agent('antigravity')] },
+    { rows: [dispatched, terminalOnly] }, { rows: [agent('codex')], unavailable: true },
+    { rows: [terminalOnly], dispatchScanChanges: true }
+  ]) {
+    const pluginCalls: (readonly string[])[] = []
+    const python: string[] = []
+    let scans = 0
+    const fixture = await controlsFixture(() => rows, {
+      run: async (argv, env) => { python.push(argv[2]); return fakeRun(argv, env) },
+      runExecutable: async (_executable, argv) => {
+        if (argv[0] === 'orchestration') {
+          if (unavailable) throw new Error('dispatch offline')
+          return dispatches(!dispatchScanChanges || ++scans > 1 ? [terminalOnly.terminalId] : [])
+        }
+        pluginCalls.push(argv)
+        return argv[1] === 'list' ? cliOk({ plugins: [installed('local.odd-flow-profiles')] }) : cliOk()
+      }
+    })
+    try {
+      await fixture.worker.command(toggleCommand)
+      assert.deepEqual(pluginCalls, [pluginListArgv, openArgv()])
+      assert.ok(python.every((cmd) => cmd === 'list' || cmd === 'show'))
+      if (unavailable) assert.deepEqual(python, [])
+    } finally {
+      await fixture.worker.deactivate()
+    }
+  }
 })
