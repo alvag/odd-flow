@@ -13,8 +13,9 @@
 2. Build the spec from `assets/spec-template.md` and `assets/roles/<role>.md`. Write it with the file tool to a scratch file outside the worktree (for example `$TMPDIR/odd-flow/<session>/<task-id>.md`). Never use heredocs. In `task-create` and `worker-start`, pass the resolved literal path to `--spec-file`, quoted if needed, not a variable (such as `$SPEC`), command substitution, or glob. In Claude Code, a guard denial means the launch did not run: fix the spec or pass a readable literal path and retry; do not bypass the guard. The hook checks the declaration at launch, not subsequent edits.
 3. For a writer in a folder without Git, use Project folders without Git below. Otherwise run placement for this launch:
    `python3 <skill-dir>/scripts/pane.py open --role <role> --title "<T# role: short title>" --json`
-   A handle starts one worker. Run `pane.py open` again for every launch; never reuse a placement result or handle.
+   Pass the unit’s own role to `--role`; never hardcode a role in a reused helper or loop. A handle starts one worker. Run `pane.py open` again for every launch; never reuse a placement result or handle.
    On a non-zero exit, report the error and do not launch. If the split or create reply cannot be parsed or has no handle, a terminal may have opened; check `terminal list` and close it. Report any `title_error`, but continue with the opened terminal.
+   Before `task-create`, compare the returned `agent`, `model` and `effort` with the same fields in the resolve JSON from step 1 (`null` means the profile does not set that field). On a mismatch, close the returned handle, if any, with `ORCA terminal close --terminal <handle>` and report the mismatch without launching.
    - A returned `handle` (Claude, Codex and Antigravity): use it for terminal steps 1, 3 and 4 below, whether it is a split pane or a tab. Skip step 2.
    - Only when `handle` is `null`: start by the `launch` field of the resolve result.
 
