@@ -45,11 +45,14 @@ async function newestVersion(cache: string): Promise<string | undefined> {
   return versions.sort((a, b) => compareVersion(b, a) || compareIdentifier(a.name, b.name))[0]?.name
 }
 
-async function isFile(path: string): Promise<boolean> {
+export async function isFile(path: string): Promise<boolean> {
   return (await stat(path).catch(() => null))?.isFile() ?? false
 }
 
 export async function resolveScript(home: string, configured: unknown): Promise<Script> {
+  if (configured !== undefined && typeof configured !== 'string') {
+    return { error: 'The profileScript setting must be a string.' }
+  }
   if (typeof configured === 'string' && configured !== '') {
     if (!isAbsolute(configured)) return { error: 'The profileScript setting must be an absolute path.' }
     return await isFile(configured)

@@ -1,9 +1,9 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { assert, mockHost, mountWorker } from 'orca/testing'
+import { assert, hostError, mockHost, mountWorker, type MockHostOptions } from 'orca/testing'
 import * as main from './worker'
 import type { Agent } from './protocol'
 
@@ -12,10 +12,18 @@ const keys = {
   CODEX_THREAD_ID: 'parent-codex',
   CODEX_SESSION_ID: 'parent-codex-legacy',
   ANTIGRAVITY_CONVERSATION_ID: 'parent-antigravity',
-  ORCA_PANE_KEY: 'parent-orca'
+  ORCA_PANE_KEY: 'parent-orca',
+  ODD_PROFILE: 'parent-profile',
+  ODD_ORCHESTRATOR_MODE: 'organic',
+  ODD_FLOW_AGENT: 'parent-agent',
+  ORCA_TERMINAL_HANDLE: 'parent-terminal'
 }
 const env = { ...keys, ODD_FLOW_HOME: '/keep' }
-const list = { path: null, default: null, profiles: [] }
+const list = {
+  path: null, default: null, profiles: [{ name: 'test', default: false, mode: 'organic', roles: {} }]
+}
+const currentScript = fileURLToPath(new URL('../../skills/odd-flow/scripts/profile.py', import.meta.url))
+const oldScript = fileURLToPath(new URL('./fixtures/old-profile.py', import.meta.url))
 const show = {
   profile: 'test', source: 'file default', session_key: null, agent: null,
   mode: 'organic', mode_source: 'default', rules: 'references/mode-organic.md',
@@ -30,17 +38,37 @@ function agent(kind: string, sessionId: string | null = kind): Agent & { stateSt
   return { terminalId: kind, title: kind, agent: kind, sessionId, state: 'waiting', stateStartedAt: 0 }
 }
 
+const task = { title: 'T5 verify: panel session switching' }
+const dispatched = { ...agent('claude', 'worker-sid'), task }
+const terminalOnly = { ...dispatched, task: null }
+const workerListArgv = ['orchestration', 'worker-list', '--environment', 'local', '--json']
+const fakeOrca = '/fake/orca'
+
+function dispatches(terminals: (string | null)[] = [], nextCursor?: string) {
+  return {
+    stdout: JSON.stringify({ ok: true, result: {
+      workers: terminals.map((terminal) => ({ terminal, state: 'succeeded', liveness: 'exited' })),
+      nextCursor
+    } }),
+    stderr: ''
+  }
+}
+
 async function fixture(
-  settings: Record<string, string>,
+  settings: MockHostOptions['settings'],
   agents: ReturnType<typeof agent>[],
-  options: Partial<import('./worker').WorkerOptions> = {}
+  options: Partial<import('./worker').WorkerOptions> = {},
+  results: MockHostOptions['results'] = { 'agents.list': { agents } }
 ) {
   const host = mockHost({
     capabilities: ['agent:read', 'settings:own'],
     settings,
-    results: { 'agents.list': { agents } }
+    results
   })
-  return mountWorker({ default: main.createWorker({ env, run: fakeRun, ...options }) }, { host })
+  const defaults = {
+    env, run: fakeRun, resolveOrca: async () => fakeOrca, runExecutable: async () => dispatches()
+  }
+  return mountWorker({ default: main.createWorker({ ...defaults, ...options }) }, { host })
 }
 
 async function temp(t: { after: (cleanup: () => Promise<void>) => void }): Promise<string> {
@@ -56,7 +84,7 @@ async function scriptAt(path: string): Promise<string> {
 }
 
 test('uses the focused workspace and maps Claude, Codex and Antigravity to one clean session variable each', async () => {
-  const script = fileURLToPath(new URL('../../skills/odd-flow/scripts/profile.py', import.meta.url))
+  const script = currentScript
   const agents = [agent('claude'), agent('codex'), agent('antigravity')]
   const calls: { argv: readonly string[]; env: Record<string, string | undefined> }[] = []
   const worker = await fixture({ profileScript: script }, agents, {
@@ -79,7 +107,7 @@ test('uses the focused workspace and maps Claude, Codex and Antigravity to one c
 })
 
 test('skips Show for unsupported agents and agents with no session id, with a reason', async () => {
-  const script = fileURLToPath(new URL('../../skills/odd-flow/scripts/profile.py', import.meta.url))
+  const script = currentScript
   const commands: string[] = []
   const worker = await fixture({ profileScript: script }, [agent('pi'), agent('codex', null)], {
     run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) }
@@ -92,8 +120,86 @@ test('skips Show for unsupported agents and agents with no session id, with a re
   await worker.deactivate()
 })
 
+test('reports the worker task without running a process for its row', async () => {
+  const commands: string[] = []
+  const worker = await fixture({ profileScript: currentScript }, [dispatched], {
+    run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) }
+  })
+  const { agents } = await worker.request('state')
+  assert.deepEqual(commands, ['list'])
+  assert.deepEqual(agents.map(({ task, isWorker, odd }) => ({ task, isWorker, odd })),
+    [{ task, isWorker: true, odd: null }])
+  await worker.deactivate()
+})
+
+test('marks a taskless row from a later dispatch page and skips its show without changing other rows', async () => {
+  const python: string[][] = []
+  const dispatchArgv: string[][] = []
+  const worker = await fixture({ profileScript: currentScript }, [terminalOnly, agent('codex')], {
+    run: async (argv, childEnv) => {
+      python.push([...argv])
+      return fakeRun(argv, childEnv)
+    },
+    runExecutable: async (executable, argv) => {
+      assert.equal(executable, fakeOrca)
+      dispatchArgv.push([...argv])
+      if (argv.includes('--cursor')) return dispatches([terminalOnly.terminalId])
+      const page = dispatches([null], 'next')
+      const parsed = JSON.parse(page.stdout)
+      parsed.result.workers.push({ dispatchId: 'without-terminal', state: 'succeeded', liveness: 'unverifiable' })
+      return { ...page, stdout: JSON.stringify(parsed) }
+    }
+  })
+  try {
+    const state = await worker.request('state')
+    assert.deepEqual(dispatchArgv, [workerListArgv, [...workerListArgv, '--cursor', 'next']])
+    assert.deepEqual(state.agents.map(({ isWorker, odd }) => [isWorker, odd]), [[true, null], [undefined, show]])
+    assert.deepEqual(python.map((argv) => argv[2]), ['list', 'show'])
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('resolves an absolute configured file, then an executable on PATH, then the bundled file', async (t) => {
+  const home = await temp(t)
+  const configured = await scriptAt(join(home, 'configured'))
+  const first = join(home, 'first')
+  const second = join(home, 'second')
+  const installed = join(second, 'orca')
+  const bundled = await scriptAt(join(home, 'bundled/orca'))
+  await scriptAt(join(first, 'orca'))
+  await mkdir(second)
+  await writeFile(installed, '', { mode: 0o755 })
+  const PATH = [first, second].join(':')
+  assert.equal(await main.resolveOrcaExecutable({ ORCA_CLI_COMMAND: configured, PATH }, bundled), configured)
+  for (const invalid of ['orca', join(home, 'missing'), first]) {
+    assert.equal(await main.resolveOrcaExecutable({ ORCA_CLI_COMMAND: invalid, PATH }, bundled), installed)
+  }
+  assert.equal(await main.resolveOrcaExecutable({ PATH: first }, bundled), bundled)
+  assert.equal(await main.resolveOrcaExecutable({}, join(home, 'missing')), undefined)
+})
+
+test('executes the Orca file directly and passes the dispatch list argv unchanged', async (t) => {
+  const home = await temp(t)
+  const executable = join(home, 'orca literal; $(printf marker)')
+  await writeFile(executable, `#!/bin/sh
+[ "$#" -eq 5 ] && [ "$1" = orchestration ] && [ "$2" = worker-list ] &&
+[ "$3" = --environment ] && [ "$4" = local ] && [ "$5" = --json ] || exit 9
+printf '%s\\n' '${dispatches([terminalOnly.terminalId]).stdout}'
+`, { mode: 0o755 })
+  const worker = await fixture({ profileScript: currentScript }, [terminalOnly], {
+    env: { ORCA_CLI_COMMAND: executable }, resolveOrca: undefined, runExecutable: undefined
+  })
+  try {
+    const state = await worker.request('state')
+    assert.equal(state.agents[0].isWorker, true)
+  } finally {
+    await worker.deactivate()
+  }
+})
+
 test('keeps nonzero-exit and malformed-JSON failures in their own rows and retains stderr', async () => {
-  const script = fileURLToPath(new URL('../../skills/odd-flow/scripts/profile.py', import.meta.url))
+  const script = currentScript
   const worker = await fixture({ profileScript: script }, [agent('claude'), agent('codex'), agent('antigravity')], {
     run: async (argv, childEnv) => {
       if (childEnv.CLAUDE_CODE_SESSION_ID) throw Object.assign(new Error('exit 2'), { stderr: 'unsupported flag' })
@@ -148,25 +254,326 @@ test('reports a missing script and names the setting without running a process',
   await worker.deactivate()
 })
 
-test('reads the real profile.py Show JSON against isolated profile and session data', async (t) => {
+test('reads the real profile.py JSON for each kind without writing to the isolated home', async (t) => {
   const home = await temp(t)
-  const script = fileURLToPath(new URL('../../skills/odd-flow/scripts/profile.py', import.meta.url))
-  await writeFile(join(home, 'profiles.json'), JSON.stringify({
-    default: 'fallback',
-    profiles: { fallback: {}, bound: {} },
-    workflow: { bound: { orchestratorMode: 'full-delegation' } }
+  const profilePath = join(home, 'profiles.json')
+  await writeFile(profilePath, JSON.stringify({
+    default: 'base', profiles: { base: {}, a: {}, b: {}, c: {} },
+    workflow: { b: { orchestratorMode: 'full-delegation' } }
   }))
-  await mkdir(join(home, 'sessions'))
-  await writeFile(join(home, 'sessions/codex.json'), JSON.stringify({ profile: 'bound' }))
-  const worker = await fixture({ profileScript: script }, [agent('codex')], {
-    env: { ...keys, PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
-  })
+  const sessions = join(home, 'sessions')
+  await mkdir(sessions)
+  for (const [sid, profile] of [['sc', 'a'], ['sx', 'b'], ['sg', 'c'],
+    ['parent-claude', 'base'], ['parent-codex', 'base'], ['parent-antigravity', 'base']]) {
+    await writeFile(join(sessions, sid + '.json'), JSON.stringify({ profile }))
+  }
+  const names = (await readdir(sessions)).sort()
+  const snapshot = () => Promise.all([readFile(profilePath),
+    ...names.map((name) => readFile(join(sessions, name)))])
+  const before = await snapshot()
+  const worker = await fixture({ profileScript: currentScript }, [
+    agent('claude', 'sc'), agent('codex', 'sx'), agent('antigravity', 'sg'),
+    agent('pi'), agent('claude', null)
+  ], { env: { ...keys, PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython })
   const { profiles, agents } = await worker.request('state')
   assert.ok(profiles && typeof profiles === 'object')
-  assert.equal(profiles.default, 'fallback')
-  const { odd } = agents[0]
-  assert.ok(odd && typeof odd === 'object')
-  assert.deepEqual([odd.profile, odd.source, odd.mode, odd.mode_source, odd.session_key, odd.agent],
-    ['bound', 'session (CODEX_THREAD_ID)', 'full-delegation', 'profile bound', 'CODEX_THREAD_ID', 'codex'])
+  assert.equal(profiles.default, 'base')
+  assert.deepEqual(agents.map(({ odd }) => odd && typeof odd === 'object'
+    ? [odd.profile, odd.source, odd.session_key, odd.mode, odd.orca_terminal] : odd), [
+    ['a', 'session (CLAUDE_CODE_SESSION_ID)', 'CLAUDE_CODE_SESSION_ID', 'organic', null],
+    ['b', 'session (CODEX_THREAD_ID)', 'CODEX_THREAD_ID', 'full-delegation', null],
+    ['c', 'session (ANTIGRAVITY_CONVERSATION_ID)', 'ANTIGRAVITY_CONVERSATION_ID', 'organic', null],
+    null, null
+  ])
+  assert.deepEqual((await readdir(home)).sort(), ['profiles.json', 'sessions'])
+  assert.deepEqual((await readdir(sessions)).sort(), names)
+  assert.deepEqual(await snapshot(), before)
+  await worker.deactivate()
+})
+
+test('reports old scripts, nonzero exits, invalid JSON and bounded timeouts in list and rows', async (t) => {
+  const home = await temp(t)
+  for (const [filename, content, expected] of [
+    ['old-profile.py', null, /unrecognized arguments: --json/],
+    ['exit.py', 'import sys\nsys.stderr.write("boom-stderr\\n")\nsys.exit(3)\n', /boom-stderr/],
+    ['garbage.py', 'print("not JSON")\n', /invalid JSON/],
+    ['wrong-shape.py', 'print("[1,2]")\n', /invalid JSON/],
+    ['sleep.py', 'import time\ntime.sleep(20)\n', /timed out/i]
+  ] as const) {
+    const script = content === null ? oldScript : join(home, filename)
+    if (content !== null) await writeFile(script, content)
+    const worker = await fixture({ profileScript: script }, [agent('claude'), agent('codex')], {
+      env: { PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
+    })
+    const started = Date.now()
+    const { profiles, agents } = await worker.request('state')
+    assert.match(String(profiles), expected)
+    for (const row of agents) assert.match(String(row.odd), expected)
+    if (filename === 'sleep.py') assert.ok(Date.now() - started < 8000)
+    await worker.deactivate()
+  }
+})
+
+test('passes a script path containing shell metacharacters as a single literal argument', async (t) => {
+  const home = await temp(t)
+  const filename = 'profile a; $(printf marker) `printf marker`.py'
+  const script = join(home, filename)
+  await writeFile(script, 'import json,sys\nprint(json.dumps({"profiles":[]} if sys.argv[1]=="list" else {"mode":"organic"}))\n')
+  const worker = await fixture({ profileScript: script }, [agent('claude')], {
+    env: { PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
+  })
+  const { agents } = await worker.request('state')
+  assert.deepEqual(agents[0].odd, { mode: 'organic' })
+  assert.deepEqual(await readdir(home), [filename])
+  await worker.deactivate()
+})
+
+test('does not fall back to a cache for a bad explicit script setting', async (t) => {
+  const home = await temp(t)
+  const cached = await scriptAt(join(home, '.claude/plugins/cache/odd-flow/odd-flow/0.10.0/skills/odd-flow/scripts/profile.py'))
+  for (const profileScript of ['profile.py', './profile.py', '~/profile.py', home, join(home, 'missing.py'), '  ', 5]) {
+    let calls = 0
+    const worker = await fixture({ profileScript }, [agent('claude')], {
+      home, run: async (argv, childEnv) => { calls++; return fakeRun(argv, childEnv) }
+    })
+    const { script } = await worker.request('state')
+    assert.match('error' in script ? script.error : '', typeof profileScript === 'number' ? /string/ : /profileScript/)
+    assert.equal(calls, 0)
+    await worker.deactivate()
+  }
+  const worker = await fixture({ profileScript: cached }, [], { home })
+  assert.deepEqual((await worker.request('state')).script, { path: cached, source: 'profileScript setting' })
+  await worker.deactivate()
+})
+
+test('falls through when the newest Claude version has no script rather than using an older one', async (t) => {
+  const home = await temp(t)
+  const suffix = 'skills/odd-flow/scripts/profile.py'
+  const claude = join(home, '.claude/plugins/cache/odd-flow/odd-flow')
+  await scriptAt(join(claude, '0.1.0', suffix))
+  await mkdir(join(claude, '0.3.0'))
+  const codex = await scriptAt(join(home, '.codex/plugins/cache/odd-flow/odd-flow/0.2.0', suffix))
+  const worker = await fixture({}, [], { home })
+  assert.deepEqual((await worker.request('state')).script, { path: codex, source: 'Codex cache' })
+  await worker.deactivate()
+})
+
+test('returns an agents.list failure without throwing or starting Python', async () => {
+  const worker = await fixture({ profileScript: currentScript }, [], {
+    run: async () => { assert.fail('unexpected process') }
+  }, { 'agents.list': () => { throw hostError('unavailable', 'agent list offline') } })
+  assert.match((await worker.request('state')).error ?? '', /agent list offline/)
+  assert.match((await worker.request('clear', { agent: 'codex', sessionId: 'x' })).error ?? '', /agent list offline/)
+  await worker.deactivate()
+})
+
+test('runs each matching mutation with isolated argv and session env, then returns fresh state', async () => {
+  const agents = [agent('claude'), agent('codex'), agent('antigravity')]
+  const calls: { argv: readonly string[]; env: Record<string, string | undefined> }[] = []
+  let last = ''
+  const worker = await fixture({ profileScript: currentScript }, agents, {
+    run: async (argv, childEnv) => {
+      calls.push({ argv, env: childEnv })
+      if (argv[2] === 'list') return fakeRun(argv, childEnv)
+      if (argv[2] === 'show') return { stdout: JSON.stringify({ ...show, source: last }), stderr: '' }
+      last = argv[2]
+      return { stdout: '', stderr: '' }
+    }
+  })
+  for (const [request, command, kind, variable, args] of [
+    ['use', 'use', 'claude', 'CLAUDE_CODE_SESSION_ID', ['--', 'test']],
+    ['sessionMode', 'session-mode', 'codex', 'CODEX_THREAD_ID', ['full-delegation']],
+    ['clear', 'clear', 'antigravity', 'ANTIGRAVITY_CONVERSATION_ID', []]
+  ] as const) {
+    calls.length = 0
+    const input = { agent: kind, sessionId: kind }
+    const result = request === 'use' ? await worker.request('use', { ...input, profile: 'test' })
+      : request === 'sessionMode' ? await worker.request('sessionMode', { ...input, mode: 'full-delegation' })
+      : await worker.request('clear', input)
+    assert.ok(result.state)
+    assert.deepEqual(result.state.agents.map(({ odd }) => odd), agents.map(() => ({ ...show, source: command })))
+    assert.deepEqual(calls.map(({ argv }) => argv[2]),
+      [...(request === 'use' ? ['list'] : []), command, 'list', 'show', 'show', 'show'])
+    assert.deepEqual(calls.find(({ argv }) => argv[2] === command), {
+      argv: ['-I', currentScript, command, ...args], env: { ODD_FLOW_HOME: '/keep', [variable]: kind }
+    })
+  }
+  await worker.deactivate()
+})
+
+test('rejects malformed or unreported targets and invalid values before a mutation', async () => {
+  const commands: string[] = []
+  const worker = await fixture({ profileScript: currentScript }, [agent('codex', 'live')], {
+    run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) }
+  })
+  assert.match((await worker.request('use', { agent: 'pi' as never, sessionId: 'live', profile: 'test' })).error ?? '', /agent/i)
+  assert.match((await worker.request('clear', { agent: 'codex', sessionId: ' ' })).error ?? '', /session/i)
+  assert.match((await worker.request('clear', { agent: 'claude', sessionId: 'live' })).error ?? '', /session/i)
+  assert.match((await worker.request('clear', { agent: 'codex', sessionId: 'gone' })).error ?? '', /session/i)
+  assert.match((await worker.request('sessionMode', { agent: 'codex', sessionId: 'live', mode: 'invalid' as never })).error ?? '', /mode/i)
+  assert.match((await worker.request('use', { agent: 'codex', sessionId: 'live', profile: '' })).error ?? '', /profile/i)
+  assert.deepEqual(commands, [])
+  assert.match((await worker.request('use', { agent: 'codex', sessionId: 'live', profile: 'unknown' })).error ?? '', /profile/i)
+  assert.deepEqual(commands, ['list'])
+  await worker.deactivate()
+})
+
+test('surfaces the failing command stderr without reading success state', async () => {
+  const commands: string[] = []
+  const worker = await fixture({ profileScript: currentScript }, [agent('codex', 'live')], {
+    run: async (argv) => {
+      commands.push(argv[2])
+      throw Object.assign(new Error('exit 1'), { stderr: 'binding failed' })
+    }
+  })
+  assert.match((await worker.request('clear', { agent: 'codex', sessionId: 'live' })).error ?? '', /binding failed/)
+  assert.deepEqual(commands, ['clear'])
+  await worker.deactivate()
+})
+
+const workerTarget = { agent: 'claude', sessionId: 'worker-sid' } as const
+for (const [name, request] of [
+  ['use', (worker: Awaited<ReturnType<typeof fixture>>) => worker.request('use', { ...workerTarget, profile: 'test' })],
+  ['session-mode', (worker: Awaited<ReturnType<typeof fixture>>) =>
+    worker.request('sessionMode', { ...workerTarget, mode: 'organic' })],
+  ['clear', (worker: Awaited<ReturnType<typeof fixture>>) => worker.request('clear', workerTarget)]
+] as const) {
+  test(`rejects ${name} for a worker session without running a process`, async () => {
+    const commands: string[] = []
+    const worker = await fixture({ profileScript: currentScript }, [dispatched], {
+      run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) }
+    })
+    const result = await request(worker)
+    assert.deepEqual(commands, [])
+    assert.match(result.error ?? '', /worker/i)
+    await worker.deactivate()
+  })
+
+  test(`re-reads dispatches before ${name} and rejects a newly dispatched session without Python`, async () => {
+    let dispatchedNow = false
+    let checks = 0
+    const commands: string[] = []
+    const worker = await fixture({ profileScript: currentScript }, [terminalOnly], {
+      run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) },
+      runExecutable: async () => { checks++; return dispatches(dispatchedNow ? [terminalOnly.terminalId] : []) }
+    })
+    try {
+      assert.equal((await worker.request('state')).agents[0].isWorker, undefined)
+      commands.length = 0
+      dispatchedNow = true
+      assert.match((await request(worker)).error ?? '', /worker/i)
+      assert.deepEqual(commands, [])
+      assert.equal(checks, 2)
+    } finally {
+      await worker.deactivate()
+    }
+  })
+}
+
+for (const [name, result, expected] of [
+  ['missing executable', null, /executable.*not found/i],
+  ['non-zero exit', Object.assign(new Error('exit 2'), { stderr: 'Orca RPC failed' }), /Orca RPC failed/],
+  ['timeout', new Error('Orca CLI timed out'), /timed out/i],
+  ['bad JSON', { stdout: 'not JSON', stderr: '' }, /invalid JSON/i],
+  ['invalid payload', { stdout: '{"ok":true,"result":{"workers":[{}]}}', stderr: '' }, /invalid dispatch list/i],
+  ['ok false', { stdout: '{"ok":false}', stderr: '' }, /reported failure/i]
+] as const) {
+  test(`fails closed on dispatch-list ${name}, preserving rows and rejecting every mutation before Python`, async (t) => {
+    const commands: string[] = []
+    if (name === 'timeout') {
+      const executable = join(await temp(t), 'sleeping-orca')
+      await writeFile(executable, '#!/bin/sh\nexec /bin/sleep 20\n', { mode: 0o755 })
+      const native = await fixture({ profileScript: currentScript }, [terminalOnly], {
+        run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) },
+        resolveOrca: async () => executable,
+        runExecutable: undefined
+      })
+      try {
+        const start = Date.now()
+        const state = await native.request('state')
+        assert.match(state.workerCheckError ?? '', expected)
+        assert.equal(state.agents.length, 1)
+        assert.ok(Date.now() - start < 8000)
+      } finally {
+        await native.deactivate()
+      }
+    }
+    const worker = await fixture({ profileScript: currentScript }, [terminalOnly], {
+      run: async (argv, childEnv) => { commands.push(argv[2]); return fakeRun(argv, childEnv) },
+      resolveOrca: async () => result === null ? undefined : fakeOrca,
+      runExecutable: async () => {
+        if (result instanceof Error) throw result
+        return result ?? dispatches()
+      }
+    })
+    try {
+      const state = await worker.request('state')
+      assert.deepEqual(state.agents.map((row) => row.terminalId), [terminalOnly.terminalId])
+      const unavailable = state.workerCheckError ?? ''
+      assert.match(unavailable, expected)
+      assert.equal((await worker.request('use', { ...workerTarget, profile: 'test' })).error, unavailable)
+      assert.equal((await worker.request('sessionMode', { ...workerTarget, mode: 'organic' })).error, unavailable)
+      assert.equal((await worker.request('clear', workerTarget)).error, unavailable)
+      assert.deepEqual(commands, [])
+    } finally {
+      await worker.deactivate()
+    }
+  })
+}
+
+test('use, session-mode, and clear change only session files with the real profile.py', async (t) => {
+  const home = await temp(t)
+  const file = join(home, 'profiles.json')
+  const before = Buffer.from(JSON.stringify({
+    default: 'base', profiles: { base: {}, bound: {} },
+    workflow: { bound: { orchestratorMode: 'full-delegation' } }
+  }, null, 2) + '\n')
+  await writeFile(file, before)
+  const worker = await fixture({ profileScript: currentScript }, [agent('codex')], {
+    env: { ...keys, PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
+  })
+  const target = { agent: 'codex', sessionId: 'codex' } as const
+  const use = await worker.request('use', { ...target, profile: 'bound' })
+  assert.ok(use.state)
+  const bound = use.state.agents[0].odd
+  assert.ok(bound && typeof bound === 'object')
+  assert.deepEqual([bound.profile, bound.source, bound.mode], ['bound', 'session (CODEX_THREAD_ID)', 'full-delegation'])
+  const mode = await worker.request('sessionMode', { ...target, mode: 'organic' })
+  assert.ok(mode.state)
+  const overridden = mode.state.agents[0].odd
+  assert.ok(overridden && typeof overridden === 'object')
+  assert.deepEqual([overridden.mode, overridden.mode_source], ['organic', 'session (CODEX_THREAD_ID)'])
+  assert.deepEqual(await readdir(join(home, 'sessions')), ['codex.json'])
+  const rebound = await worker.request('use', { ...target, profile: 'bound' })
+  assert.ok(rebound.state)
+  const reset = rebound.state.agents[0].odd
+  assert.ok(reset && typeof reset === 'object')
+  assert.deepEqual([reset.mode, reset.mode_source], ['full-delegation', 'profile bound'])
+  const clear = await worker.request('clear', target)
+  assert.ok(clear.state)
+  const cleared = clear.state.agents[0].odd
+  assert.ok(cleared && typeof cleared === 'object')
+  assert.deepEqual([cleared.profile, cleared.source, cleared.mode], ['base', 'file default', 'organic'])
+  assert.deepEqual(await readdir(join(home, 'sessions')), [])
+  assert.deepEqual((await readdir(home)).sort(), ['profiles.json', 'sessions'])
+  assert.deepEqual(await readFile(file), before)
+  await worker.deactivate()
+})
+
+test('binds a listed profile whose name looks like an option', async (t) => {
+  const home = await temp(t)
+  await writeFile(join(home, 'profiles.json'), JSON.stringify({
+    default: 'base', profiles: { base: {}, '-h': {}, '--yes': {} }
+  }))
+  const worker = await fixture({ profileScript: currentScript }, [agent('claude', 'sid')], {
+    env: { ...keys, PATH: process.env.PATH, ODD_FLOW_HOME: home }, run: main.runPython
+  })
+  for (const profile of ['-h', '--yes']) {
+    const result = await worker.request('use', { agent: 'claude', sessionId: 'sid', profile })
+    assert.equal(result.error, undefined)
+    const odd = result.state?.agents[0].odd
+    assert.ok(odd && typeof odd === 'object')
+    assert.deepEqual([odd.profile, odd.source], [profile, 'session (CLAUDE_CODE_SESSION_ID)'])
+  }
   await worker.deactivate()
 })
