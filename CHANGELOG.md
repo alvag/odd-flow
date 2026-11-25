@@ -12,7 +12,7 @@ This file tracks notable changes to odd-flow. It follows
 - Stops and limits apply only to the work they name; independent authorized work continues.
 - Writers make only the changes the spec requires, reported bugs are reproduced before fixing, and testable changes need observed local proof before a requested push, pull request or deploy.
 - Claude Code, Codex, and Antigravity recognize a trailing `odd-flow-worker: <role>` marker on the first prompt, so Orca dispatches with that marker still identify workers if the preamble changes. The ODD Flow Orca plugin registers an `agent.prompt.before` hook to append the marker. Reinstalling the plugin requires a new approval.
-- Writers justify additions, use documented build, test and run commands, keep verification proportional, and add only necessary comments. Verifiers use documented commands as written in their probe copy without building a replacement environment.
+- Writers follow the project's conventions, justify additions, use documented build, test and run commands, keep verification proportional, and add only necessary comments. Verifiers use documented commands as written in their probe copy without building a replacement environment.
 
 ## [0.3.0] - 2026-11-25
 
