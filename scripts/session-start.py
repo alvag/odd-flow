@@ -12,6 +12,7 @@ blocks the session.
 
 import json
 import os
+import runpy
 import subprocess
 import sys
 
@@ -96,6 +97,20 @@ def profile_state(env):
     return text or "odd-flow profile state unavailable (no output)."
 
 
+def remember_injected_mode(session_id, mode):
+    if not isinstance(session_id, str) or not session_id:
+        return
+    try:
+        # The hooks run with Python -I, which leaves the script directory off sys.path.
+        # Load the sibling without running its CLI to share its data directory and hash.
+        sibling = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt-submit.py")
+        helpers = runpy.run_path(sibling)
+        marker = helpers["session_marker"](session_id, "session-modes")
+        helpers["record_session_mode"](marker, mode)
+    except (OSError, ValueError):
+        pass  # A missing or unwritable marker must not suppress the core block.
+
+
 def emit_context(context):
     if ANTIGRAVITY:
         steps = [{"systemMessage": {"systemMessage": context}}] if context else []
@@ -112,7 +127,8 @@ def emit_context(context):
 def main():
     payload = read_payload()
     source = payload.get("source") or "unknown"
-    env = profile_env(payload.get("conversationId" if ANTIGRAVITY else "session_id"))
+    session_id = payload.get("conversationId" if ANTIGRAVITY else "session_id")
+    env = profile_env(session_id)
     mode, note = session_mode(env)
     parts = [core_block(mode)]
     if note:
@@ -123,6 +139,7 @@ def main():
         f"```\n{profile_state(env)}\n```"
     )
     emit_context("\n\n".join(parts))
+    remember_injected_mode(session_id, mode)
     return 0
 
 

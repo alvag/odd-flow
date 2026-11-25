@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """UserPromptSubmit hook: on every prompt, restate full delegation to the coordinator or give the worker role context.
 
-The SessionStart core block is fixed for the whole session, so a mode switched mid-session
-(`profile.py use`, `session-mode`, `set-mode`) would otherwise reach the model only once.
-Organic sessions get no additional context (Claude Code gets no output). Always exits 0:
+The SessionStart core block is fixed for the whole session. A parent gets a one-time notice
+when its mode changes; otherwise organic sessions get no additional context. Always exits 0:
 a failure here never blocks a prompt.
 """
 
@@ -31,12 +30,18 @@ ORCA_WORKER_PREFIXES = (
 WORKER_ROLE = re.compile(r"# Role: (explore|write|verify|review|refute)", re.IGNORECASE)
 
 
-def session_marker(session_id):
+def session_marker(session_id, bucket="prompt-sessions"):
     data = os.environ.get(DATA_VAR)
     if not data or not isinstance(session_id, str) or not session_id:
         return None
     key = hashlib.sha256(session_id.encode("utf-8", errors="surrogatepass")).hexdigest()
-    return Path(data) / "prompt-sessions" / key
+    return Path(data) / bucket / key
+
+
+def record_session_mode(marker, mode):
+    if marker is not None:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(mode, encoding="ascii")
 
 
 def mark_first_prompt(session_id, prompt):
@@ -91,8 +96,51 @@ def emit_context(context):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": context}}))
 
 
+def mode_change_notice(session_id, state):
+    mode = state.get("mode")
+    if mode not in ("organic", "full-delegation"):
+        return ""
+    marker = session_marker(session_id, "session-modes")
+    if marker is None:
+        return ""
+    try:
+        try:
+            previous = marker.read_text(encoding="ascii")
+        except FileNotFoundError:
+            previous = None
+        if previous != mode:
+            # Only announce a transition that we can remember on the next prompt.
+            record_session_mode(marker, mode)
+            if previous in ("organic", "full-delegation"):
+                return (
+                    f"odd-flow mode changed to {mode} ({state.get('source')}); the session-start "
+                    f"{previous} rules no longer apply. Rules: skills/odd-flow/{state.get('rules')}."
+                )
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def prompt_context(session_id):
+    state = mode_state(session_id)
+    full = state.get("mode") == "full-delegation"
+    if is_worker_session(session_id):
+        return (
+            "You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start."
+        ) if full else ""
+    notice = mode_change_notice(session_id, state)
+    if not full:
+        return notice
+    line = (
+        f"odd-flow mode: full-delegation ({state.get('source')}). The parent coordinates and writes "
+        "only what the mode file lists; bounded writers make all other workspace changes. "
+        f"Rules: skills/odd-flow/{state.get('rules')}."
+    )
+    return f"{notice}\n{line}" if notice else line
+
+
 def antigravity_main():
-    """Mark the session and restate full delegation on the first invocation of a turn (invocationNum 0); never blocks."""
+    """Mark the session and inject prompt context only on the first invocation of a turn."""
     steps = []
     try:
         payload = json.loads(sys.stdin.read())
@@ -102,16 +150,8 @@ def antigravity_main():
             number = payload.get("invocationNum", 0)
             if number is None:
                 number = 0
-            state = mode_state(conversation) if number == 0 else {}
-            if state.get("mode") == "full-delegation":
-                if is_worker_session(conversation):
-                    context = "You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start."
-                else:
-                    context = (
-                        f"odd-flow mode: full-delegation ({state.get('source')}). The parent coordinates and writes "
-                        "only what the mode file lists; bounded writers make all other workspace changes. "
-                        f"Rules: skills/odd-flow/{state.get('rules')}."
-                    )
+            context = prompt_context(conversation) if number == 0 else ""
+            if context:
                 steps = [{"systemMessage": {"systemMessage": context}}]
     except Exception:  # never block an invocation on a hook failure
         steps = []
@@ -129,20 +169,9 @@ def main():
     session_id = payload.get("session_id") if isinstance(payload, dict) else None
     if isinstance(payload, dict):
         mark_first_prompt(session_id, payload.get("prompt"))
-    state = mode_state(session_id)
-    if state.get("mode") != "full-delegation":
-        if CODEX:
-            emit_context("")
-        return 0
-    if is_worker_session(session_id):
-        emit_context("You are a dispatched worker. Follow your spec's role rules, not the coordinator rules from session start.")
-        return 0
-    line = (
-        f"odd-flow mode: full-delegation ({state.get('source')}). The parent coordinates and writes "
-        "only what the mode file lists; bounded writers make all other workspace changes. "
-        f"Rules: skills/odd-flow/{state.get('rules')}."
-    )
-    emit_context(line)
+    context = prompt_context(session_id)
+    if context or CODEX:
+        emit_context(context)
     return 0
 
 

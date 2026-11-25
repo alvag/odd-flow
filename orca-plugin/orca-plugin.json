@@ -1,0 +1,79 @@
+{
+  "manifestVersion": 2,
+  "id": "odd-flow-profiles",
+  "name": "ODD Flow",
+  "version": "0.1.0",
+  "description": "View and switch the odd-flow profile and mode for agent sessions in the focused workspace.",
+  "engines": {
+    "orca": ">=1.4.259"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "commands": [
+      {
+        "id": "odd-flow.openProfiles",
+        "title": "ODD Flow: Open panel"
+      },
+      {
+        "id": "odd-flow.toggleMode",
+        "title": "ODD Flow: Toggle mode"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "odd-flow.openProfiles",
+        "key": "Mod+Alt+Shift+O"
+      }
+    ],
+    "events": [
+      { "on": "agent.status.changed" },
+      { "on": "workspace.changed" }
+    ],
+    "statusBarItems": [
+      {
+        "id": "odd-flow-status",
+        "text": "odd",
+        "tooltip": "Open the ODD Flow panel",
+        "command": "odd-flow.openProfiles"
+      }
+    ],
+    "panels": [
+      {
+        "id": "odd-flow-profiles",
+        "title": "ODD Flow",
+        "icon": "agent",
+        "entry": "src/panel/main.ts",
+        "ui": "html"
+      }
+    ],
+    "settings": [
+      {
+        "key": "profileScript",
+        "title": "Profile script",
+        "description": "Absolute path to a trusted odd-flow profile.py. Leave blank to detect an installed copy.",
+        "type": "string",
+        "default": ""
+      },
+      {
+        "key": "pluginKey",
+        "title": "Plugin key",
+        "description": "Installed key used to open the ODD Flow panel. Leave blank to detect the single enabled ODD Flow plugin.",
+        "type": "string",
+        "default": ""
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "settings:own"
+    }
+  ]
+}

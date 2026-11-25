@@ -320,10 +320,10 @@ def terminal_command(agent, model, effort):
 SPLIT_CLIS = {"claude": "claude", "antigravity": "agy"}
 
 
-def resolve_role(doc, role):
+def resolve_role(doc, role, *, selection=None):
     if role not in ROLES:
         raise ProfileError(f"unknown role '{role}' (known: {', '.join(ROLES)})")
-    name, source = selected_profile(doc)
+    name, source = selected_profile(doc) if selection is None else selection
     roles = doc["profiles"].get(name, {}) if name else {}
     entry = roles.get(role)
     entry_role = role
@@ -420,21 +420,54 @@ def cmd_clear(_args):
         print("no session binding for this session")
 
 
-def cmd_list(_args):
+def cmd_list(args):
     doc = load_profiles()
-    if not doc["exists"]:
+    if not args.json and not doc["exists"]:
         print(f"no profiles file at {doc['path']}; every role uses the current agent and its own model")
         return
+    profiles = []
     for name in sorted(doc["profiles"]):
-        marker = " (default)" if name == doc["default"] else ""
-        mode = doc["workflow"].get(name, {}).get("orchestratorMode", DEFAULT_MODE)
-        print(f"{name}{marker}: {', '.join(sorted(doc['profiles'][name])) or 'no roles'} | mode: {mode}")
+        profiles.append({
+            "name": name,
+            "default": name == doc["default"],
+            "mode": doc["workflow"].get(name, {}).get("orchestratorMode", DEFAULT_MODE),
+            "roles": doc["profiles"][name],
+        })
+    if args.json:
+        print(json.dumps({
+            "path": doc["path"] if doc["exists"] else None,
+            "default": doc["default"],
+            "profiles": profiles,
+        }))
+    else:
+        for profile in profiles:
+            marker = " (default)" if profile["default"] else ""
+            roles = ", ".join(sorted(profile["roles"])) or "no roles"
+            print(f"{profile['name']}{marker}: {roles} | mode: {profile['mode']}")
 
 
-def cmd_show(_args):
+def cmd_show(args):
     doc = load_profiles()
     var, _, _ = session_key()
     name, source = selected_profile(doc)
+    if args.json:
+        mode, mode_source = resolve_mode(doc, name)
+        roles = {}
+        for role in BASE_ROLES:
+            entry = resolve_role(doc, role, selection=(name, source))
+            roles[role] = {field: entry[field] for field in ENTRY_FIELDS}
+        print(json.dumps({
+            "profile": name,
+            "source": source,
+            "session_key": var,
+            "agent": current_agent(),
+            "mode": mode,
+            "mode_source": mode_source,
+            "rules": mode_reference(mode),
+            "roles": roles,
+            "orca_terminal": orca_terminal(),
+        }))
+        return
     print(f"profile: {name or 'none'} ({source}); session key: {var or 'none'}; agent: {current_agent() or 'unknown'}")
     print(mode_line(doc, name))
     for role in BASE_ROLES:
@@ -766,8 +799,12 @@ def main(argv=None):
     use.add_argument("name")
     use.set_defaults(func=cmd_use)
     sub.add_parser("clear", help="remove this session's binding").set_defaults(func=cmd_clear)
-    sub.add_parser("list", help="list profiles").set_defaults(func=cmd_list)
-    sub.add_parser("show", help="show the active profile and every role").set_defaults(func=cmd_show)
+    listing = sub.add_parser("list", help="list profiles")
+    listing.add_argument("--json", action="store_true")
+    listing.set_defaults(func=cmd_list)
+    show = sub.add_parser("show", help="show the active profile and every role")
+    show.add_argument("--json", action="store_true")
+    show.set_defaults(func=cmd_show)
     sub.add_parser("check", help="check profile agents against Orca").set_defaults(func=cmd_check)
     disc = sub.add_parser("discover", help="list Orca agents and the models each one accepts")
     disc.add_argument("--json", action="store_true")

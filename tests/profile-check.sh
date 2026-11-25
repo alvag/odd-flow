@@ -11,6 +11,79 @@ expect() { # name, expected substring, actual, expected exit, actual exit
   else fail=$((fail+1)); echo "FAIL $1"; echo "  want exit $4 and: $2"; echo "  got  exit $5: $3"; fi
 }
 
+if python3 -I - "$P" "$T" "$HOME" "$PATH" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+script, scratch, home, path = sys.argv[1:]
+root = Path(scratch) / "json-reads"
+sessions = root / "sessions"
+sessions.mkdir(parents=True)
+profiles = root / "profiles.json"
+env = {"HOME": home, "PATH": path, "ODD_FLOW_HOME": str(root)}
+
+
+def run(*args, **overrides):
+    return subprocess.run([sys.executable, "-I", script, *args],
+                          env={**env, **overrides}, capture_output=True)
+
+
+def payload(command, expected, **overrides):
+    result = run(command, "--json", **overrides)
+    assert result.returncode == 0 and not result.stderr, (command, result)
+    assert json.loads(result.stdout) == expected, (command, result.stdout)
+
+
+def text(command, expected, **overrides):
+    result = run(command, **overrides)
+    assert (result.returncode, result.stdout, result.stderr) == (0, expected, b""), result
+
+
+payload("list", {"path": None, "default": None, "profiles": []})
+roles = {"verify": {"agent": "claude", "model": "example", "effort": "high"}}
+minimal = {"write": {"agent": "codex"}}
+profiles.write_text(json.dumps({
+    "default": "minimal", "profiles": {"minimal": minimal, "bound": roles},
+    "workflow": {"bound": {"orchestratorMode": "full-delegation"}},
+}))
+payload("list", {"path": str(profiles), "default": "minimal", "profiles": [
+    {"name": "bound", "default": False, "mode": "full-delegation", "roles": roles},
+    {"name": "minimal", "default": True, "mode": "organic", "roles": minimal},
+]}, ODD_ORCHESTRATOR_MODE="organic")
+text("list", b"bound: verify | mode: full-delegation\nminimal (default): write | mode: organic\n")
+
+(sessions / "thread.json").write_text('{"profile":"bound","mode":"organic"}')
+session = {"CODEX_THREAD_ID": "thread", "ORCA_TERMINAL_HANDLE": "term_json"}
+fallback = {"agent": "codex", "model": None, "effort": None}
+payload("show", {
+    "profile": "bound", "source": "session (CODEX_THREAD_ID)", "session_key": "CODEX_THREAD_ID",
+    "agent": "codex", "mode": "organic", "mode_source": "session (CODEX_THREAD_ID)",
+    "rules": "references/mode-organic.md", "orca_terminal": "term_json",
+    "roles": {**dict.fromkeys(("explore", "write", "review", "refute"), fallback), **roles},
+}, **session)
+text("show", (
+    b"profile: bound (session (CODEX_THREAD_ID)); session key: CODEX_THREAD_ID; agent: codex\n"
+    b"mode: organic (session (CODEX_THREAD_ID)); rules: references/mode-organic.md\n"
+    b"  explore -> codex / agent default model (role not in profile)\n"
+    b"  write -> codex / agent default model (role not in profile)\n"
+    b"  verify -> claude / example / effort high\n"
+    b"  review -> codex / agent default model (role not in profile)\n"
+    b"  refute -> codex / agent default model (role not in profile)\n"
+    b"orca: terminal term_json; workers launch through Orca\n"
+), **session)
+
+profiles.write_text('{"profiles":{"invalid":{"write":{"effort":"high"}}}}')
+for command in ("list", "show"):
+    before, after = run(command), run(command, "--json")
+    assert before.returncode == after.returncode == 2, (command, before, after)
+    assert not after.stdout and before.stderr == after.stderr, (command, before, after)
+PY
+then pass=$((pass+1)); echo "PASS list/show JSON contracts and text preservation"
+else fail=$((fail+1)); echo "FAIL list/show JSON contracts or text preservation"
+fi
+
 ARGS="resolve write --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
 expect "no file: current agent, no model" '"flags": ["--agent", "claude"]' "$out" 0 $ec
 
