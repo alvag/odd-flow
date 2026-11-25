@@ -18,6 +18,7 @@ This file tracks notable changes to odd-flow. It follows
 ### Fixed
 
 - Orca terminal calls during worker placement time out after 30 seconds so a hung call does not hold the pane lock indefinitely.
+- Orca worker placement ignores saved terminal widths with timestamps in the future.
 
 ## [0.4.0] - 2026-11-25
 

@@ -150,7 +150,8 @@ def recorded_width(path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as record:
-            if time.time() - os.fstat(record.fileno()).st_mtime > 10 * 60:
+            age = time.time() - os.fstat(record.fileno()).st_mtime
+            if not 0 <= age <= 10 * 60:
                 return None
             return int(record.read(16))
     except (OSError, ValueError):

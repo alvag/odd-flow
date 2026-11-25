@@ -54,7 +54,7 @@ printf '%s\n' \
   'from pathlib import Path' \
   'from types import SimpleNamespace' \
   'sys.dont_write_bytecode = True' \
-  'script, widths, orca_timeout, *args = sys.argv[1:]' \
+  'script, widths, orca_timeout, record_age, *args = sys.argv[1:]' \
   'sys.path.insert(0, str(Path(script).parent))' \
   'import pane' \
   'if orca_timeout:' \
@@ -77,8 +77,13 @@ printf '%s\n' \
   '        print(round(now * 1000), locked, file=log)' \
   '    width = next(samples)' \
   '    return None if width == "unknown" else int(width)' \
+  'wall_time = time.time' \
+  'if record_age:' \
+  '    wall_time = lambda: 1_700_000_000' \
+  '    mtime = wall_time() - float(record_age)' \
+  '    os.utime(Path(os.environ["TMPDIR"]) / "odd-flow-pane-term_parent.cols", (mtime, mtime))' \
   'pane.parent_cols = sample' \
-  'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep, time=time.time)' \
+  'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep, time=wall_time)' \
   'sys.argv = [script, *args]' \
   'sys.exit(pane.main())' >"$T/sample.py"
 
@@ -90,7 +95,7 @@ layout() {
 open_pane() {
   local command=(python3 -I "$P") format=(--json)
   if [[ -n "${widths+x}${orca_timeout+x}" ]]; then
-    command=(python3 -I "$T/sample.py" "$P" "${widths-}" "${orca_timeout-}")
+    command=(python3 -I "$T/sample.py" "$P" "${widths-}" "${orca_timeout-}" "${record_age-}")
   fi
   if [[ -n "${text_output+x}" ]]; then
     format=()
@@ -156,6 +161,18 @@ printf '219\n' >"$width_record"
 touch -t 200001010000 "$width_record" || exit 1
 out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
 expect "an expired wide record is ignored" 0 "$ec" '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
+
+out=$(record_age=-1 widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "a future-dated wide record is ignored" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
+
+out=$(record_age=600 widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "a record exactly 10 minutes old is reused" 0 "$ec" \
+  '"placement": "split-right", "handle": "term_new"' "$list_call$right_call$title_call"
+
+out=$(record_age=600.001 widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "a record just over 10 minutes old is ignored" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
 
 layout "$(split horizontal "$p" "$r1")"
 printf '219\n' >"$width_record"
