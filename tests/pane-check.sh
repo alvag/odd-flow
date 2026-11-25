@@ -345,6 +345,27 @@ out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
 [[ ! -e "$width_record" ]] || ec=1
 expect "a split below records no width" 0 "$ec" '"placement": "split-below", "handle": "term_new"'
 
+# Two launches for the same parent: the second waits on the pane lock and runs once the first times out.
+layout "$p"
+started=$SECONDS
+: >"$T/argv"; : >"$T/argv.samples"
+env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
+  ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG=list \
+  python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json \
+  >"$T/first.out" 2>&1 &
+first=$!
+sleep 0.3
+second_out=$(env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
+  ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG= \
+  python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json 2>&1)
+second_ec=$?
+wait "$first"; first_ec=$?
+out="first=$first_ec $(cat "$T/first.out") second=$second_ec $second_out"
+ec=0
+if (( first_ec != 1 || second_ec != 0 || SECONDS - started >= 4 )); then ec=1; fi
+expect "a hung list releases the pane lock to a parallel launch" 0 "$ec" \
+  'first=1 odd-flow: Orca terminal list: timed out (limit: 1s) second=0 {"placement": "split-right", "handle": "term_new"'
+
 echo "scratch: $T"
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

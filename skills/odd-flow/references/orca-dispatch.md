@@ -14,7 +14,7 @@
 3. For a writer in a folder without Git, use Project folders without Git below. Otherwise run placement for this launch:
    `python3 <skill-dir>/scripts/pane.py open --role <role> --title "<T# role: short title>" --json`
    Pass the unit’s own role to `--role`; never hardcode a role in a reused helper or loop. A handle starts one worker. Run `pane.py open` again for every launch; never reuse a placement result or handle.
-   On a non-zero exit, report the error and do not launch. If a split or create call times out, or its reply cannot be parsed or has no handle, a terminal may have opened; check `terminal list` and close the terminal that call opened. Report any `title_error`, but continue with the opened terminal.
+   On a non-zero exit, report the error and do not launch. If a split or create call times out, or its reply cannot be parsed or has no handle, check `terminal list` and close any terminal that call opened; after a timeout, check again before the next launch and close the terminal if it appeared late. Report any `title_error`, but continue with the opened terminal.
    Before `task-create`, compare the returned `agent`, `model` and `effort` with the same fields in the resolve JSON from step 1 (`null` means the profile does not set that field). On a mismatch, close the returned handle, if any, with `ORCA terminal close --terminal <handle>` and report the mismatch without launching.
    - A returned `handle` (Claude, Codex and Antigravity): use it for terminal steps 1, 3 and 4 below, whether it is a split pane or a tab. Skip step 2.
    - Only when `handle` is `null`: start by the `launch` field of the resolve result.
