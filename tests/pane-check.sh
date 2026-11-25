@@ -46,7 +46,7 @@ printf '%s\n' '{"default":"test","profiles":{"test":{"verify":{"agent":"claude"}
 # Test-only seam: replace the TTY sampler and clock, but run the real CLI and
 # pane lock against the same fake Orca as the fixed-width cases.
 printf '%s\n' \
-  'import fcntl, os, sys' \
+  'import fcntl, os, sys, time' \
   'from pathlib import Path' \
   'from types import SimpleNamespace' \
   'sys.dont_write_bytecode = True' \
@@ -72,7 +72,7 @@ printf '%s\n' \
   '    width = next(samples)' \
   '    return None if width == "unknown" else int(width)' \
   'pane.parent_cols = sample' \
-  'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep)' \
+  'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep, time=time.time)' \
   'sys.argv = [script, *args]' \
   'sys.exit(pane.main())' >"$T/sample.py"
 
@@ -112,19 +112,23 @@ list_call=$'\nargv:\nterminal\nlist\n--include-visual-layouts\n--json'
 tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\n--command\nclaude\n--json'
 right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\nclaude\n--json'
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
+width_record="$T/odd-flow-pane-term_parent.cols"
 
 layout "$p"
+rm -f "$width_record"
 out=$(widths='118' settle_ms=0 open_pane --role verify); ec=$?
 expect "narrow width without a recorded split creates a titled tab" 0 "$ec" \
   '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
 expect "created tab reports the resolved verify role and null defaults" 0 "$ec" \
   '"role": "verify", "agent": "claude", "model": null, "effort": null'
 
+rm -f "$width_record"
 out=$(widths='80 81 82' settle_ms=200 open_pane --role verify); ec=$?
 expect "width stays narrow: tab at the bound using the last width" 0 "$ec" \
   '"cols": 82, "min_cols": 160, "reason": "parent terminal is 82 columns wide (minimum 160)"' \
   "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
 
+rm -f "$width_record"
 out=$(widths='80 80 80' settle_ms=150 open_pane --role verify); ec=$?
 expect "partial last step stays within the bound" 0 "$ec" \
   '"cols": 80' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n150 True'
@@ -135,12 +139,19 @@ expect "consecutive launches: measure again and split right at 219 columns" 0 "$
   "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\n0 True'
 
 # Orca reports the parent alone again when the split closes, before the TTY grows.
+printf '219\n' >"$width_record"
 out=$(widths='110 110 110' settle_ms=200 open_pane --role verify); ec=$?
-expect "parent alone after a split closes: use the recorded wide width after settling" 0 "$ec" \
+expect "parent alone after a split closes: use the fresh recorded width after settling" 0 "$ec" \
   '"cols": 110, "min_cols": 160, "reason": "parent terminal measured 110 columns; recorded width is 219 columns"' \
   "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
 
+printf '219\n' >"$width_record"
+touch -t 200001010000 "$width_record" || exit 1
+out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "an expired wide record is ignored" 0 "$ec" '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
+
 layout "$(split horizontal "$p" "$r1")"
+printf '219\n' >"$width_record"
 out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
 expect "parent shares its tab: ignore the recorded wide width" 0 "$ec" \
   '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
@@ -185,6 +196,7 @@ out=$(text_output=1 open_pane --role explore --cols 200); ec=$?
 expect "text preserves placement and appends the resolved role notice" 0 "$ec" \
   'pane: split-right term_new: parent terminal has at least 160 columns | explore -> antigravity / gemini-4 / effort low'
 
+rm -f "$width_record"
 out=$(widths='80 unknown' settle_ms=500 open_pane --role verify); ec=$?
 expect "width lost mid-wait: tab with unknown width" 0 "$ec" \
   '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
@@ -260,13 +272,30 @@ out=$(grep -F -- "$per_launch_rule" "$ROOT/skills/odd-flow/references/orca-dispa
 expect "dispatch guide requires fresh placement on every launch" 0 "$ec" "$per_launch_rule"
 
 role_rule='Pass the unit’s own role to `--role`; never hardcode a role in a reused helper or loop.'
-mismatch_rule='Before `task-create`, compare the returned `agent`, `model` and `effort` with the resolve notice for that role in step 1. On a mismatch, close the returned handle, if any, with `ORCA terminal close --terminal <handle>` and report the mismatch without launching.'
+mismatch_rule='Before `task-create`, compare the returned `agent`, `model` and `effort` with the same fields in the resolve JSON from step 1 (`null` means the profile does not set that field). On a mismatch, close the returned handle, if any, with `ORCA terminal close --terminal <handle>` and report the mismatch without launching.'
 out=$(grep -F -e "$role_rule" -e "$mismatch_rule" "$ROOT/skills/odd-flow/references/orca-dispatch.md")
 ec=1
 if [[ "$out" == *"$role_rule"* && "$out" == *"$mismatch_rule"* ]]; then
   ec=0
 fi
 expect "dispatch guide checks the unit role before task creation" 0 "$ec" "$mismatch_rule"
+
+layout "$p"
+rm -f "$width_record"
+out=$(open_pane --role verify --cols 219); ec=$?
+[[ ! -e "$width_record" ]] || ec=1
+expect "a fixed --cols split records no width" 0 "$ec" '"placement": "split-right", "handle": "term_new"'
+
+printf '150\n' >"$width_record"
+out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "a recorded width below the minimum is ignored" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab", "parent": "term_parent", "target": null, "cols": 110'
+
+layout "$(split vertical "$p" "$r1")"
+rm -f "$width_record"
+out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
+[[ ! -e "$width_record" ]] || ec=1
+expect "a split below records no width" 0 "$ec" '"placement": "split-below", "handle": "term_new"'
 
 echo "scratch: $T"
 echo "passed=$pass failed=$fail"

@@ -10,7 +10,7 @@ This file tracks notable changes to odd-flow. It follows
 
 - Orca placement opens a fresh split pane or tab for each Claude, Codex, and Antigravity worker launch, using the current layout and terminal width.
 - Orca placement reports the resolved role, agent, model, and effort so coordinators can catch a profile mismatch before dispatching a worker.
-- Orca placement can reuse the width measured before a successful right split when the parent is alone in its tab again but still reports a narrow width.
+- Orca placement can reuse the width measured before a successful right split for up to 10 minutes after that split, when the parent is alone in its tab again but still reports a narrow width.
 - Stops and limits apply only to the work they name; independent authorized work continues.
 - Writers make only the changes the spec requires, reported bugs are reproduced before fixing, and testable changes need observed local proof before a requested push, pull request or deploy.
 - Writers follow the project's conventions, justify additions, use documented build, test and run commands, keep verification proportional, and add only necessary comments. Verifiers use documented commands as written in their probe copy without building a replacement environment.
