@@ -34,6 +34,7 @@ export type Agent = {
   title: string | null
   agent: string | null
   state: 'working' | 'blocked' | 'waiting' | 'done'
+  stateStartedAt?: number
   sessionId: string | null
   task?: { title: string } | null
 }
@@ -45,12 +46,44 @@ export type AgentRow = Agent & { isWorker?: boolean } & (
 
 export type Script = { path: string; source: string } | { error: string }
 
+export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'dropped'
+export type FeatureTask = { id: string; work: string; status: TaskStatus | 'unknown' }
+export type FeatureDoc = { path: string; title: string; branch: string; tasks: FeatureTask[] }
+export type WorkerRow = {
+  dispatchId: string
+  title: string
+  agent: string | null
+  state: string
+  active: boolean
+  needsYou: boolean
+  startedAt: number | null
+  endedAt: number | null
+}
+export type CurrentWork = {
+  objective: string
+  startedAt: number | null
+  tasks: { title: string; status: string; startedAt: number | null; endedAt: number | null }[]
+  lastResult: { title: string; subject: string } | null
+}
+export type GitSummary = { branch: string | null; changedFiles: number; lastCommit: { hash: string; at: number } | null }
+export type Attention = { label: string; since: number | null }
+export type Dashboard = {
+  terminalId: string
+  attention: Attention[]
+  feature: FeatureDoc | null
+  current: CurrentWork | null
+  git: GitSummary | null
+  workers: WorkerRow[]
+  errors: Partial<Record<'workers' | 'feature' | 'git' | 'workspace', string>>
+}
+
 export type State = {
   script: Script
   profiles: ProfileList | string | null
   agents: AgentRow[]
   error?: string
   workerCheckError?: string
+  dashboards?: Record<string, Dashboard>
 }
 
 export type SessionTarget = { agent: AgentKind; sessionId: string }
