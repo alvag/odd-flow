@@ -14,11 +14,11 @@
     "commands": [
       {
         "id": "odd-flow.openProfiles",
-        "title": "odd-flow: Open profiles panel"
+        "title": "ODD Flow: Open panel"
       },
       {
         "id": "odd-flow.toggleMode",
-        "title": "odd-flow: Toggle mode"
+        "title": "ODD Flow: Toggle mode"
       }
     ],
     "keybindings": [
@@ -42,7 +42,7 @@
     "panels": [
       {
         "id": "odd-flow-profiles",
-        "title": "odd-flow profiles",
+        "title": "ODD Flow",
         "icon": "agent",
         "entry": "src/panel/main.ts",
         "ui": "html"

@@ -138,15 +138,17 @@ test('renders focused agents, collapsed source line, empty state, and per-row/sc
       }
     ]
   }
-  const html = render(state, ui())
-  assert.ok(!/settings\/profile\.py/.test(html))
-  assert.match(html, /No installed profile\.py.*profileScript/)
-  assert.match(html, /list failed: boom/)
-  assert.match(html, /show failed: boom/)
-  assert.match(html, /No session ID reported\./)
-  assert.match(html, /Session choice/)
-  assert.match(html, /badge-accent[^>]*>working</)
-  assert.match(html, /badge-neutral[^>]*>codex</)
+  const htmlOne = render(state, ui({ selectedSession: 'one' }))
+  const htmlTwo = render(state, ui({ selectedSession: 'two' }))
+  const htmlThree = render(state, ui({ selectedSession: 'three' }))
+  assert.ok(!/settings\/profile\.py/.test(htmlOne))
+  assert.match(htmlOne, /No installed profile\.py.*profileScript/)
+  assert.match(htmlOne, /list failed: boom/)
+  assert.match(htmlThree, /show failed: boom/)
+  assert.match(htmlTwo, /No session ID reported\./)
+  assert.match(htmlOne, /Session choice/)
+  assert.match(htmlOne, /badge-accent[^>]*>working</)
+  assert.match(htmlOne, /badge-neutral[^>]*>codex</)
 })
 
 test('shows the upgrade instructions without disabling Mode or Reset to defaults', () => {
@@ -428,4 +430,152 @@ test('A3: renders a selected disabled option when session profile is missing fro
   )
   assert.ok(!/<option value=""[^>]*selected/.test(html))
   assert.ok(!/<option value="team"[^>]*selected/.test(html))
+})
+
+function multiSessionState(): State {
+  return {
+    script: { path: '/installed/profile.py', source: 'setting' },
+    profiles: {
+      path: null,
+      default: 'team',
+      profiles: [{ name: 'team', default: true, mode: 'organic', roles: {} }]
+    },
+    agents: [
+      {
+        terminalId: 't1',
+        title: 'Alpha',
+        agent: 'claude',
+        sessionId: 's1',
+        state: 'waiting',
+        stateStartedAt: started + 90_000,
+        odd: {
+          profile: 'team',
+          source: 'file default',
+          session_key: 'CLAUDE_CODE_SESSION_ID',
+          agent: 'claude',
+          mode: 'organic',
+          mode_source: 'profile team',
+          rules: 'references/mode-organic.md',
+          roles: {},
+          orca_terminal: null
+        }
+      },
+      {
+        terminalId: 't2',
+        title: 'Beta',
+        agent: 'codex',
+        sessionId: 's2',
+        state: 'working',
+        stateStartedAt: started + 30_000,
+        odd: {
+          profile: 'team',
+          source: 'file default',
+          session_key: 'CODEX_THREAD_ID',
+          agent: 'codex',
+          mode: 'full-delegation',
+          mode_source: 'profile team',
+          rules: 'references/mode-full-delegation.md',
+          roles: {},
+          orca_terminal: null
+        }
+      },
+      {
+        terminalId: 't3',
+        title: 'Gamma',
+        agent: 'codex',
+        sessionId: 's3',
+        state: 'working',
+        stateStartedAt: started + 60_000,
+        odd: {
+          profile: 'team',
+          source: 'file default',
+          session_key: 'CODEX_THREAD_ID',
+          agent: 'codex',
+          mode: 'organic',
+          mode_source: 'profile team',
+          rules: 'references/mode-organic.md',
+          roles: {},
+          orca_terminal: null
+        }
+      }
+    ],
+    dashboards: {
+      t1: {
+        terminalId: 't1',
+        attention: [{ label: 'Session one blocked', since: started }],
+        feature: { title: 'Feature Alpha', path: 'odd/tasks/a.md', branch: 'feat/a', tasks: [] },
+        current: null,
+        git: null,
+        workers: [{ dispatchId: 'd1', title: 'Worker Alpha', agent: 'codex/m', state: 'running', active: true, needsYou: false, startedAt: started, endedAt: null }],
+        errors: {}
+      },
+      t2: {
+        terminalId: 't2',
+        attention: [{ label: 'Worker Beta needs you', since: started + 10_000 }],
+        feature: { title: 'Feature Beta', path: 'odd/tasks/b.md', branch: 'feat/b', tasks: [] },
+        current: null,
+        git: null,
+        workers: [{ dispatchId: 'd2', title: 'Worker Beta', agent: 'claude/m', state: 'running', active: true, needsYou: true, startedAt: started, endedAt: null }],
+        errors: {}
+      },
+      t3: {
+        terminalId: 't3',
+        attention: [],
+        feature: { title: 'Feature Gamma', path: 'odd/tasks/g.md', branch: 'feat/g', tasks: [] },
+        current: null,
+        git: null,
+        workers: [{ dispatchId: 'd3', title: 'Worker Gamma', agent: 'codex/m', state: 'running', active: true, needsYou: false, startedAt: started, endedAt: null }],
+        errors: {}
+      }
+    }
+  }
+}
+
+test('S15: single-session hides the selector and multi-session shows it with Follow active session first', () => {
+  const single = render(dashboardFixture(), ui())
+  assert.ok(!/data-action="selectSession"/.test(single), 'single session must hide session selector')
+
+  const multi = render(multiSessionState(), ui())
+  assert.match(multi, /<select[^>]*data-action="selectSession"/)
+  assert.match(multi, /<option value="" selected>Follow active session<\/option>/)
+  assert.match(multi, /<option value="t1">Alpha · claude · waiting<\/option>/)
+  assert.match(multi, /<option value="t2">Beta · codex · working<\/option>/)
+  assert.match(multi, /<option value="t3">Gamma · codex · working<\/option>/)
+})
+
+test('S15: follow selection from State picks newest working, else newest stateStartedAt, else first row', () => {
+  const workingHtml = render(multiSessionState(), ui())
+  assert.match(workingHtml, /class="session-title">Gamma<\/strong>/)
+
+  const noWorking = multiSessionState()
+  noWorking.agents[1].state = 'waiting'
+  noWorking.agents[2].state = 'done'
+  const newestHtml = render(noWorking, ui())
+  assert.match(newestHtml, /class="session-title">Alpha<\/strong>/)
+
+  const noTimes = multiSessionState()
+  for (const agent of noTimes.agents) {
+    agent.state = 'waiting'
+    delete agent.stateStartedAt
+  }
+  const firstHtml = render(noTimes, ui())
+  assert.match(firstHtml, /class="session-title">Alpha<\/strong>/)
+})
+
+test('S15: renders only the chosen session content while keeping attention for all sessions', () => {
+  const html = render(multiSessionState(), ui())
+  assert.match(html, /class="session-title">Gamma<\/strong>/)
+  assert.match(html, /Feature Gamma/)
+  assert.match(html, /Worker Gamma/)
+
+  assert.ok(!/class="session-title">Alpha<\/strong>/.test(html))
+  assert.ok(!/class="session-title">Beta<\/strong>/.test(html))
+  assert.ok(!/Feature Alpha/.test(html))
+  assert.ok(!/Feature Beta/.test(html))
+  assert.ok(!/Worker Alpha/.test(html))
+  assert.ok(!/class="t">Worker Beta</.test(html))
+
+  assert.match(html, /class="callout"/)
+  assert.match(html, /Alpha: Session one blocked/)
+  assert.match(html, /Beta: Worker Beta needs you/)
 })

@@ -157,6 +157,31 @@ body {
   margin-top: 2px;
 }
 
+.callout-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.callout-link:hover {
+  text-decoration: underline;
+}
+
+.session-bar {
+  margin-bottom: 8px;
+}
+
+.session-select {
+  margin-top: 0;
+}
+
 .row {
   display: flex;
   justify-content: space-between;

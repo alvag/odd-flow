@@ -1,4 +1,4 @@
-# odd-flow profiles
+# ODD Flow
 
 View and switch odd-flow profiles and modes for agent sessions in Orca's focused
 workspace. The panel changes session bindings without sending an agent prompt.
@@ -57,10 +57,17 @@ Both settings are optional.
 
 ## Use the panel
 
-Run **odd-flow: Open profiles panel** from the command palette, press
+Run **ODD Flow: Open panel** from the command palette, press
 **Mod+Alt+Shift+O** (Mod is Cmd on macOS and Ctrl elsewhere), or click the
 odd-flow status item. All three open the same sidebar panel without
 changing a binding.
+
+When multiple coordinator sessions are open in the focused workspace, the
+panel shows one session at a time with a selector at the top. By default
+it follows the session whose agent most recently became `working`, and
+you can pin a specific session until you switch back to **Follow active
+session** or that session closes. **Needs you** still lists attention
+items across all sessions so blocked agents in other tabs remain visible.
 
 Each coordinator's dashboard starts with **Needs you** when the session is
 blocked or an active worker is blocked, has a pending question, or has
@@ -69,12 +76,13 @@ card. The card also shows the effective profile, role routing, and mode, with
 their sources. It refreshes on agent status and workspace changes. Use
 **Refresh** to re-read values on demand.
 
-**Feature tasks** shows progress for the feature document on the current
-branch, with completed tasks folded. Without a feature document,
-**Current work** shows the latest Orca run for that coordinator, its tasks,
-and the latest result. It also shows a Git summary; when there is no feature
-document or run, only the Git summary appears. If the workspace path is
-unavailable, the panel shows a note rather than guessing.
+**Feature tasks** shows progress for the feature document owned by the
+session (whose tasks most recently cite it), or an unowned document on the
+current branch as a fallback, with completed tasks folded. Without a matching
+feature document, **Current work** shows the latest Orca run for that
+coordinator, its tasks, and the latest result. It also shows a Git summary;
+when there is no feature document or run, only the Git summary appears. If the
+workspace path is unavailable, the panel shows a note rather than guessing.
 
 The controls below require a non-worker session with a session ID. A live
 check confirmed only for Claude that Orca reports the same session ID that
@@ -124,7 +132,7 @@ sends a prompt, or launches an agent.
   read or worker check fails. It can also show script, profile lookup, and
   panel-open errors. Agent and workspace events, binding changes, and a
   15-second fallback refresh the item.
-- **odd-flow: Toggle mode** flips the mode only when there is exactly one
+- **ODD Flow: Toggle mode** flips the mode only when there is exactly one
   supported non-worker session with a session ID in the focused workspace.
   It switches the session override, so the same next-prompt timing applies.
   With zero or several eligible sessions, an unavailable worker check, or

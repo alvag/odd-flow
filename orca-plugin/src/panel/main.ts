@@ -1,6 +1,6 @@
 import type { OrcaFrameApi } from 'orca/frame'
 import { isAgentKind, isMode, type AgentKind, type MutationResult, type State } from '../protocol'
-import { elapsed, render, type Feedback } from './render'
+import { elapsed, pickFollowSession, render, sessionKey, type Feedback, type SessionRef } from './render'
 import { styles } from './styles'
 
 export type FrameHost = Pick<OrcaFrameApi, 'on' | 'plugin'>
@@ -21,6 +21,9 @@ export function mountPanel(
   let requestError: string | null = null
   let pending = false
   let feedback: Feedback | null = null
+  let pinnedSession: string | null = null
+  let workingSeq = 0
+  const lastWorkingAt = new Map<string, { at: number; seq: number }>()
   const expanded = new Set<string>()
 
   let activeRequest: AbortController | undefined
@@ -71,6 +74,16 @@ export function mountPanel(
     }
   }
 
+  function getSessions(state: State | null): SessionRef[] {
+    if (!state || state.workerCheckError) return []
+    const list: SessionRef[] = []
+    for (let index = 0; index < state.agents.length; index++) {
+      const row = state.agents[index]
+      if (!row.isWorker) list.push({ row, key: sessionKey(row, index) })
+    }
+    return list
+  }
+
   function draw(force = false): void {
     if (disposed) return
     if (!force && isInteracting()) {
@@ -79,18 +92,33 @@ export function mountPanel(
     }
     drawDeferred = false
     syncExpanded()
+    const sessions = getSessions(currentState)
+    const selectedSession =
+      pinnedSession && sessions.some(({ key }) => key === pinnedSession)
+        ? pinnedSession
+        : pickFollowSession(sessions, lastWorkingAt)
     root.innerHTML = render(currentState, {
       pending,
       feedback,
       error: requestError,
       now: Date.now(),
-      expanded
+      expanded,
+      selectedSession,
+      pinnedSession
     })
   }
 
   function showState(answer: State): void {
     currentState = answer.error ? null : answer
     requestError = answer.error ?? null
+    if (!currentState) return
+    const keys = new Set(getSessions(currentState).map(({ key }) => key))
+    if (pinnedSession !== null && !keys.has(pinnedSession)) {
+      pinnedSession = null
+    }
+    for (const key of lastWorkingAt.keys()) {
+      if (!keys.has(key)) lastWorkingAt.delete(key)
+    }
   }
 
   function targetForRow(rowId: string): Target | null {
@@ -116,8 +144,9 @@ export function mountPanel(
     activeRequest?.abort()
     const controller = new AbortController()
     activeRequest = controller
-    pending = true
-    draw(forceDraw)
+    if (currentState === null && requestError === null) {
+      draw(forceDraw)
+    }
 
     const run = (async () => {
       try {
@@ -131,7 +160,6 @@ export function mountPanel(
       } finally {
         if (activeRequest === controller) {
           activeRequest = undefined
-          pending = false
           draw(forceDraw)
         }
       }
@@ -209,6 +237,14 @@ export function mountPanel(
       void refresh(true)
       return
     }
+    if (action === 'selectSession') {
+      const key = actionEl.dataset.session
+      if (key) {
+        pinnedSession = key
+        draw(true)
+      }
+      return
+    }
     const rowId = actionEl.dataset.row
     if (!rowId) return
     const target = targetForRow(rowId)
@@ -229,6 +265,15 @@ export function mountPanel(
 
   const onChange = (event: Event) => {
     const rawTarget = event.target as (HTMLSelectElement & { closest?: (selector: string) => HTMLElement | null }) | null
+    const sessionSelect = rawTarget?.closest?.('[data-action="selectSession"]') as
+      | (HTMLSelectElement & { dataset?: Record<string, string | undefined> })
+      | null
+    if (sessionSelect?.dataset?.action === 'selectSession') {
+      selectOpen = false
+      pinnedSession = sessionSelect.value ? sessionSelect.value : null
+      draw(true)
+      return
+    }
     const select = rawTarget?.closest?.('[data-action="use"]') as
       | (HTMLSelectElement & { dataset: Record<string, string | undefined> })
       | null
@@ -246,7 +291,7 @@ export function mountPanel(
 
   const onMouseDown = (event: Event) => {
     const rawTarget = event.target as { closest?: (selector: string) => HTMLElement | null } | null
-    if (rawTarget?.closest?.('select[data-action="use"]')) {
+    if (rawTarget?.closest?.('select[data-action="use"], select[data-action="selectSession"]')) {
       selectOpen = true
     }
   }
@@ -255,7 +300,7 @@ export function mountPanel(
     const rawTarget = event.target as { closest?: (selector: string) => HTMLElement | null } | null
     const key = (event as { key?: string }).key
     if (
-      rawTarget?.closest?.('select[data-action="use"]') &&
+      rawTarget?.closest?.('select[data-action="use"], select[data-action="selectSession"]') &&
       (key === ' ' || key === 'Enter' || key === 'ArrowDown' || key === 'ArrowUp')
     ) {
       selectOpen = true
@@ -302,7 +347,14 @@ export function mountPanel(
   }
 
   const subs = [
-    host.on('agent.status.changed', () => refresh()),
+    host.on('agent.status.changed', (payload) => {
+      const ev = payload as { terminalId?: unknown; state?: unknown; receivedAt?: unknown } | undefined
+      if (ev && ev.state === 'working' && typeof ev.terminalId === 'string' && ev.terminalId) {
+        const at = typeof ev.receivedAt === 'number' && Number.isFinite(ev.receivedAt) ? ev.receivedAt : Date.now()
+        lastWorkingAt.set(ev.terminalId, { at, seq: ++workingSeq })
+      }
+      return refresh()
+    }),
     host.on('workspace.changed', () => refresh()),
     host.on('theme', () => draw())
   ]

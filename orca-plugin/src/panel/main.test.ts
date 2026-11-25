@@ -406,3 +406,157 @@ test('A6: visibilitychange to visible updates times immediately', async () => {
     else g.document = prevDoc
   }
 })
+
+function twoSessionState(overrides: {
+  oneState?: 'working' | 'waiting' | 'blocked' | 'done'
+  oneAt?: number
+  twoState?: 'working' | 'waiting' | 'blocked' | 'done'
+  twoAt?: number
+  dropOne?: boolean
+  dropTwo?: boolean
+} = {}): State {
+  const one = {
+    terminalId: 'one',
+    title: 'Session One',
+    agent: 'codex',
+    state: overrides.oneState ?? 'working',
+    stateStartedAt: overrides.oneAt ?? 2_000,
+    sessionId: 'sid1',
+    odd: {
+      profile: 'team',
+      source: 'file default',
+      mode: 'full-delegation' as const,
+      mode_source: 'profile team',
+      session_key: 'CODEX_THREAD_ID',
+      agent: 'codex',
+      orca_terminal: null,
+      roles: {},
+      rules: 'references/mode-full-delegation.md'
+    }
+  }
+  const two = {
+    terminalId: 'two',
+    title: 'Session Two',
+    agent: 'claude',
+    state: overrides.twoState ?? 'waiting',
+    stateStartedAt: overrides.twoAt ?? 1_000,
+    sessionId: 'sid2',
+    odd: {
+      profile: 'solo',
+      source: 'file default',
+      mode: 'organic' as const,
+      mode_source: 'profile solo',
+      session_key: 'CLAUDE_CODE_SESSION_ID',
+      agent: 'claude',
+      orca_terminal: null,
+      roles: {},
+      rules: 'references/mode-organic.md'
+    }
+  }
+  const agents = [
+    ...(overrides.dropOne ? [] : [one]),
+    ...(overrides.dropTwo ? [] : [two])
+  ]
+  return {
+    script: { path: '/settings/profile.py', source: 'profileScript setting' },
+    profiles: {
+      path: '/profiles.json',
+      default: 'team',
+      profiles: [
+        { name: 'team', mode: 'full-delegation', default: true, roles: {} },
+        { name: 'solo', mode: 'organic', default: false, roles: {} }
+      ]
+    },
+    agents
+  }
+}
+
+test('S15: follows agent.status.changed working events, supports pin/unpin, and falls back when shown session disappears', async () => {
+  let state = twoSessionState()
+  const root = new FakeElement()
+  const { host, emit } = makeHost({ state: () => state })
+  const handle = mountPanel(root as unknown as HTMLElement, host, { intervalMs: 0 })
+  await handle.settled()
+
+  assert.match(root.innerHTML, /class="session-title">Session One<\/strong>/)
+  assert.ok(!/class="session-title">Session Two<\/strong>/.test(root.innerHTML))
+
+  // Switching another session to working follows it
+  state = twoSessionState({ oneState: 'waiting', twoState: 'working', twoAt: 3_000 })
+  await emit('agent.status.changed', { terminalId: 'two', state: 'working', receivedAt: 3_000 })
+  await handle.settled()
+  assert.match(root.innerHTML, /class="session-title">Session Two<\/strong>/)
+
+  // Non-working status change on another session does not steal follow
+  state = twoSessionState({ oneState: 'waiting', twoState: 'waiting', twoAt: 3_000 })
+  await emit('agent.status.changed', { terminalId: 'one', state: 'waiting', receivedAt: 4_000 })
+  await handle.settled()
+  assert.match(root.innerHTML, /class="session-title">Session Two<\/strong>/)
+
+  // Pin Session One
+  root.dispatch('change', {
+    value: 'one',
+    dataset: { action: 'selectSession' },
+    closest: (sel: string) => (sel === '[data-action="selectSession"]' ? { value: 'one', dataset: { action: 'selectSession' } } : null)
+  })
+  assert.match(root.innerHTML, /class="session-title">Session One<\/strong>/)
+  assert.match(root.innerHTML, /<option value="one" selected>/)
+
+  // Working event on Session Two does not override a pin
+  state = twoSessionState({ oneState: 'waiting', twoState: 'working', twoAt: 5_000 })
+  await emit('agent.status.changed', { terminalId: 'two', state: 'working', receivedAt: 5_000 })
+  await handle.settled()
+  assert.match(root.innerHTML, /class="session-title">Session One<\/strong>/)
+
+  // Unpin back to Follow active session
+  root.dispatch('change', {
+    value: '',
+    dataset: { action: 'selectSession' },
+    closest: (sel: string) => (sel === '[data-action="selectSession"]' ? { value: '', dataset: { action: 'selectSession' } } : null)
+  })
+  assert.match(root.innerHTML, /<option value="" selected>Follow active session<\/option>/)
+  assert.match(root.innerHTML, /class="session-title">Session Two<\/strong>/)
+
+  // Pin Session Two, then Session Two disappears -> falls back to Session One and unpins
+  root.dispatch('change', {
+    value: 'two',
+    dataset: { action: 'selectSession' },
+    closest: (sel: string) => (sel === '[data-action="selectSession"]' ? { value: 'two', dataset: { action: 'selectSession' } } : null)
+  })
+  state = twoSessionState({ dropTwo: true })
+  await emit('workspace.changed', { context: null })
+  await handle.settled()
+  assert.match(root.innerHTML, /class="session-title">Session One<\/strong>/)
+  assert.ok(!/data-action="selectSession"/.test(root.innerHTML))
+
+  handle.dispose()
+})
+
+test('does not disable session controls during a background refresh when no mutation is pending', async () => {
+  let releaseRefresh!: (s: State) => void
+  let initial = true
+  const root = new FakeElement()
+  const { host, emit } = makeHost({
+    state: () => {
+      if (initial) {
+        initial = false
+        return twoSessionState()
+      }
+      return new Promise((resolve) => {
+        releaseRefresh = resolve
+      })
+    }
+  })
+  const handle = mountPanel(root as unknown as HTMLElement, host, { intervalMs: 0 })
+  await handle.settled()
+
+  const refreshPromise = emit('agent.status.changed', { terminalId: 'one', state: 'working', receivedAt: 5_000 })
+  assert.ok(!/<select[^>]*data-action="use"[^>]*disabled/.test(root.innerHTML), 'profile select must not be disabled during background refresh')
+  assert.ok(!/data-action="sessionMode"[^>]*disabled/.test(root.innerHTML), 'mode buttons must not be disabled during background refresh')
+  assert.ok(!/data-action="clear"[^>]*disabled/.test(root.innerHTML), 'reset button must not be disabled during background refresh')
+
+  releaseRefresh(twoSessionState())
+  await refreshPromise
+  await handle.settled()
+  handle.dispose()
+})

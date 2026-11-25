@@ -23,6 +23,56 @@ export type RenderUi = {
   error: string | null
   now: number
   expanded?: ReadonlySet<string>
+  selectedSession?: string | null
+  pinnedSession?: string | null
+}
+
+export type SessionRef = {
+  row: State['agents'][number]
+  key: string
+}
+
+export function sessionKey(row: State['agents'][number], index: number): string {
+  return row.terminalId ?? `${index}:${row.agent}:${row.sessionId}`
+}
+
+function sessionTitle(row: State['agents'][number]): string {
+  return row.task?.title ?? row.title ?? row.terminalId ?? 'Untitled'
+}
+
+export function pickFollowSession(
+  sessions: readonly SessionRef[],
+  lastWorkingAt?: ReadonlyMap<string, { at: number; seq: number }>
+): string | null {
+  if (sessions.length === 0) return null
+  if (lastWorkingAt && lastWorkingAt.size > 0) {
+    let bestKey: string | null = null
+    let bestAt = -Infinity
+    let bestSeq = -Infinity
+    for (const { key } of sessions) {
+      const entry = lastWorkingAt.get(key)
+      if (!entry) continue
+      if (entry.at > bestAt || (entry.at === bestAt && entry.seq > bestSeq)) {
+        bestKey = key
+        bestAt = entry.at
+        bestSeq = entry.seq
+      }
+    }
+    if (bestKey !== null) return bestKey
+  }
+
+  const working = sessions.filter(({ row }) => row.state === 'working')
+  const pool = working.length > 0 ? working : sessions
+  let best = pool[0]
+  let bestAt = best.row.stateStartedAt ?? -Infinity
+  for (let i = 1; i < pool.length; i++) {
+    const at = pool[i].row.stateStartedAt ?? -Infinity
+    if (at > bestAt) {
+      best = pool[i]
+      bestAt = at
+    }
+  }
+  return best.key
 }
 
 type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger'
@@ -102,11 +152,16 @@ function formatRunTime(start: number | null, end: number | null, active: boolean
   return 'Time unavailable'
 }
 
-function renderAttention(items: Attention[], now: number): string {
+type CalloutItem = Attention & { sessionKey: string; sessionTitle: string }
+
+function renderAttention(items: CalloutItem[], now: number, multiSession: boolean): string {
   if (items.length === 0) return ''
   const lines = items
-    .map(({ label, since }) => {
+    .map(({ sessionKey: key, sessionTitle: title, label, since }) => {
       const time = since !== null ? ` · ${renderLiveTime(since, now)}` : ''
+      if (multiSession) {
+        return `<button type="button" class="callout-item callout-link" data-action="selectSession" data-session="${escapeHtml(key)}">${escapeHtml(title)}: ${escapeHtml(label)}${time}</button>`
+      }
       return `<div class="callout-item">${escapeHtml(label)}${time}</div>`
     })
     .join('')
@@ -334,7 +389,7 @@ function renderSessionCard(
 const REFRESH_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.4-3.65"/><path d="M13.5 2.5v2.75h-2.75"/></svg>'
 
 export function render(state: State | null, ui: RenderUi): string {
-  const header = `<div class="hdr"><h1>odd-flow profiles</h1><button type="button" class="btn-refresh" data-action="refresh" aria-label="Refresh" title="Refresh"${ui.pending ? ' disabled' : ''}>${REFRESH_ICON}</button></div>`
+  const header = `<div class="hdr"><h1>ODD Flow</h1><button type="button" class="btn-refresh" data-action="refresh" aria-label="Refresh" title="Refresh"${ui.pending ? ' disabled' : ''}>${REFRESH_ICON}</button></div>`
   if (ui.error !== null) {
     return `<div class="pn">${header}<div class="error-text" data-tone="danger">Could not load workspace state: ${escapeHtml(ui.error)}</div></div>`
   }
@@ -356,27 +411,69 @@ export function render(state: State | null, ui: RenderUi): string {
     return `<div class="pn">${header}${topErrors}<div class="empty-state">No agents in the focused workspace</div></div>`
   }
 
-  const rows = state.agents
-    .map((row, index) => {
-      const id = `${row.terminalId ?? index}:${row.agent}:${row.sessionId}`
-      const title = row.task?.title ?? row.title ?? row.terminalId ?? 'Untitled'
-      if (row.isWorker || state.workerCheckError) {
-        if (row.isWorker && hasWorkerDashboards && !state.workerCheckError) return ''
-        return `<div class="worker-fallback">${escapeHtml(title)} — ${escapeHtml(row.agent ?? 'unknown')} — ${escapeHtml(row.state)}</div>`
-      }
-      const dashboard = row.terminalId ? state.dashboards?.[row.terminalId] : undefined
-      const target =
-        isAgentKind(row.agent) && row.sessionId?.trim() && 'path' in state.script
-          ? { agent: row.agent, sessionId: row.sessionId }
-          : null
-      return [
-        renderAttention(dashboard?.attention ?? attentionItems(row, []), ui.now),
-        renderSessionCard(row, id, title, profiles, target, ui),
-        dashboard ? renderWorkSection(dashboard, id, ui) : '',
-        dashboard ? renderWorkersSection(dashboard, id, ui) : ''
-      ].join('')
-    })
-    .join('')
+  if (state.workerCheckError) {
+    const fallbacks = state.agents
+      .map((row) => `<div class="worker-fallback">${escapeHtml(sessionTitle(row))} — ${escapeHtml(row.agent ?? 'unknown')} — ${escapeHtml(row.state)}</div>`)
+      .join('')
+    return `<div class="pn">${header}${topErrors}${fallbacks}</div>`
+  }
 
-  return `<div class="pn">${header}${topErrors}${rows}</div>`
+  const indexed = state.agents.map((row, index) => ({
+    row,
+    index,
+    key: sessionKey(row, index),
+    id: `${row.terminalId ?? index}:${row.agent}:${row.sessionId}`,
+    title: sessionTitle(row)
+  }))
+  const sessions = indexed.filter(({ row }) => !row.isWorker)
+
+  if (sessions.length === 0) {
+    const workerFallbacks = hasWorkerDashboards
+      ? ''
+      : indexed
+          .map(({ row, title }) => `<div class="worker-fallback">${escapeHtml(title)} — ${escapeHtml(row.agent ?? 'unknown')} — ${escapeHtml(row.state)}</div>`)
+          .join('')
+    const empty = workerFallbacks || '<div class="empty-state">No agents in the focused workspace</div>'
+    return `<div class="pn">${header}${topErrors}${empty}</div>`
+  }
+
+  const multiSession = sessions.length > 1
+  const allAttention: CalloutItem[] = sessions.flatMap(({ row, key, title }) => {
+    const dashboard = row.terminalId ? state.dashboards?.[row.terminalId] : undefined
+    const items = dashboard?.attention ?? attentionItems(row, [])
+    return items.map((item) => ({ ...item, sessionKey: key, sessionTitle: title }))
+  })
+
+  const selectorHtml = multiSession
+    ? [
+        '<div class="session-bar"><select class="select session-select" data-action="selectSession" aria-label="Session">',
+        `<option value=""${!ui.pinnedSession ? ' selected' : ''}>Follow active session</option>`,
+        ...sessions.map(
+          ({ row, key, title }) =>
+            `<option value="${escapeHtml(key)}"${ui.pinnedSession === key ? ' selected' : ''}>${escapeHtml(title)} · ${escapeHtml(row.agent ?? 'unknown')} · ${escapeHtml(row.state)}</option>`
+        ),
+        '</select></div>'
+      ].join('')
+    : ''
+
+  const chosenKey =
+    ui.selectedSession && sessions.some(({ key }) => key === ui.selectedSession)
+      ? ui.selectedSession
+      : pickFollowSession(sessions)
+  const chosen = sessions.find(({ key }) => key === chosenKey) ?? sessions[0]
+  const dashboard = chosen.row.terminalId ? state.dashboards?.[chosen.row.terminalId] : undefined
+  const target =
+    isAgentKind(chosen.row.agent) && chosen.row.sessionId?.trim() && 'path' in state.script
+      ? { agent: chosen.row.agent, sessionId: chosen.row.sessionId }
+      : null
+
+  const body = [
+    selectorHtml,
+    renderAttention(allAttention, ui.now, multiSession),
+    renderSessionCard(chosen.row, chosen.id, chosen.title, profiles, target, ui),
+    dashboard ? renderWorkSection(dashboard, chosen.id, ui) : '',
+    dashboard ? renderWorkersSection(dashboard, chosen.id, ui) : ''
+  ].join('')
+
+  return `<div class="pn">${header}${topErrors}${body}</div>`
 }

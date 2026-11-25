@@ -46,20 +46,24 @@ function evil(): State {
 }
 
 test('contract: escapes every State string', () => {
-  // workerCheckError hides dashboards per row; render both with and without it
+  // workerCheckError hides dashboards per row; render both with and without it, across all sessions
   const a = render(evil(), ui({ feedback: { row: 't' + P + ':claude:s' + P, text: 'fb' + P, failed: true } }))
   const s = evil(); delete (s as { workerCheckError?: string }).workerCheckError
-  const b = render(s, ui({ feedback: { row: 't' + P + ':claude:s' + P, text: 'fb' + P, failed: true } }))
+  const b1 = render(s, ui({ selectedSession: 't' + P, feedback: { row: 't' + P + ':claude:s' + P, text: 'fb' + P, failed: true } }))
+  const b2 = render(s, ui({ selectedSession: 'u2' }))
+  const b3 = render(s, ui({ selectedSession: 'u3' }))
   const c = render(null, ui({ error: 'err' + P }))
   const d = render({ ...s, script: { error: 'se' + P } as never, profiles: 'pe' + P as never }, ui())
-  for (const out of [a, b, c, d]) {
+  for (const out of [a, b1, b2, b3, c, d]) {
     assert.ok(!out.includes('<b>'), 'raw tag leaked')
     assert.ok(!out.includes('"\'&Y'), 'raw quote leaked')
   }
   for (const want of ['wce', 'title']) assert.ok(a.includes(want + E), 'a missing ' + want)
-  for (const want of ['why', 'odderr', 'title', 'att', 'ft', 'odd/tasks/', 'br', 'T1', 'w', 'done', 'wt', 'ag', 'we', 'fe', 'ge', 'p', 'a', 'm', 'e', 'r', 'fb']) assert.ok(b.includes(want + E), 'b missing ' + want)
-  assert.ok(b.includes('data-row="t' + E + ':claude:s' + E + '"'), 'data-row attr')
-  assert.ok(b.includes('<option value="p' + E + '" selected>'), 'option attr')
+  for (const want of ['title', 'att', 'ft', 'odd/tasks/', 'br', 'T1', 'w', 'done', 'wt', 'ag', 'we', 'fe', 'ge', 'p', 'a', 'm', 'e', 'r', 'fb']) assert.ok(b1.includes(want + E), 'b1 missing ' + want)
+  assert.ok(b2.includes('why' + E), 'b2 missing why')
+  assert.ok(b3.includes('odderr' + E), 'b3 missing odderr')
+  assert.ok(b1.includes('data-row="t' + E + ':claude:s' + E + '"'), 'data-row attr')
+  assert.ok(b1.includes('<option value="p' + E + '" selected>'), 'option attr')
   assert.ok(c.includes('err' + E))
   assert.ok(d.includes('se' + E) && d.includes('pe' + E))
 })
@@ -225,12 +229,12 @@ test('contract: session header badges, tooltips, refresh icon', () => {
 
 test('contract: section errors stay in their section; workspace error keeps workers', () => {
   const s = evil(); delete (s as { workerCheckError?: string }).workerCheckError
-  const out = render(s, ui())
+  const out = render(s, ui({ selectedSession: 't' + P }))
   const wi = out.indexOf('<h4><span>Workers'), fi = out.indexOf('<h4>Feature tasks')
   assert.ok(out.indexOf('we' + E) > wi && wi > 0)
   assert.ok(out.indexOf('fe' + E) < wi && out.indexOf('ge' + E) < wi && out.indexOf('ge' + E) > fi)
   const d = (s.dashboards as Record<string, { errors: Record<string, string> }>)['t' + P]
   d.errors = { workspace: 'Workspace path unavailable' }
-  const o2 = render(s, ui())
+  const o2 = render(s, ui({ selectedSession: 't' + P }))
   assert.match(o2, /<div class="mu">Workspace path unavailable<\/div>/); assert.match(o2, /Workers/)
 })
