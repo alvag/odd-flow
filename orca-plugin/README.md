@@ -62,9 +62,19 @@ Run **odd-flow: Open profiles panel** from the command palette, press
 odd-flow status item. All three open the same sidebar panel without
 changing a binding.
 
-The panel shows the current profile, mode, and sources for non-worker sessions.
-It refreshes on agent status and workspace changes. Use **Refresh** to re-read
-values on demand.
+Each coordinator's dashboard starts with **Needs you** when the session is
+blocked or an active worker is blocked, has a pending question, or has
+escalated. An idle session instead shows **Waiting for you** on its session
+card. The card also shows the effective profile, role routing, and mode, with
+their sources. It refreshes on agent status and workspace changes. Use
+**Refresh** to re-read values on demand.
+
+**Feature tasks** shows progress for the feature document on the current
+branch, with completed tasks folded. Without a feature document,
+**Current work** shows the latest Orca run for that coordinator, its tasks,
+and the latest result. It also shows a Git summary; when there is no feature
+document or run, only the Git summary appears. If the workspace path is
+unavailable, the panel shows a note rather than guessing.
 
 The controls below require a non-worker session with a session ID. A live
 check confirmed only for Claude that Orca reports the same session ID that
@@ -74,7 +84,7 @@ not been tested live.
 | Control | What changes | When it applies |
 |---|---|---|
 | **Profile** | Binds a saved profile and drops any session mode override, so the new profile's mode applies. | The next worker launch uses the new profile. If the effective mode changes, the agent picks it up on its next prompt. |
-| **Mode** | Sets a session-only override to `organic` or `full-delegation` without changing the profile. | The agent picks it up on its next prompt. |
+| **Mode toggle** | Sets a session-only override to `organic` or `full-delegation` without changing the profile. | The agent picks it up on its next prompt. |
 | **Reset to defaults** | Removes both session overrides. The panel shows the file default, or odd-flow's fallback if no default is configured. | The next worker launch uses the resolved profile; any effective mode change reaches the agent on its next prompt. |
 
 An agent launched with `ODD_PROFILE` or `ODD_ORCHESTRATOR_MODE` keeps using
@@ -86,14 +96,19 @@ recorded mode. The notice tells the agent that the previous mode's rules no
 longer apply. Switching does not interrupt a running turn or change an
 already launched worker.
 
-Workers appear as a title line only: `<title> — <agent> — <state>`. The
-panel uses the task title if Orca provides one, otherwise the terminal
-title when available. Orca can leave `agents.list`'s `task` field null for
-terminal workers, so the plugin checks the local dispatch list too. Any
-matching dispatch terminal counts, regardless of dispatch state. Worker
-rows have no profile details or controls. If the dispatch check fails,
-the panel shows the error and leaves only the title lines; the worker
-blocks profile reads and binding changes rather than guessing.
+**Workers** shows the coordinator's dispatches, active first. Each worker
+has a status badge and a one-line title, followed by its agent/model and live
+elapsed time or final duration. Finished workers beyond the newest three are
+folded. Worker rows have no profile details or controls.
+
+Without a dispatch dashboard, worker agent rows fall back to a title line
+using the task title or, when absent, the terminal title. Orca can leave
+`agents.list`'s `task` field null for terminal workers, so the plugin checks
+the local dispatch list too. Any matching dispatch terminal counts when
+deciding whether to allow profile controls, regardless of dispatch state.
+If that check fails, the panel shows the error and leaves only the title
+lines; the worker blocks profile reads and binding changes rather than
+guessing.
 
 The plugin revalidates the target session and dispatches before a write.
 It changes odd-flow bindings only through `profile.py use`,
