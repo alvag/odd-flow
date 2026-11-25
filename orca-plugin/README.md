@@ -76,7 +76,10 @@ not been tested live.
 |---|---|---|
 | **Profile** | Binds a saved profile and drops any session mode override, so the new profile's mode applies. | The next worker launch uses the new profile. If the effective mode changes, the agent picks it up on its next prompt. |
 | **Mode** | Sets a session-only override to `organic` or `full-delegation` without changing the profile. | The agent picks it up on its next prompt. |
-| **Clear session binding** | Removes both session overrides. The panel shows the file default, or odd-flow's fallback if no default is configured. | The next worker launch uses the resolved profile; any effective mode change reaches the agent on its next prompt. |
+| **Reset to defaults** | Removes both session overrides. The panel shows the file default, or odd-flow's fallback if no default is configured. | The next worker launch uses the resolved profile; any effective mode change reaches the agent on its next prompt. |
+
+An agent launched with `ODD_PROFILE` or `ODD_ORCHESTRATOR_MODE` keeps using
+those values after a reset, even though the panel shows the file default.
 
 With the updated odd-flow runtime hooks, the next prompt in a coordinator
 session gets a one-time notice when the effective mode differs from the last

@@ -166,9 +166,10 @@ export default function Panel() {
                         }} />
                       <Button disabled={busy || !target} onPress={() => {
                         if (!target) return
-                        return apply(id, 'Session binding cleared.', (signal) =>
+                        return apply(id, 'Session choices reset.', (signal) =>
                           plugin.request('clear', target, { signal }))
-                      }}>Clear session binding</Button>
+                      }}>Reset to defaults</Button>
+                      <Text muted>Removes this session's profile and mode choice. The default profile and its mode apply again.</Text>
                       <Text muted>A profile switch applies to the next worker launch and drops the session mode override.</Text>
                       <Text muted>A mode switch reaches the agent on its next prompt.</Text>
                       {result?.row === id && <Text tone={result.failed ? 'danger' : undefined}>{result.text}</Text>}

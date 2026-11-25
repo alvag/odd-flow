@@ -107,7 +107,7 @@ test('renders a worker as only its task title, agent and state', async () => {
     assert.equal(texts.at(-1)?.text, line)
     assert.equal(view.find({ label: 'Profile' }), null)
     assert.equal(view.find({ label: 'Mode' }), null)
-    assert.equal(view.find({ text: 'Clear session binding' }), null)
+    assert.equal(view.find({ text: 'Reset to defaults' }), null)
   } finally {
     await view.unmount()
   }
@@ -128,7 +128,7 @@ test('renders a dispatch-only worker using its terminal title and no details or 
     assert.equal(texts.length, 3)
     assert.equal(texts.at(-1)?.text, 'T5 verify: panel session switching — claude — working')
     assert.equal(view.findAll({ type: 'Select' }).length, 0)
-    assert.equal(view.find({ text: 'Clear session binding' }), null)
+    assert.equal(view.find({ text: 'Reset to defaults' }), null)
   } finally {
     await view.unmount()
   }
@@ -159,13 +159,13 @@ test('shows a dispatch check failure once and keeps every row visible without co
       assert.ok(view.find({ text: 'First — claude — working' }))
       assert.ok(view.find({ text: 'Second — codex — waiting' }))
       assert.equal(view.findAll({ type: 'Select' }).length, 0)
-      assert.equal(view.find({ text: 'Clear session binding' }), null)
+      assert.equal(view.find({ text: 'Reset to defaults' }), null)
     }
     assertNoControls()
     unavailable = false
     await view.press({ text: 'Refresh' })
     assert.equal(view.findAll({ text: workerCheckError }).length, 0)
-    await view.press(view.findAll({ text: 'Clear session binding' })[0])
+    await view.press(view.findAll({ text: 'Reset to defaults' })[0])
     assertNoControls()
   } finally {
     await view.unmount()
@@ -217,13 +217,16 @@ test('switches the selected row, displays saved or failed results, and prevents 
   }, { host })
   const profile = { label: 'Profile' }
   const mode = { label: 'Mode' }
-  const clear = { text: 'Clear session binding' }
+  const clear = { text: 'Reset to defaults' }
   try {
     assert.equal(view.valueOf(profile), 'team')
     assert.equal(view.valueOf(mode), 'full-delegation')
     for (const text of [/next worker launch/i, /next prompt/i, /drops.*mode override/i]) {
       assert.ok(view.find({ text }), String(text))
     }
+    assert.ok(view.find({
+      text: "Removes this session's profile and mode choice. The default profile and its mode apply again."
+    }))
     const rendered = new Promise<void>((resolve) => { afterRender = resolve })
     const select = view.select(profile, 'solo')
     try {
@@ -243,7 +246,7 @@ test('switches the selected row, displays saved or failed results, and prevents 
     assert.equal(view.valueOf(mode), 'full-delegation')
     await view.press(clear)
     assert.equal(view.valueOf(profile), 'team')
-    assert.ok(view.find({ text: /Session binding cleared/ }))
+    assert.ok(view.find({ text: 'Session choices reset.' }))
     assert.deepEqual(calls, [
       { agent: 'codex', sessionId: 'sid', profile: 'solo' },
       { agent: 'codex', sessionId: 'sid', mode: 'organic' },

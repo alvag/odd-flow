@@ -31,6 +31,10 @@ for fragment in 'odd-flow.openProfiles started' 'odd-flow.toggleMode started' \
     require_text "$readme" "$fragment"
 done
 
+require_text "$readme" '| **Reset to defaults** |'
+require_text "$readme" 'An agent launched with `ODD_PROFILE` or `ODD_ORCHESTRATOR_MODE` keeps using'
+require_text "$readme" 'those values after a reset, even though the panel shows the file default.'
+
 require_text "$manifest" '"key": "Mod+Alt+Shift+O"'
 if grep -nE '(^|[^[:alnum:]_])[TSL][0-9]+([^[:alnum:]_]|$)' "$readme" README.md CHANGELOG.md; then
     printf 'FAIL docs: internal task identifiers\n' >&2
