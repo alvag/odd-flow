@@ -19,6 +19,7 @@ expect() { # name, expected exit, actual exit, expected output, [expected argv]
 printf '%s\n' \
   '#!/bin/sh' \
   'printf "%s\n" "$@" >>"$ORCA_LOG"' \
+  'if [ "$2" = list ]; then printf "%s\n" "${ORCA_HANG:+hung }list entered" >>"$ORCA_LOG.lists"; fi' \
   'if [ "$2" = "${ORCA_HANG:-}" ]; then' \
   '  if [ "$2" = list ]; then exec sleep 5; fi' \
   '  sleep 5' \
@@ -64,19 +65,32 @@ printf '%s\n' \
   'def sleep(seconds):' \
   '    global now' \
   '    now += seconds' \
-  'def sample():' \
+  'def lock_held():' \
   '    lock = Path(os.environ["TMPDIR"]) / "odd-flow-pane-term_parent.lock"' \
-  '    locked = False' \
   '    if lock.exists():' \
   '        with lock.open() as fd:' \
   '            try:' \
   '                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)' \
   '            except BlockingIOError:' \
-  '                locked = True' \
+  '                return True' \
+  '    return False' \
+  'def sample():' \
   '    with open(os.environ["ORCA_LOG"] + ".samples", "a") as log:' \
-  '        print(round(now * 1000), locked, file=log)' \
+  '        print(round(now * 1000), lock_held(), file=log)' \
   '    width = next(samples)' \
   '    return None if width == "unknown" else int(width)' \
+  'if os.environ.get("ORCA_HANG") == "list":' \
+  '    terminal = pane.terminal' \
+  '    def trace_hung_list(*args):' \
+  '        events = os.environ["ORCA_LOG"] + ".lists"' \
+  '        with open(events, "a") as log:' \
+  '            print("lock held:", lock_held(), file=log)' \
+  '        try:' \
+  '            return terminal(*args)' \
+  '        finally:' \
+  '            with open(events, "a") as log:' \
+  '                print("hung list finished", file=log)' \
+  '    pane.terminal = trace_hung_list' \
   'wall_time = time.time' \
   'if record_age:' \
   '    wall_time = lambda: 1_700_000_000' \
@@ -349,20 +363,31 @@ expect "a split below records no width" 0 "$ec" '"placement": "split-below", "ha
 layout "$p"
 started=$SECONDS
 : >"$T/argv"; : >"$T/argv.samples"
+: >"$T/argv.lists"
 env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
   ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG=list \
   python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json \
   >"$T/first.out" 2>&1 &
 first=$!
-sleep 0.3
-second_out=$(env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
-  ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG= \
-  python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json 2>&1)
-second_ec=$?
+for ((i = 0; i < 100; i++)); do
+  grep -qx 'hung list entered' "$T/argv.lists" && break
+  sleep 0.01
+done
+second_ec=99
+second_out='hung list did not start in time'
+if (( i < 100 )); then
+  echo 'second launch' >>"$T/argv.lists"
+  second_out=$(env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
+    ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG= \
+    python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json 2>&1)
+  second_ec=$?
+fi
 wait "$first"; first_ec=$?
-out="first=$first_ec $(cat "$T/first.out") second=$second_ec $second_out"
+events=$(cat "$T/argv.lists")
+out="first=$first_ec $(cat "$T/first.out") second=$second_ec $second_out"$'\n'"$events"
 ec=0
 if (( first_ec != 1 || second_ec != 0 || SECONDS - started >= 4 )); then ec=1; fi
+[[ "$events" == $'lock held: True\nhung list entered\nsecond launch\nhung list finished\nlist entered' ]] || ec=1
 expect "a hung list releases the pane lock to a parallel launch" 0 "$ec" \
   'first=1 odd-flow: Orca terminal list: timed out (limit: 1s) second=0 {"placement": "split-right", "handle": "term_new"'
 
