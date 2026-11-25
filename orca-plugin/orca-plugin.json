@@ -44,8 +44,8 @@
         "id": "odd-flow-profiles",
         "title": "odd-flow profiles",
         "icon": "agent",
-        "entry": "src/panel.tsx",
-        "ui": "components"
+        "entry": "src/panel/main.ts",
+        "ui": "html"
       }
     ],
     "settings": [

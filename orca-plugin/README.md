@@ -64,7 +64,7 @@ changing a binding.
 
 Each coordinator's dashboard starts with **Needs you** when the session is
 blocked or an active worker is blocked, has a pending question, or has
-escalated. An idle session instead shows **Waiting for you** on its session
+escalated. An idle or turn-finished session instead shows **waiting for you** on its session
 card. The card also shows the effective profile, role routing, and mode, with
 their sources. It refreshes on agent status and workspace changes. Use
 **Refresh** to re-read values on demand.
@@ -188,7 +188,6 @@ From the repository root:
 ```sh
 orca plugin validate orca-plugin --json
 orca plugin test orca-plugin --json
-orca plugin check orca-plugin --json
 ```
 
 Use the development load and approval steps above to try the panel live.
