@@ -1,0 +1,21 @@
+{
+  "manifestVersion": 2,
+  "id": "odd-flow-hooks-probe",
+  "name": "ODD Flow hooks probe",
+  "version": "0.1.0",
+  "description": "Probes prompt, tool and launch hooks with test sentinels.",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "hooks": [
+      { "event": "agent.prompt.before" },
+      { "event": "agent.tool.before" },
+      { "event": "agent.tool.after" },
+      { "event": "agent.launch.before" }
+    ]
+  }
+}
