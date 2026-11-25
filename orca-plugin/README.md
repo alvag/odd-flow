@@ -62,9 +62,9 @@ Run **odd-flow: Open profiles panel** from the command palette, press
 odd-flow status item. All three open the same sidebar panel without
 changing a binding.
 
-The panel lists saved profiles and shows the current profile, mode, and
-sources for non-worker sessions. It refreshes on agent status and workspace
-changes. Use **Refresh** to re-read values on demand.
+The panel shows the current profile, mode, and sources for non-worker sessions.
+It refreshes on agent status and workspace changes. Use **Refresh** to re-read
+values on demand.
 
 The controls below require a non-worker session with a session ID. A live
 check confirmed only for Claude that Orca reports the same session ID that

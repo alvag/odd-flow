@@ -107,19 +107,8 @@ export default function Panel() {
       {answer === null && error === null && <Text muted>Loading workspace state…</Text>}
       {answer !== null && (
         <Stack gap="md">
-          {'path' in answer.script
-            ? <Text>Script: {answer.script.path} ({answer.script.source})</Text>
-            : <Text tone="danger">{answer.script.error}</Text>}
-          <Stack gap="xs">
-            <Heading level={2}>Profiles</Heading>
-            {typeof answer.profiles === 'string'
-              ? <Text tone="danger">{answer.profiles}</Text>
-              : answer.profiles?.profiles.length
-                ? answer.profiles.profiles.map((profile) => (
-                    <Text key={profile.name}>{profile.name}{profile.default ? ' (default)' : ''} — {profile.mode}</Text>
-                  ))
-                : <Text muted>{answer.profiles === null ? 'Profiles unavailable.' : 'No saved profiles.'}</Text>}
-          </Stack>
+          {'error' in answer.script && <Text tone="danger">{answer.script.error}</Text>}
+          {typeof answer.profiles === 'string' && <Text tone="danger">{answer.profiles}</Text>}
           <Stack gap="sm">
             <Heading level={2}>Workspace agents</Heading>
             {answer.workerCheckError && <Text tone="danger">{answer.workerCheckError}</Text>}

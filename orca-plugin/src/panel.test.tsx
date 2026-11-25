@@ -31,8 +31,11 @@ test('shows the focused agents, profile sources, errors, and refreshes on demand
   })
   const view = await mount(panel, { host })
   try {
-    for (const text of [/profile\.py.*profileScript setting/, /Runner.*codex.*working/,
-      /team.*session \(CODEX_THREAD_ID\)/, /full-delegation.*profile team/, /team.*default/, /No session ID/]) {
+    assert.equal(view.find({ text: /settings\/profile\.py/ }), null)
+    assert.equal(view.find({ text: 'Profiles' }), null)
+    assert.equal(view.find({ text: /team \(default\)/ }), null)
+    for (const text of [/Runner.*codex.*working/,
+      /team.*session \(CODEX_THREAD_ID\)/, /full-delegation.*profile team/, /No session ID/]) {
       assert.ok(view.find({ text }), String(text))
     }
     const before = requests
@@ -124,7 +127,7 @@ test('renders a worker as only its task title, agent and state', async () => {
   try {
     const line = 'T5 verify: panel session switching — claude — working'
     const texts = view.findAll({ type: 'Text' })
-    assert.equal(texts.length, 3) // Script, profiles availability, and the worker title.
+    assert.equal(texts.length, 1) // The worker title.
     assert.equal(texts.at(-1)?.text, line)
     assert.equal(view.find({ label: 'Profile' }), null)
     assert.equal(view.find({ label: 'Mode' }), null)
@@ -146,7 +149,7 @@ test('renders a dispatch-only worker using its terminal title and no details or 
   const view = await mount(panel, { host })
   try {
     const texts = view.findAll({ type: 'Text' })
-    assert.equal(texts.length, 3)
+    assert.equal(texts.length, 1)
     assert.equal(texts.at(-1)?.text, 'T5 verify: panel session switching — claude — working')
     assert.equal(view.findAll({ type: 'Select' }).length, 0)
     assert.equal(view.find({ text: 'Reset to defaults' }), null)
