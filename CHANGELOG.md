@@ -14,6 +14,7 @@ This file tracks notable changes to odd-flow. It follows
 - Writers follow the project's conventions, justify additions, use documented build, test and run commands, keep verification proportional, and add only necessary comments. Verifiers use documented commands as written in their probe copy without building a replacement environment.
 - The ODD Flow Orca plugin uses `agent.prompt.before` to append a worker marker to orchestration dispatches, so workers can still be identified if the Orca preamble changes. Reinstalling the plugin requires a new approval.
 - The Orca plugin issues worker token records under `~/.odd-flow/worker-tokens/` by default, or under `$ODD_FLOW_STATE_DIR/worker-tokens/` when set and non-empty. The token must match the marker's role. The first-prompt hook in Claude Code, Codex, and Antigravity removes the record on first use, even when another rule already identifies the worker. Bare markers no longer identify workers.
+- When Engram `mem_save` or `mem_session_summary` fails, the parent saves the same entry with the `engram` CLI and reports a failed save if the CLI is missing.
 
 ## [0.3.0] - 2026-11-25
 
