@@ -11,7 +11,7 @@ Claude Code and Codex plugin for Organic Driven Development (ODD): Engram memory
 | `hooks/hooks.json` | Claude Code hooks: `SessionStart` on startup, resume, clear and compact; `UserPromptSubmit` and `PreToolUse` |
 | `hooks/codex-hooks.json` | Codex hooks: `SessionStart` on startup, resume, clear and compact; `UserPromptSubmit`; `PreToolUse` for `apply_patch`, `spawn_agent` and `Bash` |
 | `scripts/session-start.py` | Injects the core block of the session's mode (`assets/core-block.md` or `assets/core-block-full-delegation.md`) and the active profile into the session |
-| `scripts/prompt-submit.py` | Records a per-session parent or worker marker from the first prompt, recognizing known Orca preambles, a first-line role header, or a trailing `odd-flow-worker: <role> <token>` line from the ODD Flow Orca plugin. The hook consumes a valid, unused token even when another rule already identifies the worker. A bare marker does not identify a worker. In full delegation, restates the coordinator or worker rules on each prompt. Gives coordinators a one-time notice when the effective mode changes, including a switch to organic. |
+| `scripts/prompt-submit.py` | Records a per-session parent or worker marker from the first prompt, recognizing known Orca preambles, a first-line role header, or a trailing `odd-flow-worker: <role> <token>` line from the ODD Flow Orca plugin. The hook accepts only a valid, unused token for that role. The hook consumes a valid, unused token even when another rule already identifies the worker. A bare marker does not identify a worker. The hook rejects a relative `ODD_FLOW_STATE_DIR` and requires `worker-tokens` to be a real directory (not a symlink), mode `0700`, owned by the running user. In full delegation, restates the coordinator or worker rules on each prompt. Gives coordinators a one-time notice when the effective mode changes, including a switch to organic. |
 | `scripts/pre-tool-use.py` | Checks edit surface declarations for supported writer launches in both modes; guards the parent's direct Claude Code edits and direct Codex `apply_patch` calls in full delegation |
 | `.claude-plugin/` | Claude Code plugin manifest and marketplace |
 | `.codex-plugin/plugin.json` | Codex plugin manifest pointing to the shared skill and Codex hooks |
@@ -95,6 +95,8 @@ Not validated live or promised: `write_to_file`, `replace_file_content` and `mul
 The [Orca profiles plugin](orca-plugin/README.md) shows and switches the odd-flow profile and mode of coordinator sessions in the focused workspace without sending a prompt. From this checkout, run `orca plugin dev load orca-plugin --json`, then follow the linked guide to review access, approve, and configure the plugin.
 
 ## Updating
+
+The tokened worker marker requires odd-flow 0.4.0 or newer hooks. Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. With mixed versions, the hooks do not recognize the marker and identify workers by the Orca preamble or first-line `# Role:` rule instead. An older hook leaves the token record to expire and be pruned. The plugin still works with odd-flow 0.3.0 hooks because those fallback rules remain in place.
 
 Claude Code enables auto-update per marketplace. It defaults to on for official marketplaces and off for third-party GitHub marketplaces like `alvag/odd-flow`. To enable it, run `/plugin`, open **Marketplaces**, select **odd-flow**, and turn on auto-update. See [Install and manage plugins](https://code.claude.com/docs/en/plugins/install.md).
 

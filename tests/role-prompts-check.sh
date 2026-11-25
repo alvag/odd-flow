@@ -51,6 +51,7 @@ need "$roles/write.md" "Use the project's documented way to select a test subset
 need "$roles/write.md" 'Never create a new environment, container, database, test harness or tool path when the project has one'
 need "$roles/write.md" "Name the evidence for each thing you build: the user's words, a failing test, an observed failure, or a caller that exists today"
 need "$roles/write.md" 'find the callers of what you touch and fix the shared cause once'
+need "$roles/write.md" "Follow the project's established conventions for configuration (such as environment variables), patterns, structure, naming and code style. A convention decides how to build what a requirement needs, never whether to add it: building a required item the project's way is not unrequested machinery, and each item in the list below still needs a requirement; the convention only picks its form."
 need "$roles/write.md" 'A convention decides how to build what a requirement needs, never whether to add it'
 need "$roles/write.md" 'each item in the list below still needs a requirement'
 grep -qF -- 'The list below applies to additions beyond those conventions' "$roles/write.md" && fail 'write.md: conventions must not exempt additions from the requirement list'

@@ -105,6 +105,8 @@ for session in tokened-dispatch reused-tokened-dispatch; do
   check "$session gives Codex worker context" '[ "$out" = "$worker_line" ]'
   check "$session leaves no Codex token record" '[ ! -e "$ODD_FLOW_STATE_DIR/worker-tokens/$(sha "$token")" ]'
 done
+out=$(run_ps copied-dispatch-marker "\"odd-flow-worker: write $token\"" codex --runtime codex)
+check "copied dispatch marker leaves the new Codex session in coordinator context" '[[ "$out" == "odd-flow mode: full-delegation"* ]]'
 
 out=$(marker_prompt bare-marker "odd-flow-worker: verify")
 check "bare marker leaves Codex coordinator context" '[[ "$out" == "odd-flow mode: full-delegation"* ]]'
@@ -142,6 +144,13 @@ for scenario in quoted-worker unquoted-worker wrapped-parent double-closing; do
     *) check "$scenario leaves Codex coordinator context" '[[ "$out" == "odd-flow mode: full-delegation"* ]]' ;;
   esac
 done
+
+token=00000000000000000000000000000000
+issue "$token" verify 0
+chmod 755 "$ODD_FLOW_STATE_DIR/worker-tokens"
+out=$(marker_prompt loose-worker-tokens "odd-flow-worker: verify $token")
+check "loose worker-tokens directory leaves Codex coordinator context" '[[ "$out" == "odd-flow mode: full-delegation"* ]]'
+check "loose worker-tokens directory keeps the Codex token record" '[ -f "$ODD_FLOW_STATE_DIR/worker-tokens/$(sha "$token")" ]'
 
 printf 'export const value: number = 1;\n' > "$tmp/type-strip-probe.ts"
 if node --input-type=module -e 'await import(process.argv[1])' "$tmp/type-strip-probe.ts" >/dev/null 2>&1; then

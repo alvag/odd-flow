@@ -57,15 +57,28 @@ digest-named records whose numeric `issuedAt` is older than 15 minutes. Records
 it cannot read or parse, records without a numeric `issuedAt`, and other files
 stay.
 
-If an existing `worker-tokens` directory is not mode `0700`, or the plugin
-cannot write the new record, the hook leaves the prompt unchanged. It also
-leaves prompts unchanged outside orchestration, without a matching role, or
-when the last non-empty line already has a tokened marker. A bare marker does
-not stop issuance. If the hook fails or times out, Orca passes the original
-prompt through (`onError` is `"pass"`).
+Both the Orca plugin and the odd-flow prompt hook reject a
+relative `ODD_FLOW_STATE_DIR`. The `worker-tokens` directory must be a real
+directory (not a symlink), mode `0700`, and owned by the running user.
+The Orca plugin checks ownership on platforms that expose the user ID.
+If the plugin cannot issue a token, it leaves the prompt unchanged and logs
+the role, reason, and directory, but not the token.
 
-Orca asks for approval again when the plugin's code changes. Get the user's
-approval before reloading or reinstalling the plugin.
+The plugin also leaves prompts unchanged outside orchestration, without a
+matching role, or when the last non-empty line already has a tokened marker.
+A bare marker does not stop issuance. If the hook fails or times out, Orca
+passes the original prompt through (the default `onError`, `"pass"`).
+
+The tokened marker requires odd-flow 0.4.0 or newer hooks.
+Update the ODD Flow Orca plugin and the odd-flow hooks together
+for Claude Code, Codex, and Antigravity. With mixed versions, the marker is
+not recognized and worker identification
+falls back to the Orca preamble or first-line `# Role:` rule.
+An older hook leaves the record to expire and be pruned. The plugin still
+works with odd-flow 0.3.0 hooks because those fallback rules remain in place.
+
+Orca may ask for approval again when the plugin's code changes. Get the
+user's approval before reloading or reinstalling the plugin.
 
 ## Settings
 
