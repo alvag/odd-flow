@@ -1,7 +1,7 @@
 {
   "manifestVersion": 2,
   "id": "odd-flow-profiles",
-  "name": "odd-flow profiles",
+  "name": "ODD Flow",
   "version": "0.1.0",
   "description": "View and switch the odd-flow profile and mode for agent sessions in the focused workspace.",
   "engines": {
@@ -35,7 +35,7 @@
       {
         "id": "odd-flow-status",
         "text": "odd",
-        "tooltip": "Open the odd-flow profiles panel",
+        "tooltip": "Open the ODD Flow panel",
         "command": "odd-flow.openProfiles"
       }
     ],
@@ -59,7 +59,7 @@
       {
         "key": "pluginKey",
         "title": "Plugin key",
-        "description": "Installed key used to open the profiles panel. Leave blank to detect the single enabled odd-flow profiles plugin.",
+        "description": "Installed key used to open the ODD Flow panel. Leave blank to detect the single enabled ODD Flow plugin.",
         "type": "string",
         "default": ""
       }

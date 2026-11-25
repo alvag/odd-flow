@@ -1,7 +1,7 @@
 # ODD Flow
 
-View and switch odd-flow profiles and modes for agent sessions in Orca's focused
-workspace. The panel changes session bindings without sending an agent prompt.
+Use the ODD Flow panel to view and switch profiles and modes for agent sessions
+in Orca's focused workspace without sending an agent prompt.
 
 ## Load the plugin
 
@@ -49,8 +49,8 @@ Both settings are optional.
   `profile.py` that supports `list --json`, `show --json`, `use`,
   `session-mode`, and `clear`.
 - **`pluginKey`**: Set this to the installed key to use when opening the
-  panel. When blank, the command looks for exactly one installed entry whose
-  key ends in `.odd-flow-profiles` and whose status is a string other than
+  ODD Flow panel. When blank, the command looks for exactly one installed entry
+  whose key ends in `.odd-flow-profiles` and whose status is a string other than
   `disabled`. If there are no matches or several, find the intended key
   with `orca plugin list --json` and set it explicitly. A local load uses
   `local.odd-flow-profiles`.

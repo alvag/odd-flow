@@ -290,7 +290,7 @@ function statusFor({ snapshot, activeDispatches = [] }: StatusSnapshot, panelOpe
     const outdatedShow = rows.map(({ odd }) => odd)
       .find((odd): odd is string => typeof odd === 'string' && odd.startsWith(PROFILE_UPGRADE_PREFIX))
     if (outdatedShow) return warning('odd: show failed', outdatedShow)
-    return { visible: true, tone: 'neutral', text: `odd: ${rows.length} sessions`, tooltip: 'Open the odd-flow profiles panel' }
+    return { visible: true, tone: 'neutral', text: `odd: ${rows.length} sessions`, tooltip: 'Open the ODD Flow panel' }
   }
   const odd = readableShow(rows[0].odd)
   if ('error' in odd) return warning('odd: show failed', odd.error)
@@ -822,7 +822,7 @@ export function createWorker({
           const matches = plugins.filter((entry) => typeof entry?.pluginKey === 'string' &&
             entry.pluginKey.endsWith(`.${PANEL_ID}`) && typeof entry.status === 'string' && entry.status !== 'disabled')
           if (matches.length !== 1) {
-            fail(`Found ${matches.length} enabled odd-flow profiles plugins. Set pluginKey in Orca Settings.`)
+            fail(`Found ${matches.length} enabled ODD Flow plugins. Set pluginKey in Orca Settings.`)
           }
           key = matches[0].pluginKey as string
         }
@@ -836,10 +836,10 @@ export function createWorker({
           panelOpenError = undefined
           await refreshStatus()
         }
-        return 'Opened the odd-flow profiles panel.'
+        return 'Opened the ODD Flow panel.'
       } catch (error) {
         panel.error = diagnostic
-        const detail = `Could not open the odd-flow profiles panel: ${message(error)}`
+        const detail = `Could not open the ODD Flow panel: ${message(error)}`
         if (!signal.aborted) {
           panelOpenError = detail
           await refreshStatus()
