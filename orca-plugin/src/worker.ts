@@ -953,7 +953,7 @@ export function createWorker({
 let stop: (() => void) | undefined
 export default function activate(orca: OrcaWorkerApi): void {
   orca.hooks.on('agent.prompt.before', (event, next) => {
-    const prompt = promptWithWorkerMarker(event)
+    const prompt = promptWithWorkerMarker(event, { stateDir: process.env.ODD_FLOW_STATE_DIR })
     if (prompt !== undefined) return next({ ...event, prompt })
   })
   stop = createWorker()(orca)

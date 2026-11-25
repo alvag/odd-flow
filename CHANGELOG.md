@@ -11,8 +11,9 @@ This file tracks notable changes to odd-flow. It follows
 - Orca placement opens a fresh split pane or tab for each Claude, Codex, and Antigravity worker launch, using the current layout and terminal width.
 - Stops and limits apply only to the work they name; independent authorized work continues.
 - Writers make only the changes the spec requires, reported bugs are reproduced before fixing, and testable changes need observed local proof before a requested push, pull request or deploy.
-- Claude Code, Codex, and Antigravity recognize a trailing `odd-flow-worker: <role>` marker on the first prompt, so Orca dispatches with that marker still identify workers if the preamble changes. The ODD Flow Orca plugin registers an `agent.prompt.before` hook to append the marker. Reinstalling the plugin requires a new approval.
 - Writers follow the project's conventions, justify additions, use documented build, test and run commands, keep verification proportional, and add only necessary comments. Verifiers use documented commands as written in their probe copy without building a replacement environment.
+- The ODD Flow Orca plugin uses `agent.prompt.before` to append a worker marker to orchestration dispatches, so workers can still be identified if the Orca preamble changes. Reinstalling the plugin requires a new approval.
+- The Orca plugin issues worker token records under `~/.odd-flow/worker-tokens/` by default, or under `$ODD_FLOW_STATE_DIR/worker-tokens/` when set and non-empty. The token must match the marker's role. The first-prompt hook in Claude Code, Codex, and Antigravity removes the record on first use, even when another rule already identifies the worker. Bare markers no longer identify workers.
 
 ## [0.3.0] - 2026-11-25
 

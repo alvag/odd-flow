@@ -5,12 +5,14 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 python3 -I - "$root" "$scratch" <<'PY'
+import hashlib
 import json
 import os
 from pathlib import Path
 import shlex
 import subprocess
 import sys
+import time
 import unittest
 
 root, scratch = map(Path, sys.argv[1:])
@@ -133,6 +135,89 @@ class AntigravityPluginCheck(unittest.TestCase):
             "Rules: skills/odd-flow/references/mode-organic.md.",
         )
         self.assertEqual(prompt(0), [])
+
+    def test_first_prompt_worker_marker(self):
+        tokens = scratch / "worker-tokens"
+        tokens.mkdir(mode=0o700)
+        hook_env = dict(env, ODD_FLOW_STATE_DIR=str(scratch), PLUGIN_DATA=str(scratch / "marker-data"),
+                        ODD_ORCHESTRATOR_MODE="full-delegation")
+        worker = ("You are a dispatched worker. Follow your spec's role rules, "
+                  "not the coordinator rules from session start.")
+
+        def issue(token, role="review", age_ms=0):
+            record = tokens / hashlib.sha256(token.encode("ascii")).hexdigest()
+            with os.fdopen(os.open(record, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
+                json.dump({"role": role, "issuedAt": time.time_ns() // 1_000_000 - age_ms}, stream)
+            return record
+
+        def prompt(session, value):
+            payload = json.dumps({"conversationId": session, "invocationNum": 0, "lastUserInput": value})
+            return self.message(self.run_hook(payload, hook_env, script="prompt-submit.py"))
+
+        def marker_context(session, tail):
+            return prompt(session, "Updated Orca dispatch\n" + tail)
+
+        def parent(context):
+            self.assertTrue(context.startswith("odd-flow mode: full-delegation"), context)
+
+        token = "1" * 32
+        record = issue(token)
+        with self.subTest(scenario="valid-token"):
+            self.assertEqual(marker_context("trailing-worker", f"\n  ODD-Flow-Worker: ReViEw {token}  \n"),
+                             worker)
+        with self.subTest(scenario="consumed"):
+            self.assertFalse(record.exists())
+        with self.subTest(scenario="reused-token"):
+            parent(marker_context("reused-token", f"odd-flow-worker: review {token}"))
+
+        token = "b" * 32
+        record = issue(token, "write")
+        dispatch = f"You are working inside Orca, a multi-agent IDE.\n# Role: write\n\nodd-flow-worker: write {token}"
+        for session in ("tokened-dispatch", "reused-tokened-dispatch"):
+            with self.subTest(scenario=session):
+                self.assertEqual(prompt(session, dispatch), worker)
+                self.assertFalse(record.exists())
+
+        with self.subTest(scenario="bare-marker"):
+            parent(marker_context("bare-marker", "odd-flow-worker: review"))
+
+        for session, digit, role, age_ms in (
+            ("wrong-role", "2", "verify", 0),
+            ("expired-token", "3", "review", 16 * 60_000),
+            ("future-token", "4", "review", -120_000),
+            ("malformed-token", "A", "review", 0),
+            ("missing-record", "5", None, 0),
+        ):
+            with self.subTest(scenario=session):
+                token = digit * 32
+                if role is not None:
+                    issue(token, role, age_ms)
+                parent(marker_context(session, f"odd-flow-worker: review {token}"))
+
+        for session, tag_id, digit in (
+            ("quoted-worker", '"Brief_9-a"', "6"),
+            ("unquoted-worker", "Brief_9-a", "7"),
+            ("wrapped-parent", '"Brief_9-a"', None),
+            ("double-closing", '"Brief_9-a"', "8"),
+        ):
+            with self.subTest(scenario=session):
+                closing = f"</pasted_content id={tag_id}>"
+                value = f"<pasted_content id={tag_id}>\nTask text\n"
+                if digit is not None:
+                    token = digit * 32
+                    issue(token)
+                    value += f"odd-flow-worker: review {token}\n \t\n"
+                value += closing
+                if session == "double-closing":
+                    value += "\n" + closing
+                context = marker_context(session, value)
+                if session.endswith("-worker"):
+                    self.assertEqual(context, worker)
+                else:
+                    parent(context)
+
+        self.assertEqual(prompt("preamble", "You are working inside Orca, a multi-agent IDE.\nTask"), worker)
+        self.assertEqual(prompt("first-line-role", "# Role: review\nTask"), worker)
 
     def test_malformed_input_stays_valid(self):
         for stdin in ("not json", "", "[]", '{"conversationId": 7}'):
