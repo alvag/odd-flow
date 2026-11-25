@@ -11,13 +11,13 @@ Claude Code and Codex plugin for Organic Driven Development (ODD): Engram memory
 | `hooks/hooks.json` | Claude Code hooks: `SessionStart` on startup, resume, clear and compact; `UserPromptSubmit` and `PreToolUse` |
 | `hooks/codex-hooks.json` | Codex hooks: `SessionStart` on startup, resume, clear and compact; `UserPromptSubmit`; `PreToolUse` for `apply_patch`, `spawn_agent` and `Bash` |
 | `scripts/session-start.py` | Injects the core block of the session's mode (`assets/core-block.md` or `assets/core-block-full-delegation.md`) and the active profile into the session |
-| `scripts/prompt-submit.py` | Records a per-session parent or worker marker from the first prompt. In full delegation, restates the coordinator or worker rules on each prompt. Gives coordinators a one-time notice when the effective mode changes, including a switch to organic. |
+| `scripts/prompt-submit.py` | Records a per-session parent or worker marker from the first prompt, recognizing known Orca preambles, a first-line role header, or the trailing `odd-flow-worker: <role>` line the ODD Flow Orca plugin appends to orchestration dispatches. In full delegation, restates the coordinator or worker rules on each prompt. Gives coordinators a one-time notice when the effective mode changes, including a switch to organic. |
 | `scripts/pre-tool-use.py` | Checks edit surface declarations for supported writer launches in both modes; guards the parent's direct Claude Code edits and direct Codex `apply_patch` calls in full delegation |
 | `.claude-plugin/` | Claude Code plugin manifest and marketplace |
 | `.codex-plugin/plugin.json` | Codex plugin manifest pointing to the shared skill and Codex hooks |
 | `.agents/plugins/marketplace.json` | Codex marketplace |
 
-In full delegation, the [parent edit guard](skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) checks Claude Code `Edit`, `Write` and `NotebookEdit` calls and Codex direct local `apply_patch` calls. It does not guard `Bash` writes. If Orca changes its preamble and no recognized `# Role:` header starts the prompt, a Claude worker is treated as the parent. The guard covers `Edit`, `Write` and `NotebookEdit` with Code Mode on or off. Code Mode REPL `write()` and `edit()` reach the hook as `Write` and `Edit`.
+In full delegation, the [parent edit guard](skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) checks Claude Code `Edit`, `Write` and `NotebookEdit` calls and Codex direct local `apply_patch` calls. It does not guard `Bash` writes. Without an appended marker (for example, when the ODD Flow Orca plugin is not installed), a worker whose first prompt has neither a recognized Orca preamble nor a first-line role header is treated as the parent. The guard covers `Edit`, `Write` and `NotebookEdit` with Code Mode on or off. Code Mode REPL `write()` and `edit()` reach the hook as `Write` and `Edit`.
 
 ## Install (Claude Code)
 
