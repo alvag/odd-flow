@@ -9,6 +9,7 @@ This file tracks notable changes to odd-flow. It follows
 ### Changed
 
 - Stops and limits apply only to the work they name; independent authorized work continues.
+- Writers make only the changes the spec requires, reported bugs are reproduced before fixing, and testable changes need observed local proof before a requested push, pull request or deploy.
 
 ## [0.3.0] - 2026-11-25
 

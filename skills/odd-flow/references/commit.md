@@ -39,4 +39,4 @@ Load before creating, amending or proposing a commit. Only the parent commits (H
 
 ## Scope of this file
 
-Branching, unit size and recording commits in the feature document live in `tracking.md`. Push, pull requests and merge stay with the user.
+Branching, unit size and recording commits in the feature document live in `tracking.md`. Push, pull requests and merge stay with the user. Before a push, pull request or deploy the user asks for, every testable change it carries has observed local proof; name any without it and ask before pushing.
