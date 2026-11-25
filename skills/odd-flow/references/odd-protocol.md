@@ -61,4 +61,4 @@ Load `tracking.md` and create the feature document before the first source write
 - Report verified outcome, every failed, skipped or pending check, and the next step.
 - Before `Risk: none`, check whether the diff changes code that unrequested behavior also uses; if so, that is item 3.
 - If `Risk:` names a high-risk item, add exactly one line: `Review: done | declined | skipped (<reason>)` (see `review.md` for meanings). With `Risk: none`, omit it.
-- A launched Orca worker is a wait event: end the turn and resume when Orca wakes you. A subagent fallback returns its report to the parent directly. Only a human decision, an explicit stop, a denial, missing consent or an exhausted limit stops the affected work.
+- A launched Orca worker is a wait event: end the turn and resume when Orca wakes you. A subagent fallback returns its report to the parent directly. Only a human decision, an explicit stop, a denial, missing consent or an exhausted limit stops the affected work; independent authorized work continues.
