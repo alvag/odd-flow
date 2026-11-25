@@ -205,7 +205,16 @@ test('switches the selected row, displays saved or failed results, and prevents 
     sessionMode: (input) => { calls.push(input); return { error: 'could not set mode' } },
     clear: (input) => { calls.push(input); return { state: base } }
   } })
-  const view = await mount(panel, { host })
+  let afterRender: (() => void) | undefined
+  const view = await mount({
+    ...panel,
+    default: () => {
+      const tree = panel.default()
+      afterRender?.()
+      afterRender = undefined
+      return tree
+    }
+  }, { host })
   const profile = { label: 'Profile' }
   const mode = { label: 'Mode' }
   const clear = { text: 'Clear session binding' }
@@ -215,13 +224,18 @@ test('switches the selected row, displays saved or failed results, and prevents 
     for (const text of [/next worker launch/i, /next prompt/i, /drops.*mode override/i]) {
       assert.ok(view.find({ text }), String(text))
     }
+    const rendered = new Promise<void>((resolve) => { afterRender = resolve })
     const select = view.select(profile, 'solo')
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    for (const target of [profile, mode, clear]) {
-      assert.equal(view.find(target)?.props.disabled, true)
+    try {
+      // Observe the render without awaiting the selection, which waits for the request to settle.
+      await Promise.race([rendered, select])
+      for (const target of [profile, mode, clear]) {
+        assert.equal(view.find(target)?.props.disabled, true)
+      }
+    } finally {
+      finish()
+      await select
     }
-    finish()
-    await select
     assert.equal(view.valueOf(profile), 'solo')
     assert.ok(view.find({ text: /Profile switched/ }))
     await view.select(mode, 'organic')
@@ -237,7 +251,6 @@ test('switches the selected row, displays saved or failed results, and prevents 
     ])
     assert.deepEqual(view.errors, [])
   } finally {
-    finish()
     await view.unmount()
   }
 })
