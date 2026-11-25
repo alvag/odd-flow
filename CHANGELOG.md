@@ -15,6 +15,9 @@ This file tracks notable changes to odd-flow. It follows
 
 - Before reading worker token records, the first-prompt hook rejects a relative `ODD_FLOW_STATE_DIR` and requires a real `worker-tokens` directory (not a symlink), mode `0700`, owned by the running user.
 - The ODD Flow Orca plugin applies the same directory checks before issuing tokens, checking ownership where the platform exposes the user ID. If issuance fails, it leaves the prompt unchanged and logs the role, reason, and directory without including the token.
+### Fixed
+
+- Orca terminal calls during worker placement time out after 30 seconds so a hung call does not hold the pane lock indefinitely.
 
 ## [0.4.0] - 2026-11-25
 

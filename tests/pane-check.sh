@@ -19,6 +19,10 @@ expect() { # name, expected exit, actual exit, expected output, [expected argv]
 printf '%s\n' \
   '#!/bin/sh' \
   'printf "%s\n" "$@" >>"$ORCA_LOG"' \
+  'if [ "$2" = "${ORCA_HANG:-}" ]; then' \
+  '  if [ "$2" = list ]; then exec sleep 5; fi' \
+  '  sleep 5' \
+  'fi' \
   'case "$1 $2" in' \
   '  "terminal list") cat "$ORCA_LAYOUT" ;;' \
   '  "terminal create")' \
@@ -50,9 +54,11 @@ printf '%s\n' \
   'from pathlib import Path' \
   'from types import SimpleNamespace' \
   'sys.dont_write_bytecode = True' \
-  'script, widths, *args = sys.argv[1:]' \
+  'script, widths, orca_timeout, *args = sys.argv[1:]' \
   'sys.path.insert(0, str(Path(script).parent))' \
   'import pane' \
+  'if orca_timeout:' \
+  '    pane.ORCA_TIMEOUT_SECS = int(orca_timeout)' \
   'samples = iter(widths.split())' \
   'now = 0' \
   'def sleep(seconds):' \
@@ -83,8 +89,8 @@ layout() {
 }
 open_pane() {
   local command=(python3 -I "$P") format=(--json)
-  if [[ -n "${widths+x}" ]]; then
-    command=(python3 -I "$T/sample.py" "$P" "$widths")
+  if [[ -n "${widths+x}${orca_timeout+x}" ]]; then
+    command=(python3 -I "$T/sample.py" "$P" "${widths-}" "${orca_timeout-}")
   fi
   if [[ -n "${text_output+x}" ]]; then
     format=()
@@ -95,6 +101,7 @@ open_pane() {
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
+    ORCA_HANG="${hang-}" \
     "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
 }
 calls() {
@@ -168,6 +175,30 @@ expect "non-JSON tab create reply warns that a terminal may have opened" 1 "$ec"
 out=$(fail_create=nohandle open_pane --role verify --cols 118); ec=$?
 expect "tab create reply without a handle warns that a terminal may have opened" 1 "$ec" \
   'missing terminal handle. A terminal may have opened' "$list_call$tab_call"$'\n\nend argv'
+
+out=$(hang=list orca_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "list timeout stops placement" 1 "$ec" \
+  'odd-flow: Orca terminal list: timed out (limit: 1s)' "$list_call"$'\n\nend argv'
+
+started=$SECONDS
+out=$(hang=create orca_timeout=1 open_pane --role verify --cols 118); ec=$?
+if (( SECONDS - started >= 4 )); then
+  out="Exceeded the 4-second bound: $out"
+  ec=99
+fi
+expect "create timeout does not wait for a child holding the output pipe" 1 "$ec" \
+  'Orca terminal create: timed out (limit: 1s). A terminal may have opened. Check terminal list and close it.' \
+  "$list_call$tab_call"$'\n\nend argv'
+
+out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "split timeout warns that a pane may have opened" 1 "$ec" \
+  'Orca terminal split: timed out (limit: 1s). A pane may have opened. Check terminal list and close it.' \
+  "$list_call$right_call"$'\n\nend argv'
+
+out=$(hang=set-pane-title orca_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "title timeout preserves the opened pane and reports a title error" 0 "$ec" \
+  '"title_error": "Orca terminal set-pane-title: timed out (limit: 1s)"' \
+  "$list_call$right_call$title_call"$'\n\nend argv'
 
 out=$(widths='81 165' settle_ms=100 open_pane --role verify); ec=$?
 expect "width settles under lock: split right using the new width" 0 "$ec" \
