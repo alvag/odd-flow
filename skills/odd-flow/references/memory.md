@@ -49,6 +49,16 @@ When a code-execution tool is available (for example, Claude Code's Code Mode RE
 
 At a significant close or handoff, call `mem_session_summary` (goal, discoveries, accomplished, next steps, relevant files).
 
+## When `mem_save` fails
+
+If `mem_save` or `mem_session_summary` fails, for example with "multiple active runtime sessions match" while a Claude worker with the Engram plugin is live, save the same entry with the `engram` CLI:
+
+1. Do the topic lookup above with `mem_search` and `mem_get_observation`; they take no `session_id`, so the failure does not affect them. `engram search` prints only previews and cannot replace `mem_get_observation`.
+2. Write the full entry to a scratch file outside the workspace. `engram save` on an existing `topic_key` replaces the whole content, so the file holds the merged text with every still-valid fact.
+3. Run `engram save "<title>" "$(cat <scratch file>)" --project <project> --type <type> --topic <topic_key>`. Put only the file read inside `$(...)`: an `engram` command there can write the CLI usage text into the record. For a session summary, use `--type session_summary` without `--topic`.
+4. The CLI returns no `judgment_required` and records no conflict candidates, so the lookup in step 1 is the only overlap check.
+5. If the `engram` CLI is missing or its save fails, report that the save failed; do not try another path.
+
 ## Conflicts after a save
 
 A save can return `judgment_required` with `candidates`, existing entries that may overlap the new one. Resolve them before the final message:

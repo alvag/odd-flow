@@ -67,6 +67,11 @@ has "memory: review needs project" 'Never call `mem_review` without the resolved
 has "memory: mark_reviewed needs user confirmation" 'Call `mem_review` with `action: mark_reviewed` only after the user confirms the memory still holds.' "$mem"
 has "memory: worker learnings are saved by the parent" 'After accepting a worker report, save its `learnings` using this topic workflow. Drop entries without evidence.' "$mem"
 has "memory: failed lookup is not absence" 'A failed or ambiguous lookup does not establish absence.' "$mem"
+has "memory: CLI save command" 'engram save "<title>" "$(cat <scratch file>)" --project <project> --type <type> --topic <topic_key>' "$mem"
+has "memory: CLI replaces whole content" 'on an existing `topic_key` replaces the whole content' "$mem"
+has "memory: only the file read in command substitution" 'Put only the file read inside `$(...)`' "$mem"
+has "memory: no CLI conflict check" 'returns no `judgment_required` and records no conflict candidates' "$mem"
+has "memory: report missing CLI" 'If the `engram` CLI is missing or its save fails, report that the save failed; do not try another path.' "$mem"
 
 out=$(hook prompt-submit.py '{"session_id":"s2","prompt":"hi"}' | ctx)
 has "full delegation prompts get the per-turn mode line" "odd-flow mode: full-delegation" "$out"
