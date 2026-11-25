@@ -1,64 +1,166 @@
 # odd-flow profiles
 
-This Orca sidebar panel shows the active odd-flow profile and mode for non-worker
-sessions in the focused workspace, including where each value came from. It also
-lists saved profiles. Use **Refresh** to re-read the values. The panel also
-refreshes when agent status or the focused workspace changes.
+View and switch odd-flow profiles and modes for agent sessions in Orca's focused
+workspace. The panel changes session bindings without sending an agent prompt.
 
-Dispatched workers appear as `<title> — <agent> — <state>`, using the task title
-when Orca provides one and the terminal title otherwise. A row is a worker if
-Orca reports a task or any local dispatch matches its terminal, regardless of
-dispatch state. The panel does not read profile details for worker rows or let
-you change their bindings. If the dispatch list is unavailable, the panel shows
-the error and keeps the agent titles visible without controls.
+## Load the plugin
 
-For a non-worker Claude, Codex, or Antigravity row with a reported session ID:
+Use Orca 1.4.259 or newer and make `python3` available to Orca. From this
+repository's root on the Orca host, load the checkout as a development folder:
 
-- **Profile** switches the profile for the next worker launch. Binding a profile
-  also drops the session's mode override.
-- **Mode** sets the session to `organic` or `full-delegation`. The agent picks up
-  the change on its next prompt.
-- **Clear session binding** removes both overrides, so the row returns to the
-  file default or to odd-flow's fallback if no default is configured.
+```sh
+orca plugin dev load orca-plugin --json
+```
 
-The panel does not send an agent prompt. It changes only session bindings, not
-`profiles.json`, saved profiles, or the file default.
+Review the access Orca reports. Only if you trust the plugin code and the
+Python script it will run, repeat the command with the fingerprint Orca returned:
 
-## Status bar and commands
+```sh
+orca plugin dev load orca-plugin --json --approve <fingerprint>
+```
 
-- The status bar shows `odd: <profile> · <mode>` for a single coordinator
-  (hover to see where both values came from), or `odd: <n> sessions` for
-  several. It is hidden when there are no coordinators and reports dispatch,
-  script, and profile lookup errors. Agent and workspace events, panel changes,
-  and a 15-second fallback keep it current.
-- **odd-flow: Open profiles panel** opens the panel from the command palette,
-  the status bar, or **Mod+Alt+Shift+O** (Cmd on macOS, Ctrl elsewhere). The
-  command looks up the single enabled plugin with a key ending in
-  `.odd-flow-profiles`. If none or more than one match, set `pluginKey` in the
-  plugin's Orca settings to the installed key you want to open.
-- **odd-flow: Toggle mode** switches the active mode for a single coordinator.
-  If there are zero or several coordinators, or the worker check is unavailable,
-  it opens the panel instead. Pick a different profile in the panel.
+For a regular install, use `orca plugin install ./orca-plugin --json` and
+repeat that command with the returned fingerprint after reviewing the access.
+Orca also supports GitHub tree URLs that point to the plugin folder and catalog
+entries that set `source.path` to `orca-plugin`.
 
-## Profile script
+The manifest requests `agent:read` for agent status events and
+`workspace:read` to list agents in the focused workspace and receive
+workspace change events. `settings:own` allows the plugin to read and
+change its own settings; the plugin uses it to read the values below.
+It uses `trusted-worker` execution: Node, the Orca CLI, and the selected Python
+script run with your account's access on the Orca host. The status item and
+commands add no capability grants. In a live dev-folder run, changing only
+worker code put the plugin back into pending approval (`needsReconsent`) with
+a new fingerprint, despite Orca's approval text saying later code edits don't
+need re-approval. If that happens, review the access again and use the new
+fingerprint.
 
-By default the worker looks for `profile.py` in the newest semver directory in the
-Claude odd-flow cache, then the Codex cache, then the Antigravity plugin directory
-under `~/.gemini/config/plugins/odd-flow`. In the plugin's Orca settings, set
-`profileScript` to the **absolute path** of a trusted `profile.py` to override
-discovery. The script must support `list --json`, `show --json`, `use`,
-`session-mode`, and `clear`. The worker validates the target against Orca's
-current agent list and rechecks local dispatches before running Python for a
-mutation. The worker looks for the Orca executable at `ORCA_CLI_COMMAND` (an
-absolute file path), on `PATH`, then in
-`/Applications/Orca.app/Contents/Resources/bin/orca`. It runs the read-only
-`orca orchestration worker-list --environment local --json` command with a
-five-second timeout per page and a 60-second cap per scan. The first scan
-reads all pages. Later scans start at the newest page and stop after reading
-a page with a known dispatch ID. The cache stays in the worker process's
-memory and is rebuilt on restart. A failed scan leaves the cache unchanged
-and blocks profile reads and mutations for that request. The worker invokes
-both Orca and `python3` directly with argument arrays, without a shell.
+## Settings
+
+Set these values in the plugin's Orca settings.
+
+- **`profileScript`**: Set this to the absolute path of
+  `skills/odd-flow/scripts/profile.py` in a trusted checkout. The script must
+  support `list --json`, `show --json`, `use`, `session-mode`, and `clear`.
+  The installed odd-flow 0.2.0 script lacks both JSON flags; point Orca at
+  the checkout until a release includes them. When this setting is blank,
+  the plugin checks the newest semver directory in
+  the Claude cache, then the Codex cache, then the Antigravity installation
+  under `~/.gemini/config/plugins/odd-flow`. The panel shows the path and
+  source it selected.
+- **`pluginKey`**: Set this to the installed key to use when opening the
+  panel. When blank, the command looks for exactly one installed entry whose
+  key ends in `.odd-flow-profiles` and whose status is a string other than
+  `disabled`. If there are no matches or several, find the intended key
+  with `orca plugin list --json` and set it explicitly. A local load uses
+  `local.odd-flow-profiles`.
+
+## Use the panel
+
+Run **odd-flow: Open profiles panel** from the command palette, press
+**Mod+Alt+Shift+O** (Mod is Cmd on macOS and Ctrl elsewhere), or click the
+odd-flow status item. All three open the same sidebar panel without
+changing a binding.
+
+The panel lists saved profiles and shows the current profile, mode, and
+sources for non-worker sessions. It refreshes on agent status and workspace
+changes. Use **Refresh** to re-read values on demand.
+
+The controls below require a non-worker session with a session ID. A live
+check confirmed only for Claude that Orca reports the same session ID that
+`profile.py` uses. Codex and Antigravity rows are expected to work but have
+not been tested live.
+
+| Control | What changes | When it applies |
+|---|---|---|
+| **Profile** | Binds a saved profile and drops any session mode override, so the new profile's mode applies. | The next worker launch uses the new profile. If the effective mode changes, the agent picks it up on its next prompt. |
+| **Mode** | Sets a session-only override to `organic` or `full-delegation` without changing the profile. | The agent picks it up on its next prompt. |
+| **Clear session binding** | Removes both session overrides. The panel shows the file default, or odd-flow's fallback if no default is configured. | The next worker launch uses the resolved profile; any effective mode change reaches the agent on its next prompt. |
+
+With the updated odd-flow runtime hooks, the next prompt in a coordinator
+session gets a one-time notice when the effective mode differs from the last
+recorded mode. The notice tells the agent that the previous mode's rules no
+longer apply. Switching does not interrupt a running turn or change an
+already launched worker.
+
+Workers appear as a title line only: `<title> — <agent> — <state>`. The
+panel uses the task title if Orca provides one, otherwise the terminal
+title when available. Orca can leave `agents.list`'s `task` field null for
+terminal workers, so the plugin checks the local dispatch list too. Any
+matching dispatch terminal counts, regardless of dispatch state. Worker
+rows have no profile details or controls. If the dispatch check fails,
+the panel shows the error and leaves only the title lines; the worker
+blocks profile reads and binding changes rather than guessing.
+
+The plugin revalidates the target session and dispatches before a write.
+It changes odd-flow bindings only through `profile.py use`,
+`profile.py session-mode`, and `profile.py clear`. It never edits
+`profiles.json`, creates or changes saved profiles, sets the file default,
+sends a prompt, or launches an agent.
+
+## Status bar and mode shortcut
+
+- With one coordinator in the focused workspace, the status shows
+  `odd: <profile> · <mode>`; hover to see the sources. With several it
+  shows `odd: <n> sessions`. With none it is hidden unless a workspace
+  read or worker check fails. It can also show script, profile lookup, and
+  panel-open errors. Agent and workspace events, binding changes, and a
+  15-second fallback refresh the item.
+- **odd-flow: Toggle mode** flips the mode only when there is exactly one
+  supported non-worker session with a session ID in the focused workspace.
+  It switches the session override, so the same next-prompt timing applies.
+  With zero or several eligible sessions, an unavailable worker check, or
+  a target that no longer qualifies on re-check, it opens the panel
+  instead. A workspace read or current-mode lookup error is reported
+  rather than changing the mode. Pick profiles in the panel.
+- Orca caps status text at 64 UTF-16 code units and tooltips at 256. The
+  plugin truncates longer values with an ellipsis. Orca displays line
+  breaks in both fields as spaces.
+
+## Troubleshoot
+
+- For `unrecognized arguments: --json`, check the **Script** line in the
+  panel and set `profileScript` to the checkout copy described above.
+- For a worker-check error, inspect the panel error or status tooltip.
+  The worker looks for `orca` at an absolute file path in `ORCA_CLI_COMMAND`,
+  on `PATH`, then at
+  `/Applications/Orca.app/Contents/Resources/bin/orca`. It runs the read-only
+  `orca orchestration worker-list --environment local --json`. Missing,
+  invalid, Run-scoped, or timed-out results block profile reads and changes.
+- If the command or shortcut appears to do nothing, check the worker logs
+  for the local install (substitute the installed key if different):
+
+  ```sh
+  orca plugin logs local.odd-flow-profiles --json
+  ```
+
+  `odd-flow.openProfiles started` or `odd-flow.toggleMode started` means
+  the worker received the command. The matching `ended: success` or
+  `ended: error` line reports its result; `(aborted)` marks cancellation.
+  - For **Toggle mode**, `switched to <mode>` reports a successful mode
+    write. `opened panel (<reason>)` and `could not open panel (<reason>)`
+    report whether a fallback opened the panel, not a mode switch.
+  - `could not read workspace state`, `could not read current mode`, and
+    `could not switch to <mode>` identify the failed toggle step.
+  - Panel-open attempts log `keySource=setting` for an explicit key,
+    `keySource=detected` for discovery, or `keySource=unresolved` if the
+    command failed before choosing a source. The key field is `key=<key>`
+    (shortened if needed), `key=unresolved` if no key was selected, or
+    `key=[redacted]` if the key is unsafe to log. Failures report a stage or
+    local validation error, not raw CLI output.
+  - `Command signal was aborted.` confirms cancellation; the log omits the
+    branch, fallback reason, and panel error in that case.
+
+  You can also try opening the local panel directly to see the CLI result:
+
+  ```sh
+  orca plugin open local.odd-flow-profiles --panel odd-flow-profiles --json
+  ```
+
+  `Could not update odd-flow status:` means Orca rejected a status update,
+  not that the command itself failed. The reason is shortened or redacted
+  when needed.
 
 ## Develop
 
@@ -68,14 +170,16 @@ From the repository root:
 orca plugin validate orca-plugin --json
 orca plugin test orca-plugin --json
 orca plugin check orca-plugin --json
-orca plugin dev watch orca-plugin --json
 ```
 
-`dev watch` loads the plugin and needs your approval. It asks for **trusted
-worker** execution, which runs Node, the Orca CLI, and the configured Python
-script with your user account's access on the Orca host, plus `agent:read` and `workspace:read`
-for the focused workspace's agents and events, and `settings:own` for its own
-settings. This version adds commands, a shortcut, status bar and event
-subscriptions, so Orca requires a new approval. Only approve code and script
-paths you trust. Press Ctrl-C to end the
-watch. Orca generates local typings under `.orca/`; do not commit them.
+Use the development load and approval steps above to try the panel live.
+For a stream of reloads and logs, use `orca plugin dev watch orca-plugin --json`
+with the same approval procedure if Orca asks. Press Ctrl-C to stop the watch.
+Orca generates local typings under `.orca/`; do not commit them.
+
+The worker invokes Orca and Python directly with argument arrays, without
+a shell. The dispatch cache lives in the worker process. A cold scan reads
+all pages; later scans start at the newest page and stop after processing a
+page with a known dispatch ID. Each page has up to five seconds, with a
+60-second cap per scan. Failed scans do not advance the cache; restarting
+the worker clears it.

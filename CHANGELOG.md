@@ -6,6 +6,12 @@ This file tracks notable changes to odd-flow. It follows
 
 ## [Unreleased]
 
+### Added
+
+- `profile.py list --json` and `profile.py show --json` for tools that read saved profiles and effective session settings.
+- A one-time notice on the next coordinator prompt when the effective mode changes, so the previous mode's rules no longer apply.
+- An [Orca profiles plugin](orca-plugin/README.md) with a sidebar panel for switching session profiles and modes, a status bar item, and commands to open the panel or toggle a sole coordinator's mode. Worker rows are read-only and show only their title line.
+
 ## [0.2.0] - 2026-11-24
 
 ### Added
