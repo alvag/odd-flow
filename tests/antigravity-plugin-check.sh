@@ -39,9 +39,9 @@ def set_session_mode(mode):
 
 
 class AntigravityPluginCheck(unittest.TestCase):
-    def run_hook(self, stdin, hook_env=env, cwd=root):
+    def run_hook(self, stdin, hook_env=env, cwd=root, script="session-start.py"):
         result = subprocess.run(
-            [sys.executable, "-I", "./scripts/session-start.py", "--runtime", "antigravity"],
+            [sys.executable, "-I", f"./scripts/{script}", "--runtime", "antigravity"],
             input=stdin, env=hook_env, cwd=cwd, check=True, capture_output=True, text=True,
         )
         self.assertEqual(result.stderr, "")
@@ -107,6 +107,32 @@ class AntigravityPluginCheck(unittest.TestCase):
     def test_ignores_foreign_plugin_roots(self):
         text = self.message(self.run_hook(json.dumps({"conversationId": conversation})))
         self.assertNotIn("core block unavailable", text)
+
+    def test_mode_switch_on_first_invocation_only(self):
+        hook_env = dict(env, PLUGIN_DATA=str(scratch / "data"))
+
+        def prompt(number):
+            return self.run_hook(json.dumps({
+                "conversationId": conversation, "invocationNum": number, "lastUserInput": "hello",
+            }), hook_env, script="prompt-submit.py")
+
+        set_session_mode("full-delegation")
+        self.run_hook(json.dumps({"conversationId": conversation, "source": "startup"}), hook_env)
+        self.assertEqual(
+            self.message(prompt(0)),
+            "odd-flow mode: full-delegation (session (ANTIGRAVITY_CONVERSATION_ID)). "
+            "The parent coordinates and writes only what the mode file lists; bounded writers "
+            "make all other workspace changes. Rules: skills/odd-flow/references/mode-full-delegation.md.",
+        )
+        set_session_mode("organic")
+        self.assertEqual(prompt(1), [])
+        self.assertEqual(
+            self.message(prompt(0)),
+            "odd-flow mode changed to organic (session (ANTIGRAVITY_CONVERSATION_ID)); "
+            "the session-start full-delegation rules no longer apply. "
+            "Rules: skills/odd-flow/references/mode-organic.md.",
+        )
+        self.assertEqual(prompt(0), [])
 
     def test_malformed_input_stays_valid(self):
         for stdin in ("not json", "", "[]", '{"conversationId": 7}'):

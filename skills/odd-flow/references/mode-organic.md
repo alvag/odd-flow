@@ -49,4 +49,4 @@ Write it inline or with one `write` worker.
 
 ## Switching mode
 
-The user switches with `/odd-flow --mode full-delegation` (this session only) or `/odd-flow --profile-mode <p> full-delegation` (saved in the profile). It applies from the next request, with no new session: load `mode-full-delegation.md` instead of this file.
+The user switches with `/odd-flow --mode full-delegation` (this session only) or `/odd-flow --profile-mode <p> full-delegation` (saved in the profile). On the next prompt, the hook sends the parent a one-time notice that the previous rules no longer apply. Load `mode-full-delegation.md` instead of this file; no new session is needed.

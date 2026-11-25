@@ -18,7 +18,7 @@ You are a coordinator: you never implement.
 
 ## Worker prompt context
 
-In Claude Code, Codex and Antigravity, the prompt hook marks a session as a worker when its first prompt starts with a known Orca dispatch preamble or a recognized `# Role:` header. Starting with that prompt, full-delegation workers get a reminder to follow their spec's role rules instead of the coordinator rules from session start. Parent sessions and sessions without a marker keep the coordinator reminder. Organic sessions get no additional context. In Antigravity, the `PreInvocation` hook reads `conversationId` and `lastUserInput`, stores the marker under `PLUGIN_DATA`, and injects the reminder only on the first invocation of each turn (`invocationNum == 0`; the counter is 0-indexed in `agy` 1.5.16, and the default is `0` when `invocationNum` is omitted or `None`); other invocations (1, 2, ...), organic sessions and malformed input get an empty `injectSteps`.
+In Claude Code, Codex and Antigravity, the prompt hook marks a session as a worker when its first prompt starts with a known Orca dispatch preamble or a recognized `# Role:` header. Starting with that prompt, full-delegation workers get a reminder to follow their spec's role rules instead of the coordinator rules from session start. Parent sessions and sessions without a marker keep the coordinator reminder. Organic sessions get no context except the one-time mode-change notice for parents. In Antigravity, the `PreInvocation` hook reads `conversationId` and `lastUserInput`, stores the marker under `PLUGIN_DATA`, and injects context only on the first invocation of each turn (`invocationNum == 0`; the counter is 0-indexed in `agy` 1.5.16, and the default is `0` when `invocationNum` is omitted or `None`); other invocations (1, 2, ...) and malformed input get an empty `injectSteps`.
 
 ## Parent edit guard
 
@@ -64,4 +64,4 @@ One `write` worker writes it, with the corrected findings as its spec and the ca
 
 ## Switching mode
 
-The user switches with `/odd-flow --mode organic` (this session only) or `/odd-flow --profile-mode <p> organic` (saved in the profile). It applies from the next request, with no new session: load `mode-organic.md` instead of this file.
+The user switches with `/odd-flow --mode organic` (this session only) or `/odd-flow --profile-mode <p> organic` (saved in the profile). On the next prompt, the hook sends the parent a one-time notice that the previous rules no longer apply. Load `mode-organic.md` instead of this file; no new session is needed.

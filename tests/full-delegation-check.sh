@@ -73,6 +73,38 @@ has "full delegation prompts get the per-turn mode line" "odd-flow mode: full-de
 has "per-turn line names the rules file" "references/mode-full-delegation.md" "$out"
 has "per-turn line keeps parent writes to the closed list" "The parent coordinates and writes only what the mode file lists; bounded writers make all other workspace changes." "$out"
 
+# --- replay a mid-session mode switch on Claude ---
+full_line="$out"
+data="$T/claude-data"
+sid='{"session_id":"claude-switch","prompt":"hi"}'
+marker="$data/session-modes/$(printf claude-switch | shasum -a 256 | cut -d' ' -f1)"
+switch_line='odd-flow mode changed to organic (session (CLAUDE_CODE_SESSION_ID)); the session-start full-delegation rules no longer apply. Rules: skills/odd-flow/references/mode-organic.md.'
+recorded=true
+for source in startup resume clear compact; do
+  hook session-start.py "{\"source\":\"$source\",\"session_id\":\"claude-switch\"}" ODD_PROFILE=B CLAUDE_PLUGIN_DATA="$data" >/dev/null
+  [[ -f "$marker" && "$(cat "$marker")" == organic ]] || recorded=false
+  hook session-start.py "{\"source\":\"$source\",\"session_id\":\"claude-switch\"}" CLAUDE_PLUGIN_DATA="$data" >/dev/null
+  [[ -f "$marker" && "$(cat "$marker")" == full-delegation ]] || recorded=false
+done
+$recorded && ok "Claude SessionStart overwrites the mode for every source" || ko "Claude SessionStart overwrites the mode for every source"
+out=$(hook prompt-submit.py "$sid" CLAUDE_PLUGIN_DATA="$data" | ctx)
+[[ "$out" == "$full_line" ]] && ok "unchanged Claude mode preserves exactly the per-turn line" || ko "unchanged Claude mode preserves exactly the per-turn line" "$out"
+hook session-start.py '{"source":"startup","session_id":"worker"}' CLAUDE_PLUGIN_DATA="$data" >/dev/null
+hook prompt-submit.py '{"session_id":"worker","prompt":"# Role: write"}' CLAUDE_PLUGIN_DATA="$data" >/dev/null
+
+env -i HOME="$HOME" PATH="$PATH" ODD_FLOW_HOME="$T" CLAUDE_CODE_SESSION_ID=claude-switch \
+  python3 -I "$S/scripts/profile.py" session-mode organic >/dev/null
+out=$(hook prompt-submit.py "$sid" CLAUDE_PLUGIN_DATA="$data" | ctx)
+[[ "$out" == "$switch_line" ]] && ok "Claude organic switch emits exactly the notice" || ko "Claude organic switch emits exactly the notice" "$out"
+out=$(hook prompt-submit.py "$sid" CLAUDE_PLUGIN_DATA="$data")
+[[ -z "$out" ]] && ok "Claude organic notice does not repeat" || ko "Claude organic notice does not repeat" "$out"
+out=$(hook prompt-submit.py '{"session_id":"worker","prompt":"hi"}' ODD_ORCHESTRATOR_MODE=organic CLAUDE_PLUGIN_DATA="$data")
+[[ -z "$out" ]] && ok "Claude worker gets no mode-change notice" || ko "Claude worker gets no mode-change notice" "$out"
+out=$(hook prompt-submit.py "$sid" ODD_ORCHESTRATOR_MODE=full-delegation CLAUDE_PLUGIN_DATA="$data" | ctx)
+back_line='odd-flow mode changed to full-delegation (env ODD_ORCHESTRATOR_MODE); the session-start organic rules no longer apply. Rules: skills/odd-flow/references/mode-full-delegation.md.'
+env_full_line=${full_line/'(profile A)'/'(env ODD_ORCHESTRATOR_MODE)'}
+[[ "$out" == "$back_line"$'\n'"$env_full_line" ]] && ok "Claude full switch adds one notice before the per-turn line" || ko "Claude full switch adds one notice before the per-turn line" "$out"
+
 out=$(hook session-start.py '{"source":"startup","session_id":"s3"}' ODD_ORCHESTRATOR_MODE=bogus | ctx)
 has "unresolved mode falls back to organic and says so" "mode unresolved" "$out"
 out=$(hook prompt-submit.py '{"session_id":"s3"}' ODD_ORCHESTRATOR_MODE=bogus); ec=$?

@@ -27,6 +27,28 @@ worker_line="You are a dispatched worker. Follow your spec's role rules, not the
 context=$(printf '%s' "$out" | python3 -I -c 'import json, sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])')
 check "claude full delegation worker gets role context" '[ "$context" = "$worker_line" ]'
 
+switch_hook() {
+  local script=$1
+  shift
+  printf '{"session_id":"codex-switch","source":"resume","prompt":"hello"}\n' |
+    PLUGIN_ROOT="$root" PLUGIN_DATA="$tmp/switch" CLAUDE_PLUGIN_DATA="$tmp/wrong" \
+    env "$@" python3 -I "$root/scripts/$script" --runtime codex
+}
+codex_context() {
+  python3 -I -c 'import json, sys; output = json.load(sys.stdin)["hookSpecificOutput"]; assert output["hookEventName"] == "UserPromptSubmit"; print(output["additionalContext"])'
+}
+mode_marker="$tmp/switch/session-modes/$(sha codex-switch)"
+switch_hook session-start.py ODD_ORCHESTRATOR_MODE=full-delegation >/dev/null
+check "Codex SessionStart records under PLUGIN_DATA" '[[ -f "$mode_marker" && "$(cat "$mode_marker")" == full-delegation && ! -e "$tmp/wrong" ]]'
+out=$(switch_hook prompt-submit.py | codex_context)
+check "Codex organic switch emits exactly the notice" '[ "$out" = "odd-flow mode changed to organic (default); the session-start full-delegation rules no longer apply. Rules: skills/odd-flow/references/mode-organic.md." ]'
+out=$(switch_hook prompt-submit.py | codex_context)
+check "Codex organic notice does not repeat" '[ -z "$out" ]'
+seed="$tmp/seed"
+out=$(printf '{"session_id":"codex-seed","prompt":"hello"}\n' | PLUGIN_DATA="$seed" python3 -I "$root/scripts/prompt-submit.py" --runtime codex | codex_context)
+mode_marker="$seed/session-modes/$(sha codex-seed)"
+check "first Codex prompt seeds missing mode without a notice" '[[ -z "$out" && -f "$mode_marker" && "$(cat "$mode_marker")" == organic ]]'
+
 run_ps() {
   local session=$1 prompt=$2 data=$3
   shift 3
