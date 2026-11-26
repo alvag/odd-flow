@@ -241,6 +241,19 @@ if [ "$(id -u)" -ne 0 ]; then
     [ -f "$U/sessions/s1.json" ] && { pass=$((pass+1)); echo "PASS clear $mode leaves s1.json"; } || { fail=$((fail+1)); echo "FAIL clear $mode removed s1.json"; }
   done
 
+  chmod 500 "$U/sessions"
+  ARGS="use minimal"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$U"); ec=$?
+  chmod 700 "$U/sessions"
+  expect "use on read-only sessions dir fails explicitly" "odd-flow: cannot write session binding:" "$out" 2 $ec
+
+  data="$HOME/.claude/plugins/data"
+  mkdir -p "$data/odd-flow-one" "$data/odd-flow-two"
+  chmod 400 "$data"
+  ARGS="prune"; out=$(run CLAUDE_CONFIG_DIR="$HOME/.claude"); ec=$?
+  chmod 700 "$data"
+  expected="odd-flow: $data: cannot discover plugin data: [Errno 13] Permission denied: '$data'"
+  expect "prune reports a non-searchable Claude data root once" "$prune_zero"$'\n'"$expected" "$out" 2 $ec exact
+
   # prune: unreadable home, unreadable sessions dir, read-only sessions dir with an expired binding
   PR="$T/prune"; mkdir -p "$PR/sessions"; touch -t 202001010000 "$PR/sessions/old.json"
   chmod 000 "$PR"
@@ -272,6 +285,27 @@ if [ "$(id -u)" -ne 0 ]; then
 else
   echo "SKIP unreadable-state checks (running as root)"
 fi
+
+for capability in O_DIRECTORY dir_fd; do
+  out=$(env -i HOME="$HOME" PATH="$PATH" ODD_FLOW_HOME="$T" python3 -I - "$P" "$capability" 2>&1 <<'PY'
+import os
+import runpy
+import sys
+from unittest.mock import patch
+
+script, capability = sys.argv[1:]
+sys.argv = [script, "prune"]
+if capability == "O_DIRECTORY":
+    del os.O_DIRECTORY
+    runpy.run_path(script, run_name="__main__")
+else:
+    os.supports_dir_fd.clear()
+    with patch.object(os, "lstat", side_effect=NotImplementedError("dir_fd unavailable")):
+        runpy.run_path(script, run_name="__main__")
+PY
+  ); ec=$?
+  expect "prune rejects missing $capability support" "odd-flow: prune requires O_DIRECTORY and directory file descriptor support" "$out" 2 $ec exact
+done
 
 # not-a-directory / is-a-directory state fails explicitly (no root-sensitive permissions needed)
 NF="$T/homefile"; : > "$NF"

@@ -399,7 +399,10 @@ def cmd_use(args):
         known = ", ".join(sorted(doc["profiles"])) or "none"
         raise ProfileError(f"profile '{args.name}' is not defined in {doc['path']} (known: {known})")
     # Binding a profile drops a session mode override, so the new profile's own mode applies.
-    var = write_session({"profile": args.name})
+    try:
+        var = write_session({"profile": args.name})
+    except OSError as exc:
+        raise ProfileError(f"cannot write session binding: {exc}") from exc
     note = " (bound to the Orca pane, not the conversation)" if var == "ORCA_PANE_KEY" else ""
     print(f"profile: {args.name} bound to this session via {var}{note}")
     print(mode_line(doc, args.name))
@@ -818,15 +821,16 @@ def discover_plugin_data_dirs(*, errors=None):
     roots = [home / ".claude", codex_config]
     if claude_config:
         roots.insert(0, Path(claude_config))
-    roots = [(root / "plugins/data", False) for root in roots]
-    roots.append((home / ".gemini/antigravity-cli/plugin_data", True))
+    roots = [(root.absolute() / "plugins/data", False) for root in roots]
+    roots.append((home.absolute() / ".gemini/antigravity-cli/plugin_data", True))
     found = set()
-    for root, antigravity in roots:
-        root = root.absolute()
+    for root, antigravity in dict.fromkeys(roots):
         try:
             with _open_state_dir(root) as fd:
                 if fd is None:
                     continue
+                # A readable root can still deny lookup of every entry.
+                os.lstat(".", dir_fd=fd)
                 for entry in os.listdir(fd):
                     if not (entry == "odd-flow" if antigravity else entry.startswith("odd-flow-")):
                         continue
@@ -926,6 +930,11 @@ def prune_session_state(data_dirs, cutoff, *, errors=None):
 
 
 def cmd_prune(args):
+    # Older Python versions advertise lstat's dir_fd support under stat.
+    if (not hasattr(os, "O_DIRECTORY")
+            or not {os.open, os.stat, os.unlink} <= os.supports_dir_fd
+            or os.listdir not in os.supports_fd):
+        raise ProfileError("prune requires O_DIRECTORY and directory file descriptor support")
     cutoff = time.time() - args.days * 86400
     errors = []
     counts = prune_session_state(discover_plugin_data_dirs(errors=errors), cutoff, errors=errors)
