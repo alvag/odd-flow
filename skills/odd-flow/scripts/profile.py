@@ -120,6 +120,10 @@ def write_json_atomic(path, data):
         raise
 
 
+def _state_path_error(exc, path):
+    return OSError(exc.errno, exc.strerror, str(path))
+
+
 def remove_session_file(path, *, dir_fd=None, label="session binding"):
     """Remove a state file; return False if missing, raise ProfileError on failure."""
     try:
@@ -127,7 +131,8 @@ def remove_session_file(path, *, dir_fd=None, label="session binding"):
     except FileNotFoundError:
         return False
     except OSError as exc:
-        raise ProfileError(f"{path}: cannot remove {label}: {exc}") from exc
+        detail = _state_path_error(exc, path) if dir_fd is not None else exc
+        raise ProfileError(f"{path}: cannot remove {label}: {detail}") from exc
     return True
 
 
@@ -774,14 +779,20 @@ def _open_state_dir(base, *parts):
     except FileNotFoundError:
         yield None
         return
+    except OSError as exc:
+        raise _state_path_error(exc, base.joinpath(*parts)) from exc
     try:
+        path = base
         for part in parts:
+            path /= part
             try:
                 child = None if stat.S_ISLNK(os.lstat(part, dir_fd=fd).st_mode) else os.open(
                     part, flags | os.O_NOFOLLOW, dir_fd=fd
                 )
             except FileNotFoundError:
                 child = None
+            except OSError as exc:
+                raise _state_path_error(exc, path) from exc
             if child is None:
                 yield None
                 return
@@ -823,7 +834,9 @@ def discover_plugin_data_dirs():
         except NotADirectoryError:
             continue
         except OSError as exc:
-            raise ProfileError(f"{root}: cannot discover plugin data: {exc}") from exc
+            path = root / exc.filename if exc.filename else root
+            detail = _state_path_error(exc, path)
+            raise ProfileError(f"{root}: cannot discover plugin data: {detail}") from exc
 
 
 def _state_folders(data_dirs):
@@ -838,7 +851,8 @@ def _list_state_files(fd, folder, label, cutoff):
     try:
         entries = os.listdir(fd)
     except OSError as exc:
-        raise ProfileError(f"{folder}: cannot read {label}s: {exc}") from exc
+        detail = _state_path_error(exc, folder)
+        raise ProfileError(f"{folder}: cannot read {label}s: {detail}") from exc
     for entry in entries:
         if not (entry.endswith(".json") if label == "session binding" else RECORD_NAME_RE.fullmatch(entry)):
             continue
@@ -848,7 +862,8 @@ def _list_state_files(fd, folder, label, cutoff):
         except FileNotFoundError:
             continue
         except OSError as exc:
-            raise ProfileError(f"{path}: cannot inspect {label}: {exc}") from exc
+            detail = _state_path_error(exc, path)
+            raise ProfileError(f"{path}: cannot inspect {label}: {detail}") from exc
         if stat.S_ISREG(info.st_mode) and (cutoff is None or info.st_mtime < cutoff):
             yield path
 

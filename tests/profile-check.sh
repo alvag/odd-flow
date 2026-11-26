@@ -8,8 +8,8 @@ export HOME="$T/home" CLAUDE_CONFIG_DIR="$T/claude" CODEX_HOME="$T/codex"
 mkdir -p "$HOME" "$CLAUDE_CONFIG_DIR" "$CODEX_HOME"
 pass=0; fail=0
 run() { env -i HOME="$HOME" PATH="$PATH" ODD_FLOW_HOME="$T" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" CODEX_HOME="$CODEX_HOME" "$@" python3 -I "$P" ${ARGS} 2>&1; }
-expect() { # name, expected substring, actual, expected exit, actual exit
-  if [[ "$3" == *"$2"* && "$4" == "$5" ]]; then pass=$((pass+1)); echo "PASS $1";
+expect() { # name, expected substring, actual, expected exit, actual exit, optional exact
+  if [[ "$4" == "$5" && ("$3" == "$2" || ("${6:-}" != exact && "$3" == *"$2"*)) ]]; then pass=$((pass+1)); echo "PASS $1";
   else fail=$((fail+1)); echo "FAIL $1"; echo "  want exit $4 and: $2"; echo "  got  exit $5: $3"; fi
 }
 
@@ -244,12 +244,17 @@ if [ "$(id -u)" -ne 0 ]; then
   PR="$T/prune"; mkdir -p "$PR/sessions"; touch -t 202001010000 "$PR/sessions/old.json"
   chmod 000 "$PR"
   ARGS="prune"; out=$(run ODD_FLOW_HOME="$PR"); ec=$?
-  expect "prune on unreadable home fails explicitly" "odd-flow: $PR" "$out" 2 $ec
+  expect "prune on unreadable home fails explicitly" "odd-flow: $PR/sessions: cannot read session bindings: [Errno 13] Permission denied: '$PR/sessions'" "$out" 2 $ec exact
   chmod 700 "$PR"
   for mode in 000 500; do
     chmod "$mode" "$PR/sessions"
     ARGS="prune"; out=$(run ODD_FLOW_HOME="$PR"); ec=$?
-    expect "prune on sessions dir $mode fails explicitly" "odd-flow: $PR/sessions" "$out" 2 $ec
+    if [[ "$mode" == 000 ]]; then
+      expected="odd-flow: $PR/sessions: cannot read session bindings: [Errno 13] Permission denied: '$PR/sessions'"
+    else
+      expected="odd-flow: $PR/sessions/old.json: cannot remove session binding: [Errno 13] Permission denied: '$PR/sessions/old.json'"
+    fi
+    expect "prune on sessions dir $mode fails explicitly" "$expected" "$out" 2 $ec exact
     chmod 700 "$PR/sessions"
     [ -f "$PR/sessions/old.json" ] && { pass=$((pass+1)); echo "PASS prune $mode leaves old.json"; } || { fail=$((fail+1)); echo "FAIL prune $mode removed old.json"; }
   done
@@ -273,6 +278,9 @@ ARGS="mode --json"; out=$(run ODD_FLOW_HOME="$NF"); ec=$?
 expect "ODD_FLOW_HOME as file: mode fails" "odd-flow: $NF" "$out" 2 $ec
 ARGS="prune"; out=$(run ODD_FLOW_HOME="$NF"); ec=$?
 expect "ODD_FLOW_HOME as file: prune fails" "odd-flow: $NF" "$out" 2 $ec
+SF="$T/sessions-as-file"; mkdir -p "$SF"; : > "$SF/sessions"
+ARGS="prune --days 30"; out=$(run ODD_FLOW_HOME="$SF"); ec=$?
+expect "sessions as file: prune keeps full path in errno" "odd-flow: $SF/sessions: cannot read session bindings: [Errno 20] Not a directory: '$SF/sessions'" "$out" 2 $ec exact
 
 if python3 -I - "$P" "$T" <<'PY'
 import hashlib
