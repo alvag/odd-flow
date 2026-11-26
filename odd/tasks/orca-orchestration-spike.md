@@ -11,6 +11,9 @@ Profile: `claude-gpt`.
 - S4 (user, verbatim): "Report to the bot with --type question: what works per runtime, what breaks or is missing, what odd-flow would gain (for example ready-task dispatch, gates for Max's decisions) and cost, and adoption options with a recommendation. Max decides whether it turns into a workstream."
 - S5 (user, verbatim): "Constraint from Max: odd-flow must work for people without an Orca bot; anything adopted must keep working without Orca too."
 
+- S6 (Max via ODDFlow Bot, verbatim, 2026-11-25, msg_f58d9b885d6d): "A keep-and-document"; upstream issue draft: "No".
+- S7 (contract, option A as accepted, verbatim from L6 report): "keep today's --deps and --ready use and adopt no gates. One small docs unit (one writer, only skills/odd-flow/references/orca-dispatch.md and the CHANGELOG): a dependent's spec must point to the feature document or commits for upstream results; a new Antigravity worktree shows a trust prompt that only Max answers; a body with backticks goes in --body-file." In the skill docs, "Max" reads as "the user", as in the existing Codex "Hooks need review" rule.
+
 ## Tasks
 
 | ID | Specs | Work | Route | Status | Evidence |
@@ -20,8 +23,8 @@ Profile: `claude-gpt`.
 | T3 | S2 | Live DAG: Codex (codex-worker.sh) and Claude in parallel, Antigravity dependent and gated | orca:explore (codex), orca:verify (claude), orca:explore (antigravity, session profile claude-gemini) | done | L4-L5 |
 | T4 | S2 | Recheck worker-start --agent codex on Orca 1.4.274 | orca:explore (codex, named path under test) | done | L4: still blocked (EPERM) |
 | T5 | S2 | Close every pane and Run opened | parent | done (panes closed; Run settled, no close command exists) | L5 |
-| T6 | S4-S5 | Findings and recommendation to the bot (--type question) | parent | done | L6-L8: Max chose A |
-| T7 | S4 | Docs unit A: dependent specs point to the feature doc or commits for upstream results; agy trust prompt in new worktrees; --body-file for bodies with backticks | orca:write (one writer; surface orca-dispatch.md, CHANGELOG) | pending (waits for pane-followups merge, bot message) | |
+| T6 | S4-S5 | Findings and recommendation to the bot (--type question) | parent | done | L6-L8: Max chose A; document committed b709a0f (after rebase) |
+| T7 | S6-S7 | Docs unit A: dependent specs point to the feature doc or commits for upstream results; agy trust prompt in new worktrees; --body-file for bodies with backticks | orca:write (one writer; surface orca-dispatch.md, CHANGELOG) | done | 4b6e8ab; L10 |
 
 ## Log
 
@@ -43,3 +46,5 @@ Profile: `claude-gpt`.
 - L6 (2026-11-25, T6): findings and options A keep-and-document (recommended), B add-gates-as-mirror, C drop-deps, D record-only, plus a yes/no on drafting an upstream Orca issue, sent to ODDFlow Bot as a question (msg_70c4554bd5eb, body /private/tmp/claude-501/-Users-max-orca-workspaces-odd-flow-orca-orchestration-spike/3d59d21d-1688-4465-bcd2-e44cb124fb76/scratchpad/report.md). Waiting on Max's decision.
 - L7 (2026-11-25): bot status msg_05a3f0af009a: "ODDFlow Bot ended its turn without answering your question". The adoption choice belongs to Max, so I do not pick an option. The question stays open and is not resent; last time Max's answer arrived after the same status.
 - L8 (2026-11-25, bot msg_f58d9b885d6d): Max chose A keep-and-document and no upstream issue draft. Commit this document now. The docs writer waits until pane-followups (editing skills/odd-flow/references/orca-dispatch.md) has merged and the bot says so; then rebase onto main, run one writer (orca-dispatch.md and CHANGELOG only), and send merge_ready.
+- L9 (2026-11-25, bot msg_eb90aa937c79): pane-followups merged, main 75aff6a. Rebased spike/orca-orchestration onto 75aff6a (document commit now b709a0f). T7 writer launched.
+- L10 (2026-11-25, T7 writer ctx_23b75d475ee5, report /private/tmp/odd-flow-task_d597d0cc3a76.EZxeiV): status partial, outcome failed. Edits stayed inside the surface: orca-dispatch.md (+5 lines: dependent spec points to the feature doc or commits, Launch step 2; Antigravity trust prompt relayed to the user, terminal step 3; --body-file for bodies with backticks, When Orca wakes you) and CHANGELOG.md (+1 line, Unreleased/Changed). The writer saw `git diff --check` exit 0 and `bash tests/run.sh` 20 passed, 1 failed: parent-guard-check.sh S8 setgid worker-tokens (expected deny, got exit 0) and S12. That check is unchanged, and the cause was environmental: the failure appeared only inside the Codex workspace-write sandbox. Parent spot check on the candidate outside the sandbox: `bash tests/run.sh` "Summary: 21 passed, 0 failed", `git diff --check` exit 0, so the parent accepted the unit (baseline on 75aff6a+b709a0f: 21 passed, 0 failed). Commit 4b6e8ab. Risk: none (docs-only guidance, no contract change). Tab released and closed. Note: the --body-file rule lives in the coordinator guide; worker sends follow Orca's preamble.
