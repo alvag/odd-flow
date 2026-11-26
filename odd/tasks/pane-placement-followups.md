@@ -47,3 +47,5 @@ Workstream brief (Max via supervisor, verbatim excerpts):
   - R3-002 (reliability WARNING): baseline rejections untested (truncated list, non-list terminals, row without handle, list timeout).
   - R3-003 (reliability SUGGESTION): step-3 rules tested only through a test-local matcher; own-handle exclusion only on create; matcher truncated branch unreached.
   - Unverified live: --retry-split late split, late create recovery by handle diff, error.data surviving a real host timeout.
+- 2026-11-26: merge_ready sent to the supervisor bot (msg_630f34a6a398) with options 1 merge as is / 2 fix two test gaps and the leaf-ID loss first.
+- L2 (Max via supervisor, 2026-11-26, verbatim): "1: Merge as is; push with worker-rules". The supervisor merges, pushes and files the six review follow-ups as one GitHub issue; no rebase onto main dd05683 (supervisor checked the merge has no conflict).
