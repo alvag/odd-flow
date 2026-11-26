@@ -32,6 +32,7 @@ CORE_BLOCKS = {
 }
 PROFILE_SCRIPT = os.path.join(SKILL_DIR, "scripts", "profile.py")
 SECONDS_PER_DAY = 86400
+CLEANUP_BUDGET_SECONDS = 1
 
 
 def read_payload():
@@ -106,6 +107,7 @@ def cleanup_session_state(data):
     try:
         import fcntl
 
+        deadline = time.monotonic() + CLEANUP_BUDGET_SECONDS
         directory = os.open(data, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             stamp = os.open("session-cleanup.stamp", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
@@ -117,15 +119,17 @@ def cleanup_session_state(data):
                 now = time.time()
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                     return
-                if info.st_size and now - info.st_mtime < SECONDS_PER_DAY:
+                if info.st_size and 0 <= now - info.st_mtime < SECONDS_PER_DAY:
                     return
-                os.write(stamp, b"\n")
+                helpers = runpy.run_path(PROFILE_SCRIPT)
+                helpers["prune_session_state"]([data], now - 30 * SECONDS_PER_DAY,
+                                               deadline=deadline)
+                if time.monotonic() < deadline:
+                    os.write(stamp, b"\n")
             finally:
                 os.close(stamp)
         finally:
             os.close(directory)
-        helpers = runpy.run_path(PROFILE_SCRIPT)
-        helpers["prune_session_state"]([data], now - 30 * SECONDS_PER_DAY)
     except Exception:
         pass  # Cleanup must not change the SessionStart response.
 

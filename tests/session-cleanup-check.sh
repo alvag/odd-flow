@@ -10,10 +10,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import runpy
 import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 root, scratch = map(Path, sys.argv[1:])
 sys.argv[1:] = []
@@ -99,6 +101,44 @@ class SessionCleanupCheck(unittest.TestCase):
         set_age(stamp, 2)
         self.output(self.hook(CLAUDE_PLUGIN_DATA=self.data))
         self.assertFalse(later.exists())
+
+    def test_future_stamp_does_not_throttle_cleanup(self):
+        expired = record(self.data / "prompt-sessions" / key("expired"))
+        stamp = self.data / stamp_name
+        stamp.write_bytes(b"\n")
+        set_age(stamp, -2)
+        future = stamp.stat().st_mtime
+        self.output(self.hook(CLAUDE_PLUGIN_DATA=self.data))
+        self.assertFalse(expired.exists())
+        self.assertLess(stamp.stat().st_mtime, future)
+        self.assertLess(time.time() - stamp.stat().st_mtime, day)
+
+    def test_budget_exhaustion_leaves_stamp_stale_and_resumes(self):
+        expired = [record(self.data / "prompt-sessions" / key(session))
+                   for session in ("first", "second")]
+        stamp = self.data / stamp_name
+        stamp.write_bytes(b"\n")
+        set_age(stamp, 2)
+        before = stamp.stat().st_mtime_ns
+        clock = 100.0
+        unlink = os.unlink
+
+        def unlink_at_deadline(path, **kwargs):
+            nonlocal clock
+            unlink(path, **kwargs)
+            clock = 101.0
+
+        cleanup = runpy.run_path(str(root / "scripts/session-start.py"))["cleanup_session_state"]
+        with patch.dict(os.environ, self.env, clear=True), \
+                patch.object(time, "monotonic", side_effect=lambda: clock), \
+                patch.object(os, "unlink", side_effect=unlink_at_deadline):
+            cleanup(str(self.data))
+
+        self.assertEqual(sum(path.exists() for path in expired), 1)
+        self.assertEqual(stamp.stat().st_mtime_ns, before)
+        self.output(self.hook(CLAUDE_PLUGIN_DATA=self.data))
+        self.assertFalse(any(path.exists() for path in expired))
+        self.assertGreater(stamp.stat().st_mtime_ns, before)
 
     def test_unreadable_bindings_do_not_stop_record_cleanup(self):
         self.bindings.parent.mkdir(parents=True)
