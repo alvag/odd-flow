@@ -26,11 +26,12 @@ Workstream brief (Max via supervisor, verbatim excerpts):
 
 | ID | Specs | Work | Route | Status | Evidence |
 |---|---|---|---|---|---|
-| T1 | S1, S2, S6, S10, S11 | pane.py errors carry placement context (parse failure, missing handle, Orca-reported split timeout); Orca-reported split timeout waits for the late pane via --retry-split; dispatch step 3 and CHANGELOG updated | orca:write (Risk item 4: launch behavior under the pane lock) | in_progress | task_40eb2dca21d8, dispatch ctx_0c442e359b4f |
-| T2 | S3, S4, S11 | create-timeout recovery by terminal-handle diff, not tab title; tests for step-3 exclusion of own handles and no/multiple-match reporting; test matcher cannot pick a foreign sibling; dispatch step 3 and CHANGELOG updated | orca:write (after T1: shares pane.py, pane-check.sh, orca-dispatch.md) | pending | |
+| T1 | S1, S2, S6, S10, S11 | pane.py errors carry placement context (parse failure, missing handle, Orca-reported split timeout); Orca-reported split timeout waits for the late pane via --retry-split; dispatch step 3 and CHANGELOG updated | orca:write (Risk item 4: launch behavior under the pane lock) | done | b0871aa; RED pane-check 53/6, GREEN 59/0; parent spot check pane-check 59/0; leaf ID source: installed Orca 1.4.278 app.asar (error.data.splitId, splitMayStillComplete); live late split unverified |
+| T2 | S3, S4, S11 | create-timeout recovery by terminal-handle diff, not tab title; tests for step-3 exclusion of own handles and no/multiple-match reporting; test matcher cannot pick a foreign sibling; dispatch step 3 and CHANGELOG updated | orca:write (after T1: shares pane.py, pane-check.sh, orca-dispatch.md) | done | RED pane-check 42/22 (old matcher picked term_foreign; no baseline in create errors), GREEN 64/0; parent spot check pane-check 64/0; live late create unverified |
 | T3 | S7 | Independent verify of T1-T2 | orca:verify (Verification trigger: item 4) | pending | |
 
 ## Log
 
 - L1 (Max via supervisor, 2026-11-26): workstream brief pasted at session start (goal: implement issue #1; notes on --retry-split, risk, surfaces, parallel workstreams, commit messages); S1-S9 quote it and the issue verbatim.
 - 2026-11-26: classified large (supervisor waits, high-risk concurrency item, independent verify, per-unit commits). T1 and T2 share every surface, so they run in order. Base e844437.
+- 2026-11-26: T1 done (b0871aa). Writer report: Orca 1.4.278 reports a pending split as ok:false, error.code runtime_error, error.data {splitId, tabId, splitMayStillComplete: true, nextSteps} (app.asar out/main/index.js; app.asar.unpacked out/cli/output/cli-error.js:119-128,149-164). No live split, create or close was run. T2 next.

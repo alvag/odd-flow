@@ -241,6 +241,17 @@ def open_pane(args):
                 else f"parent terminal is {cols} columns wide (minimum {min_cols})"
             )
             timeout_context = f" Worktree: current; title: {quoted_title}."
+            try:
+                baseline = terminal("list", "--worktree", "current")
+                rows = baseline.get("terminals") if isinstance(baseline, dict) else None
+                if not isinstance(rows, list) or baseline.get("truncated"):
+                    raise RuntimeError("terminal list is incomplete")
+                handles = [row.get("handle") if isinstance(row, dict) else None for row in rows]
+                if any(not isinstance(handle, str) or not handle for handle in handles):
+                    raise RuntimeError("terminal list contains a row without a handle")
+                timeout_context += f" Pre-create handles: {json.dumps(sorted(set(handles)))}."
+            except (OSError, RuntimeError) as exc:
+                timeout_context += f" Pre-create handles unavailable: {exc}."
             created = terminal("create", "--worktree", "current", "--title", args.title,
                                "--command", command, timeout_context=timeout_context)
             tab = created.get("terminal") if isinstance(created, dict) else None
