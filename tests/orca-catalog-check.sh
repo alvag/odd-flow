@@ -41,6 +41,12 @@ def object_from_json(data, label):
     return value
 
 
+def version_key(value, label):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is None:
+        fail(f"{label}: expected an X.Y.Z version")
+    return tuple(map(int, value.split(".")))
+
+
 def orca_result(*args):
     response = object_from_json(run(orca, "plugin", *args, "--json"), f"orca plugin {args[0]}")
     if response.get("ok") is not True or not isinstance(response.get("result"), dict):
@@ -89,9 +95,10 @@ for release in releases:
     if not isinstance(release, dict):
         fail("orca-catalog.json: expected a release object")
     version = release.get("version")
-    if not isinstance(version, str) or not version or version in seen:
-        fail("orca-catalog.json: release versions must be non-empty and unique")
-    seen.add(version)
+    key = version_key(version, "orca-catalog.json release")
+    if key in seen:
+        fail("orca-catalog.json: release versions must be unique")
+    seen.add(key)
     commit = release.get("commit")
     if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
         fail(f"release {version}: expected a full lowercase SHA-1 commit")
@@ -106,14 +113,14 @@ for release in releases:
         fail(f"release {version}: version in {commit}:{manifest} does not match")
 
 newest = releases[0]
-if newest["version"] != head.get("version") or git(
+head_version = version_key(head.get("version"), f"HEAD:{manifest}")
+newest_version = version_key(newest["version"], "orca-catalog.json newest release")
+if head_version < newest_version:
+    fail(f"HEAD:{manifest}: version {head['version']} is lower than newest release {newest['version']}")
+
+unreleased = head_version > newest_version or git(
     "rev-parse", f'{newest["commit"]}:orca-plugin'
-) != git("rev-parse", "HEAD:orca-plugin"):
-    fail(
-        "orca-catalog.json: newest release is stale. Bump the version in "
-        "orca-plugin/orca-plugin.json, commit, run orca plugin release-entry from a clean clone "
-        "of that commit, put the entry first in releases, and commit the catalog."
-    )
+) != git("rev-parse", "HEAD:orca-plugin")
 
 if orca is not None:
     if orca_result("validate", catalog_path).get("valid") is not True:
@@ -124,4 +131,8 @@ if orca is not None:
         run("git", "-C", clone, "checkout", "--quiet", "--detach", newest["commit"])
         if orca_result("release-entry", clone / "orca-plugin").get("entry") != newest:
             fail("orca-catalog.json: newest release differs from Orca release-entry output")
+
+if unreleased:
+    print("NOTE: orca-plugin/ has changes not yet released in orca-catalog.json. "
+          "See Publishing an ODD Flow Orca plugin release in docs/compatibility.md.")
 PY

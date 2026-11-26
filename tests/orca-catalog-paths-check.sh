@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# Pin which catalog states pass, warn, or fail.
+set -eu
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+
+python3 -I - "$root" "$scratch" <<'PY'
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+root, scratch = map(Path, sys.argv[1:])
+offline_bin = scratch / "bin"
+offline_bin.mkdir()
+for tool in ("bash", "git", "python3"):
+    (offline_bin / tool).symlink_to(shutil.which(tool))
+offline_env = dict(os.environ, PATH=str(offline_bin))
+orca = shutil.which("orca")
+manifest_path = Path("orca-plugin/orca-plugin.json")
+note = "NOTE: orca-plugin/ has changes not yet released in orca-catalog.json"
+failures = 0
+
+
+def git(repo, *args):
+    return subprocess.check_output(("git", "-C", repo, *args), text=True).strip()
+
+
+def commit(repo, message):
+    git(repo, "add", "--", "orca-plugin/")
+    git(repo, "-c", "user.name=Catalog Test", "-c", "user.email=catalog@example.invalid",
+        "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "--no-gpg-sign", "-m", message)
+    return git(repo, "rev-parse", "HEAD")
+
+
+def set_version(repo, version):
+    path = repo / manifest_path
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["version"] = version
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return commit(repo, f"Set plugin version to {version}")
+
+
+def check(case, expected, message="", *, with_orca=False):
+    global failures
+    repo = scratch / case
+    git(root, "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--", root, repo)
+    git(repo, "checkout", "--quiet", "--detach", git(root, "rev-parse", "HEAD"))
+    catalog_path = repo / "orca-catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    plugin = catalog["plugins"][0]
+    version = json.loads((repo / manifest_path).read_text(encoding="utf-8"))["version"]
+    release = dict(plugin["releases"][0], commit=git(repo, "rev-parse", "HEAD"), version=version)
+    plugin["releases"] = [release]
+    major, minor, patch = map(int, version.split("."))
+
+    if case == "unreleased":
+        (repo / "orca-plugin" / "README.md").write_text("Unreleased edit\n", encoding="utf-8")
+        commit(repo, "Edit the plugin without releasing")
+    elif case in ("bump", "lower"):
+        older, newer = "0.9.0", "0.10.0"
+        release_version, head_version = (older, newer) if case == "bump" else (newer, older)
+        if version != release_version:
+            release["commit"] = set_version(repo, release_version)
+            release["version"] = release_version
+        set_version(repo, head_version)
+    elif case == "invalid-head-version":
+        set_version(repo, "1.2")
+    elif case == "invalid-release-version":
+        release["version"] = "1.2"
+    elif case == "missing-commit":
+        release["commit"] = "0" * 40
+    elif case == "non-ancestor":
+        (repo / "orca-plugin" / "README.md").write_text("Off-branch edit\n", encoding="utf-8")
+        release["commit"] = commit(repo, "Edit the plugin off the release branch")
+        git(repo, "checkout", "--quiet", "--detach", "HEAD^")
+    elif case == "release-version-mismatch":
+        release["version"] = f"{major}.{minor}.{patch + 1}"
+    elif case == "duplicate-version":
+        plugin["releases"].append(release)
+    elif case == "wrong-shape":
+        catalog["catalogVersion"] = 1
+    elif case == "wrong-id":
+        plugin["id"] = "wrong.plugin-id"
+    elif case == "wrong-source":
+        plugin["source"]["path"] = "."
+    elif case == "wrong-hash":
+        output = subprocess.check_output(
+            (orca, "plugin", "release-entry", repo / "orca-plugin", "--json"), text=True
+        )
+        release = json.loads(output)["result"]["entry"]
+        digest = release["contentHash"]
+        release["contentHash"] = ("1" if digest[0] == "0" else "0") + digest[1:]
+        plugin["releases"] = [release]
+
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    result = subprocess.run(
+        ("bash", root / "tests/orca-catalog-check.sh", repo),
+        capture_output=True, text=True, env=None if with_orca else offline_env,
+    )
+    notices = [line for line in result.stdout.splitlines() if line.startswith("NOTE:")]
+    if expected == "note":
+        passed = (result.returncode == 0 and len(notices) == 1 and notices[0].startswith(note)
+                  and message in notices[0] and not result.stderr)
+    elif expected == "fail":
+        passed = (result.returncode == 1 and not notices
+                  and any(line.startswith("FAIL ") and message in line
+                          for line in result.stderr.splitlines()))
+    else:
+        passed = result.returncode == 0 and not notices and not result.stderr
+    if passed:
+        print(f"PASS {case}")
+    else:
+        failures += 1
+        print(f"FAIL {case}: expected {expected} {message!r}; got exit {result.returncode}, "
+              f"stdout={result.stdout!r}, stderr={result.stderr!r}", file=sys.stderr)
+
+
+check("unreleased", "note", "docs/compatibility.md")
+check("bump", "note", "docs/compatibility.md")
+check("lower", "fail", "is lower than")
+check("invalid-head-version", "fail", "expected an X.Y.Z version")
+check("invalid-release-version", "fail", "expected an X.Y.Z version")
+check("missing-commit", "fail", "cat-file -t")
+check("non-ancestor", "fail", "is not an ancestor of HEAD")
+check("release-version-mismatch", "fail", "does not match")
+check("duplicate-version", "fail", "unique")
+check("wrong-shape", "fail", "expected catalogVersion 2")
+check("wrong-id", "fail", "plugin id must")
+check("wrong-source", "fail", "expected git source")
+check("clean", "pass")
+if orca is None:
+    print("SKIP wrong-hash (orca not on PATH)")
+else:
+    check("wrong-hash", "fail", "newest release differs from Orca release-entry output", with_orca=True)
+sys.exit(bool(failures))
+PY

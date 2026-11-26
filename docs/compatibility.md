@@ -39,8 +39,18 @@ metadata, not an odd-flow or ODD Flow Orca plugin release version.
    `orca-catalog.json`, keeping previous releases after it, and commit the
    catalog. The plugin commit must remain an ancestor of the catalog on `main`.
 
-`bash tests/orca-catalog-check.sh` fails whenever the committed `orca-plugin/`
-folder changes without a new release entry.
+`bash tests/orca-catalog-check.sh` prints one notice and passes when the
+committed `orca-plugin/` folder differs from the newest release. A higher
+manifest version without an entry also gives a notice: the procedure commits
+the version bump first, so that intermediate commit should still pass.
+
+The check still fails for an invalid catalog shape, plugin ID or source;
+malformed or repeated release versions; missing release commits, commits that
+are not ancestors of HEAD, or release versions that do not match their
+committed manifests; and an invalid HEAD manifest version or one lower than
+the newest release. Versions must use numeric `X.Y.Z` form. When Orca is on
+PATH, the check also fails if Orca rejects the catalog or regenerates a
+different newest entry for its commit.
 
 ## Without optional components
 
