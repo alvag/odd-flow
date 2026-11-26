@@ -3,7 +3,8 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 P="$ROOT/skills/odd-flow/scripts/pane.py"
-T=$(mktemp -d)
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0
 expect() { # name, expected exit, actual exit, expected output, [expected argv]
   local argv
