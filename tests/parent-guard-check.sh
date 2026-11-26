@@ -2,13 +2,15 @@
 # Exercise the Claude Code hooks through stdin with isolated state.
 set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-T=$(mktemp -d)
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX")
+trap 'rm -rf -- "$T"' EXIT
 echo "Scratch: $T"
 env -i PATH="$PATH" python3 -I -B - "$ROOT" "$T" <<'PY'
 import hashlib
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -261,6 +263,9 @@ for session, pair, state_dir, mode in (
     token = pair * 16
     record = issue(token)
     tokens.chmod(mode)
+    if mode == 0o2700 and stat.S_IMODE(tokens.lstat().st_mode) == 0o700:
+        print(f"SKIP S8/S12 {session}: chmod(02700) left mode 0700 (setgid not retained)")
+        continue
     marker_check(session, f"odd-flow-worker: write {token}", "deny", ODD_FLOW_STATE_DIR=state_dir)
     decision = session_decision(session)
     if decision == "parent" and record.is_file():
