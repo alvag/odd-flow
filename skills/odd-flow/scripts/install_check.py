@@ -260,9 +260,10 @@ def print_report(report):
         if "path" in row:
             line += f' [{row["path"]}]'
         if "version" in row:
-            line += f' (version {row["version"]}'
+            component = label if row["runtime"] == "orca" else "odd-flow"
+            line += f' ({component} {row["version"]}'
             if row["version"] != row["expected_version"]:
-                line += f'; checkout {row["expected_version"]}'
+                line += f'; checkout {component} {row["expected_version"]}'
             if "plugin_status" in row:
                 line += f'; Orca status: {row["plugin_status"]}'
             if "plugin_error" in row:
@@ -275,7 +276,9 @@ def print_report(report):
     if "reason" in report:
         print(f'Checkout: unreadable ({report["reason"]})')
     for warning in report["warnings"]:
-        print(f"Warning: {warning}")
+        source, message = warning.split(": ", 1)
+        label, version = source.rsplit(" ", 1)
+        print(f"Warning: {label} (odd-flow {version}): {message}")
     print("Compared: files under skills/, scripts/, and hooks/ in both trees, hooks.json, "
           "and runtime manifests. Other files (including .git, untracked extras outside "
           "shipped paths, Python bytecode, and .DS_Store) are ignored. "

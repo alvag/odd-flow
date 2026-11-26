@@ -19,6 +19,12 @@ Claude Code and Codex plugin for Organic Driven Development (ODD): Engram memory
 
 In full delegation, the [parent edit guard](skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) checks Claude Code `Edit`, `Write` and `NotebookEdit` calls and Codex direct local `apply_patch` calls. It does not guard `Bash` writes. Without an appended marker (for example, when the ODD Flow Orca plugin is not installed), a worker whose first prompt has neither a recognized Orca preamble nor a first-line role header is treated as the parent. The guard covers `Edit`, `Write` and `NotebookEdit` with Code Mode on or off. Code Mode REPL `write()` and `edit()` reach the hook as `Write` and `Edit`.
 
+## Compatibility
+
+odd-flow for Claude Code, Codex, and Antigravity is versioned separately from
+the ODD Flow Orca plugin. See the [compatibility table](docs/compatibility.md)
+for tested combinations and how to run without optional components.
+
 ## Install (Claude Code)
 
 ```sh
@@ -28,7 +34,7 @@ claude plugin install odd-flow@odd-flow
 
 For development, run `claude plugin marketplace add "$PWD"` from the checkout instead, or try it without installing with `claude --plugin-dir "$PWD"`.
 
-Verified on 2026-11-24 at `bc59916` with a scratch home and Claude config: marketplace add cloned over SSH. With SSH disabled, it printed “SSH clone failed, retrying with HTTPS” and succeeded. Installation reported `0.1.0`; `diff -rq --exclude=.git` against an extracted `git archive HEAD` found only Claude's `.in_use` marker.
+Verified on 2026-11-24 at `bc59916` with a scratch home and Claude config: marketplace add cloned over SSH. With SSH disabled, it printed “SSH clone failed, retrying with HTTPS” and succeeded. Installation reported odd-flow 0.1.0; `diff -rq --exclude=.git` against an extracted `git archive HEAD` found only Claude's `.in_use` marker.
 
 The skill is invoked as `/odd-flow:odd-flow`. A plain `/odd-flow` was not expanded as a skill call in a headless session (2026-11-23) and reached the model only as text; interactive sessions are unchecked.
 
@@ -49,9 +55,9 @@ Codex installs a copy in its plugin cache (`~/.codex/plugins/cache/odd-flow/odd-
 
 Review the odd-flow hooks in Codex with `/hooks` and trust them if you want to enable them.
 
-Verified on 2026-11-24 at `bc59916` with a scratch home and `CODEX_HOME`: the commands above installed `0.1.0`; `diff -rq --exclude=.git` against an extracted `git archive HEAD` found no differences.
+Verified on 2026-11-24 at `bc59916` with a scratch home and `CODEX_HOME`: the commands above installed odd-flow 0.1.0; `diff -rq --exclude=.git` against an extracted `git archive HEAD` found no differences.
 
-On 2026-11-23, running `codex plugin add odd-flow@odd-flow` at the same version refreshed the `0.1.0` cache. A `diff -rq --exclude=.git` against the checkout found seven differing files and a missing `tests/codex-runtime-check.sh` before reinstalling, and no differences afterward. The cache copy also includes untracked files such as `odd/tasks/codex-packaging.md`. With Codex CLI 0.171.0, SessionStart and UserPromptSubmit completed in each live `codex exec --dangerously-bypass-hook-trust` run. Asked to list the short replies under “Authorized work continuity” without using tools, the parent returned “yes”, “go ahead”, and “eso mismo”, which only the core block lists. A `# Role: write` worker wrote `hello.txt` with a single shell command, made no Orca or subagent attempt, answered `ROLE`, and had a `worker` marker.
+On 2026-11-23, reinstalling odd-flow 0.1.0 with `codex plugin add odd-flow@odd-flow` refreshed its cache without a version bump. A `diff -rq --exclude=.git` against the checkout found seven differing files and a missing `tests/codex-runtime-check.sh` before reinstalling, and no differences afterward. The cache copy also includes untracked files such as `odd/tasks/codex-packaging.md`. With Codex CLI 0.171.0, SessionStart and UserPromptSubmit completed in each live `codex exec --dangerously-bypass-hook-trust` run. Asked to list the short replies under “Authorized work continuity” without using tools, the parent returned “yes”, “go ahead”, and “eso mismo”, which only the core block lists. A `# Role: write` worker wrote `hello.txt` with a single shell command, made no Orca or subagent attempt, answered `ROLE`, and had a `worker` marker.
 
 Codex uses its own `PreToolUse` manifest. In full delegation, it checks every target of a coordinator's direct local `apply_patch` call. In either mode, it checks the allowed edit surfaces of identifiable writer launches through supported native `spawn_agent` and local Orca forms. It does not enforce writer surfaces after launch or inspect shell write targets. See the [parent edit guard](skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) and [writer surface checks](skills/odd-flow/references/delegation.md#allowed-edit-surfaces).
 
@@ -92,11 +98,11 @@ Not validated live or promised: `write_to_file`, `replace_file_content` and `mul
 
 ## Orca profiles panel
 
-The [Orca profiles plugin](orca-plugin/README.md) shows and switches the odd-flow profile and mode of coordinator sessions in the focused workspace without sending a prompt. From this checkout, run `orca plugin dev load orca-plugin --json`, then follow the linked guide to review access, approve, and configure the plugin.
+The [ODD Flow Orca plugin](orca-plugin/README.md) shows and switches the odd-flow profile and mode of coordinator sessions in the focused workspace without sending a prompt. Follow the [regular installation instructions](orca-plugin/README.md#install-the-plugin) to install it from this checkout, review its access, and approve it.
 
 ## Updating
 
-Run `/odd-flow check [--json]` for a read-only install report, or run `python3 -I skills/odd-flow/scripts/install_check.py [--json]` from the checkout you want to compare against. The report lists missing, changed, or extra shipped files and any error reported by a non-running Orca plugin. Neither command reinstalls anything.
+Run `/odd-flow check [--json]` for a read-only install report, or run `python3 -I skills/odd-flow/scripts/install_check.py [--json]` from the checkout you want to compare against. The report lists missing, changed, or extra shipped files and any error reported when the ODD Flow Orca plugin is not running. Neither command reinstalls anything.
 
 The tokened worker marker requires odd-flow 0.4.0 or newer hooks. Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. With mixed versions, the hooks do not recognize the marker and identify workers by the Orca preamble or first-line `# Role:` rule instead. An older hook leaves the token record to expire and be pruned. The plugin still works with odd-flow 0.3.0 hooks because those fallback rules remain in place.
 

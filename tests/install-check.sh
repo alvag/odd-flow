@@ -27,6 +27,7 @@ copy_install() {
 for install in "$claude" "$codex_install" "$agy"; do
     copy_install "$install"
 done
+codex_path=$(CDPATH= cd -- "$codex_install" && pwd -P)
 mkdir -p "$codex_install/.git" "$codex_install/skills/odd-flow/scripts/__pycache__" "$HOME/.odd-flow/worker-tokens"
 printf 'ignored\n' > "$codex_install/.git/config"
 printf 'ignored\n' > "$codex_install/untracked"
@@ -110,7 +111,9 @@ elif case == "drift":
     assert rows["codex"]["status"] == "files differ"
     assert rows["codex"]["files_differ"] == ["hooks/codex-hooks.json", "scripts/session-start.py"]
     assert rows["orca"]["status"] == "version differs"
-    assert any("0.4.0 or newer" in warning for warning in report["warnings"])
+    assert report["warnings"] == [
+        "Claude Code 0.3.0: the Orca tokened marker requires odd-flow hooks 0.4.0 or newer."
+    ]
 elif case == "unreadable":
     assert rows["claude"]["status"] == rows["antigravity"]["status"] == "unreadable", rows
     assert rows["claude"]["reason"] and rows["antigravity"]["reason"]
@@ -128,8 +131,10 @@ cp -R "$HOME" "$scratch/before"
 check sync 0 --json
 assert_json sync
 check human 0
-grep -F "Claude Code: in sync" out
-grep -F "$claude" out
+grep -Fx "Claude Code: in sync [$claude] (odd-flow $version)" out
+grep -Fx "Codex: in sync [$codex_path] (odd-flow $version)" out
+grep -Fx "Antigravity: in sync [$agy] (odd-flow $version)" out
+grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: running)" out
 grep -F 'ignored' out
 diff -r "$scratch/before" "$HOME"
 
@@ -167,7 +172,7 @@ export ORCA_ERROR='\nplugin local.odd-flow-profiles is errored\r\n\t after\u001b
 check orca-error-controls 0 --json
 assert_json orca-error-controls
 check human-orca-error-controls 0
-grep -Fx "ODD Flow Orca plugin: in sync (version $ORCA_VERSION; Orca status: errored; plugin local.odd-flow-profiles is errored after repeated failures)" out
+grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; plugin local.odd-flow-profiles is errored after repeated failures)" out
 grep -F 'Orca reports its listed version, state, and any error for a non-running plugin.' out
 unset ORCA_ERROR
 unset ORCA_STATUS
@@ -197,14 +202,17 @@ fi
 assert_json cli-timeout
 
 CLAUDE_VERSION=0.3.0
+orca_checkout_version=$ORCA_VERSION
 ORCA_VERSION=0.0.1
 printf '\n' >> "$codex_install/hooks/codex-hooks.json"
 rm "$codex_install/scripts/session-start.py"
 check drift 1 --json
 assert_json drift
 check human-drift 1
-grep -F '0.4.0 or newer' out
-grep -F 'hooks/codex-hooks.json' out
+grep -Fx "Claude Code: version differs [$claude] (odd-flow $CLAUDE_VERSION; checkout odd-flow $version)" out
+grep -Fx "ODD Flow Orca plugin: version differs (ODD Flow Orca plugin $ORCA_VERSION; checkout ODD Flow Orca plugin $orca_checkout_version; Orca status: running)" out
+grep -Fx "Warning: Claude Code (odd-flow $CLAUDE_VERSION): the Orca tokened marker requires odd-flow hooks 0.4.0 or newer." out
+grep -Fx "Codex: files differ [$codex_path] (odd-flow $version): hooks/codex-hooks.json, scripts/session-start.py" out
 
 cat > "$bin/claude" <<'SH'
 #!/bin/bash
