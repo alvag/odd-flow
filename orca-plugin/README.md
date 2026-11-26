@@ -62,9 +62,13 @@ copies enabled, the panel cannot detect which key to use and asks for the
 By default, Orca automatically installs new plugin code from the catalog,
 including new worker code and `agent.prompt.before` hook code, without asking
 as long as the release comes from the same repository and requests no new
-access. Orca treats new capabilities, a higher execution level, and new
-commands, shortcuts, or panels as new access. If a release requests new
-access, Orca waits for approval and leaves the running version untouched.
+access. Orca treats new or broader capabilities, a higher execution level,
+and new or expanded non-data contributions as new access: panels, commands,
+events, hooks, keyboard shortcuts, VM recipes, custom editors, settings,
+status bar items, and MCP servers. For non-official catalogs, Orca waits at
+least 12 hours after it first sees a release before installing it automatically.
+If a release requests new access, Orca waits for approval and leaves the
+running version untouched.
 
 To opt out, open Orca **Settings → Plugins → Plugin settings** and turn off
 **Update plugins automatically**. This sets Orca's plugin update policy to
