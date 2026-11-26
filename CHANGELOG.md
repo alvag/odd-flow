@@ -4,6 +4,9 @@ This file tracks notable changes to odd-flow. It follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/) and uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Release headings are odd-flow versions. The ODD Flow Orca plugin is versioned
+separately; see the [compatibility table](docs/compatibility.md).
+
 ## [Unreleased]
 
 ### Added
@@ -17,7 +20,8 @@ This file tracks notable changes to odd-flow. It follows
 
 - The Orca dispatch guide explains how dependent specs reference upstream results, how to relay Antigravity's workspace trust prompt to the user, and when to use `--body-file` for messages containing backticks.
 - The first-prompt hook accepts only a valid, unused token for the marker's role, issued no more than 15 minutes ago and no more than 60 seconds in the future. The hook removes the record on first use and leaves wrong-role or expired records for pruning.
-- Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. The tokened marker requires hooks at 0.4.0 or newer. With mixed versions, worker identification falls back to the Orca preamble or first-line `# Role:` rule, so the plugin still works with 0.3.0 hooks. An older hook leaves the record to expire and be pruned.
+- Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. The tokened marker requires odd-flow 0.4.0 or newer hooks. With mixed versions, worker identification falls back to the Orca preamble or first-line `# Role:` rule, so the plugin still works with odd-flow 0.3.0 hooks. An older hook leaves the record to expire and be pruned.
+- Install-check text: Runtime rows print `(odd-flow <installed>` instead of `(version <installed>`, and a mismatch adds `; checkout odd-flow <expected>`. The Orca row prints `(ODD Flow Orca plugin <installed>`, and a mismatch adds `; checkout ODD Flow Orca plugin <expected>`. The rest of each line (`; Orca status: ...`, plugin error, paths, files differ) is unchanged. The older-hooks warning prints `<Runtime label> (odd-flow <version>): the Orca tokened marker requires odd-flow hooks 0.4.0 or newer.` JSON output is unchanged.
 
 ### Fixed
 
@@ -41,7 +45,7 @@ This file tracks notable changes to odd-flow. It follows
 - Writers make only the changes the spec requires, reported bugs are reproduced before fixing, and testable changes need observed local proof before a requested push, pull request or deploy.
 - Writers follow the project's conventions, justify additions, use documented build, test and run commands, keep verification proportional, and add only necessary comments. Verifiers use documented commands as written in their probe copy without building a replacement environment.
 - The ODD Flow Orca plugin uses `agent.prompt.before` to append a worker marker to orchestration dispatches, so workers can still be identified if the Orca preamble changes. Reinstalling the plugin requires a new approval.
-- The Orca plugin issues worker token records under `~/.odd-flow/worker-tokens/` by default, or under `$ODD_FLOW_STATE_DIR/worker-tokens/` when set and non-empty. The token must match the marker's role. The first-prompt hook in Claude Code, Codex, and Antigravity removes the record on first use, even when another rule already identifies the worker. Bare markers no longer identify workers.
+- ODD Flow Orca plugin: Issues worker token records under `~/.odd-flow/worker-tokens/` by default, or under `$ODD_FLOW_STATE_DIR/worker-tokens/` when set and non-empty. The token must match the marker's role. The first-prompt hook in Claude Code, Codex, and Antigravity removes the record on first use, even when another rule already identifies the worker. Bare markers no longer identify workers.
 - When Engram `mem_save` or `mem_session_summary` fails, the parent saves the same entry with the `engram` CLI and reports a failed save if the CLI is missing.
 
 ## [0.3.0] - 2026-11-25
@@ -50,10 +54,10 @@ This file tracks notable changes to odd-flow. It follows
 
 - `profile.py list --json` and `profile.py show --json` for tools that read saved profiles and effective session settings.
 - A one-time notice on the next coordinator prompt when the effective mode changes, so the previous mode's rules no longer apply.
-- An [Orca profiles plugin](orca-plugin/README.md) with a sidebar panel for switching session profiles and modes, a status bar item, and commands to open the panel or toggle a sole coordinator's mode. Worker rows are read-only and show only their title line.
-- **Reset to defaults** in the Orca panel removes a session's profile and mode overrides.
-- The Orca commands log their outcomes, and the status item keeps its text and tooltip within Orca's length limits.
-- The Orca panel, status tooltip, and **Toggle mode** command explain how to update an installed odd-flow script that lacks the JSON flags.
+- [ODD Flow Orca plugin](orca-plugin/README.md): Adds a sidebar panel for switching session profiles and modes, a status bar item, and commands to open the panel or toggle a sole coordinator's mode. Worker rows are read-only and show only their title line.
+- ODD Flow Orca plugin: **Reset to defaults** in the Orca panel removes a session's profile and mode overrides.
+- ODD Flow Orca plugin: The commands log their outcomes, and the status item keeps its text and tooltip within Orca's length limits.
+- ODD Flow Orca plugin: The panel, status tooltip, and **Toggle mode** command explain how to update an installed odd-flow script that lacks the JSON flags.
 
 ## [0.2.0] - 2026-11-24
 

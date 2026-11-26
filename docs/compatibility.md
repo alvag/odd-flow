@@ -1,0 +1,41 @@
+# Compatibility
+
+The odd-flow plugin for Claude Code, Codex, and Antigravity is versioned
+separately from the ODD Flow Orca plugin. The table records specific checks,
+not supported version ranges. “Verified live” applies only to the behavior
+named in the evidence. “Tests only” means checks passed but no live worker
+run was recorded.
+
+| odd-flow | ODD Flow Orca plugin | Orca | Claude Code | Codex | Antigravity (agy) | Status | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| **Current checkout** 0.4.0 | 0.1.0 | 1.4.277 | 2.1.332 | 0.172.0 | 1.5.17 | tests only | 2026-11-26, checkout based on `e6546af`: installed CLI versions from `claude --version`, `codex --version`, `agy --version`, and `orca --version`. `/odd-flow check` reported in sync; `orca plugin test orca-plugin` passed 140/140. Includes unreleased plugin code (`4f471f3`). |
+| not recorded | not recorded | 1.4.278 | not recorded | not recorded | not recorded | not verified | Live check planned, as recorded in the [2026-11-26 workstream brief](../odd/tasks/version-compat.md#log). |
+| 0.4.0 | 0.1.0 | 1.4.274 | not recorded | not recorded | 1.5.17 | verified live | 2026-11-25: the worker prompt hook ran live with Claude Code, Codex, and Antigravity workers ([workstream brief](../odd/tasks/version-compat.md#log); [worker token log, L20](../odd/tasks/worker-marker-token.md#log), installed code at `04130c5`). The [parent edit guard reference](../skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) names the Antigravity and Orca versions for live worker marking; the [Orca hooks spike log, L5](../odd/tasks/orca-plugin-hooks-spike.md#log) also records the Antigravity version. |
+| 0.3.0 | 0.1.0 | not recorded | not recorded | not recorded | not recorded | verified live | 2026-11-25: the live panel found the installed Claude Code copy of odd-flow with no `profileScript` override ([profiles panel log, L39–L41](../odd/tasks/orca-profile-plugin.md#log)). The ODD Flow Orca plugin shipped in this release (`6167aea`, `8a7c4d7`). |
+| 0.2.0 | not shipped | not recorded | not recorded | not recorded | 1.5.16 | verified live | 2026-11-24, `edcf3e0`: [Antigravity parent edit guard and first-line worker role](../README.md#install-antigravity) checked live in Orca. |
+| 0.1.0 | not shipped | not recorded | not recorded | 0.171.0 | not recorded | verified live | 2026-11-23: [Codex install refresh and live hooks](../README.md#install-codex). 2026-11-24, `bc59916`: [Claude Code install](../README.md#install-claude-code) and [Codex install](../README.md#install-codex) checked. |
+| not recorded | not needed | not installed | not recorded | not recorded | not recorded | not verified | Documented [native subagent fallback](../skills/odd-flow/references/orca-dispatch.md#without-orca); no versioned live check of this setup recorded here. |
+| not recorded | not installed | not recorded | not recorded | not recorded | not recorded | not verified | Documented [worker prompt fallback](../skills/odd-flow/references/mode-full-delegation.md#worker-prompt-context); no versioned live check of this setup recorded here. |
+| not recorded | not needed | not needed | not recorded | not installed | not installed | not verified | Documented [profile defaults](../skills/odd-flow/references/profiles.md#format) let a Claude Code session use Claude Code for every role; no versioned live check of this setup recorded here. |
+
+ODD Flow Orca plugin 0.1.0 covers different code in different odd-flow
+releases. It first shipped with odd-flow 0.3.0 (`6167aea`, `8a7c4d7`).
+It gained the worker prompt hook in odd-flow 0.4.0 (`699b0ec`, `a471ef7`).
+Since that release, the unreleased code has changed again (for example,
+`4f471f3`) without an ODD Flow Orca plugin version bump. Compare the checkout
+or the shipped files, not just the version number.
+
+The `0.1.0-draft` value in [SKILL.md](../skills/odd-flow/SKILL.md) is skill
+metadata, not an odd-flow or ODD Flow Orca plugin release version.
+
+## Without optional components
+
+- **Without Orca:** Delegated roles run as native subagents of the current
+  runtime. See [Without Orca](../skills/odd-flow/references/orca-dispatch.md#without-orca).
+- **Without the ODD Flow Orca plugin:** The odd-flow prompt hook identifies
+  workers by the recognized Orca preamble or a first-line `# Role:` header.
+  See [Worker prompt context](../skills/odd-flow/references/mode-full-delegation.md#worker-prompt-context).
+- **Without Codex or Antigravity:** Start in Claude Code and use a Claude-only
+  profile with no role assigned to Codex or Antigravity. Roles omitted from
+  the profile use the current agent, so they also use Claude Code.
+  See [Profiles](../skills/odd-flow/references/profiles.md#format).

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check release versions across all plugin manifests and the changelog.
+# Check release versions in the plugin manifests, changelog, and compatibility table.
 set -u
 root=${1-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)} || exit 1
 
@@ -38,12 +38,35 @@ if len(set(versions.values())) != 1:
         f"{manifest}={version}" for manifest, version in versions.items()
     ))
 
-heading = f"## [{next(iter(versions.values()))}]"
+odd_flow = next(iter(versions.values()))
+heading = f"## [{odd_flow}]"
 try:
     lines = (root / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
 except (OSError, ValueError) as exc:
     sys.exit(f"CHANGELOG.md: cannot read release heading ({type(exc).__name__})")
 if not any(line == heading or line.startswith(heading + " - ") for line in lines):
     sys.exit(f"CHANGELOG.md: missing release heading {heading}")
+
+orca_manifest = "orca-plugin/orca-plugin.json"
+try:
+    orca_plugin = json.loads((root / orca_manifest).read_text(encoding="utf-8"))["version"]
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    sys.exit(f"{orca_manifest}: cannot read ODD Flow Orca plugin version ({type(exc).__name__})")
+if not isinstance(orca_plugin, str) or not orca_plugin.strip():
+    sys.exit(f"{orca_manifest}: version must be a non-empty string")
+
+compatibility = "docs/compatibility.md"
+try:
+    lines = (root / compatibility).read_text(encoding="utf-8").splitlines()
+except (OSError, ValueError) as exc:
+    sys.exit(f"{compatibility}: cannot read compatibility table ({type(exc).__name__})")
+rows = [
+    [cell.strip() for cell in line.strip("|").split("|")]
+    for line in lines
+    if line.startswith("| **Current checkout** ")
+]
+if len(rows) != 1 or rows[0][:2] != [f"**Current checkout** {odd_flow}", orca_plugin]:
+    sys.exit(f"{compatibility}: expected one current checkout row with odd-flow {odd_flow} "
+             f"and ODD Flow Orca plugin {orca_plugin}")
 PY
 ) || fail "$result"

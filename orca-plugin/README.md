@@ -1,7 +1,10 @@
-# ODD Flow
+# ODD Flow Orca plugin
 
 Use the ODD Flow panel to view and switch profiles and modes for agent sessions
 in Orca's focused workspace without sending an agent prompt.
+
+The ODD Flow Orca plugin is versioned separately from odd-flow. See the
+[compatibility table](../docs/compatibility.md) for tested combinations.
 
 ## Load the plugin
 
@@ -57,10 +60,10 @@ digest-named records whose numeric `issuedAt` is older than 15 minutes. Records
 it cannot read or parse, records without a numeric `issuedAt`, and other files
 stay.
 
-Both the Orca plugin and the odd-flow prompt hook reject a
+Both the ODD Flow Orca plugin and the odd-flow prompt hook reject a
 relative `ODD_FLOW_STATE_DIR`. The `worker-tokens` directory must be a real
 directory (not a symlink), mode `0700`, and owned by the running user.
-The Orca plugin checks ownership on platforms that expose the user ID.
+The ODD Flow Orca plugin checks ownership on platforms that expose the user ID.
 If the plugin cannot issue a token, it leaves the prompt unchanged and logs
 the role, reason, and directory, but not the token.
 
