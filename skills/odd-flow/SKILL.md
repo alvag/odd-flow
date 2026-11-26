@@ -9,7 +9,7 @@ metadata:
 
 ## Activation Contract
 
-- Load on `/odd-flow` (in Claude Code, `/odd-flow:odd-flow`) with no argument, `--profile <p>`, `--profile-default <p>`, `--profiles`, `--create-profile <p>`, `--mode <m>`, `--profile-mode <p> <m>` or `init`, or on a request to work in ODD, manage profiles or run role workers through Orca.
+- Load on `/odd-flow` (in Claude Code, `/odd-flow:odd-flow`) with no argument, `--profile <p>`, `--profile-default <p>`, `--profiles`, `--create-profile <p>`, `--mode <m>`, `--profile-mode <p> <m>`, `init` or `check [--json]`, or on a request to work in ODD, manage profiles or run role workers through Orca.
 - Once loaded, ODD governs every later request of this session.
 
 ## Hard Rules
@@ -42,6 +42,7 @@ metadata:
 1. On activation with a profile or mode command (`--profile`, `--profile-default`, `--profiles`, `--create-profile`, `--mode`, `--profile-mode`), load `references/profiles.md` and follow its Commands section. Otherwise run `python3 <skill-dir>/scripts/profile.py show`. Report the profile and mode lines in one sentence, and load the mode file the `mode:` line names.
 2. Run each request through ODD: Authorize, Explore, Resolve uncertainty, Classify, Track (large only), Implement, Close.
 3. Load only the references the Decision Gates name for the current step.
+4. For `/odd-flow check [--json]`, run `python3 -I <skill-dir>/scripts/install_check.py [--json]`, relay its output, and never reinstall on the user's behalf as part of the check.
 
 ## Output Contract
 
