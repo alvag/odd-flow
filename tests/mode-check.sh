@@ -2,7 +2,8 @@
 # Behavioral checks for the orchestrator mode in odd-flow scripts/profile.py, run against an isolated ODD_FLOW_HOME.
 set -u
 P="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/profile.py"
-T=$(mktemp -d)
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0
 run() { env -i HOME="$HOME" PATH="$PATH" ODD_FLOW_HOME="$T" "$@" python3 -I "$P" ${ARGS} 2>&1; }
 expect() { # name, expected substring, actual, expected exit, actual exit

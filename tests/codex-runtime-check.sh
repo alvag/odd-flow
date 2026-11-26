@@ -2,8 +2,8 @@
 # Codex runtime binding of the hook scripts.
 set -u
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 1
-tmp=$(mktemp -d) || exit 1
-trap 'rm -rf "$tmp"' EXIT
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$tmp"' EXIT
 fail=0
 check() { if eval "$2"; then echo "ok $1"; else echo "FAIL $1"; fail=1; fi; }
 export HOME="$tmp/home" TMPDIR="$tmp"

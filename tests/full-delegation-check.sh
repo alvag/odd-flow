@@ -4,7 +4,8 @@
 set -u
 R="$(cd "$(dirname "$0")/.." && pwd)"
 S="$R/skills/odd-flow"
-T=$(mktemp -d)
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0
 ok() { pass=$((pass+1)); echo "PASS $1"; }
 ko() { fail=$((fail+1)); echo "FAIL $1"; [ -n "${2:-}" ] && printf '  %s\n' "$2"; }

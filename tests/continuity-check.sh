@@ -3,7 +3,7 @@
 set -u
 R="$(cd "$(dirname "$0")/.." && pwd)"
 S="$R/skills/odd-flow"
-T=$(mktemp -d) || exit 1
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0
 ok() { pass=$((pass+1)); echo "PASS $1"; }
