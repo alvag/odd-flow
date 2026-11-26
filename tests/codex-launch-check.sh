@@ -5,7 +5,8 @@ set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 L="$ROOT/skills/odd-flow/scripts/codex-worker.sh"
 P="$ROOT/skills/odd-flow/scripts/profile.py"
-T=$(mktemp -d)
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0
 expect() { # name, expected substring, actual, expected exit, actual exit, [exact]
   if [[ "$4" == "$5" && ( "$3" == "$2" || ( "${6:-}" != exact && "$3" == *"$2"* ) ) ]]; then pass=$((pass+1)); echo "PASS $1";
@@ -113,6 +114,5 @@ cmd=$(env -i HOME="$T" PATH="$PATH" ODD_FLOW_HOME="$T" CLAUDE_CODE_SESSION_ID=s1
 out=$(env -i HOME="$T" PATH="$T/bin:/usr/bin:/bin" "${ORCA_ENV[@]}" sh -c "$cmd" 2>&1); ec=$?
 expect "terminal_command runs from a path with spaces and a quote" $'-m\ngpt-6-luna\n-c\nmodel_reasoning_effort=medium' "$out" 0 $ec
 
-rm -rf "$T"
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

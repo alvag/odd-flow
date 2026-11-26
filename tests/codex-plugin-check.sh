@@ -2,7 +2,8 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-scratch=$(mktemp -d)
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$scratch"' EXIT
 printf 'Codex plugin check scratch: %s\n' "$scratch"
 python3 -I - "$root" "$scratch" <<'PY'
 import hashlib

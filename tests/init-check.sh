@@ -2,7 +2,8 @@
 # Behavioral checks for odd-flow scripts/init.py against scratch files only.
 set -u
 I="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/init.py"
-T=$(mktemp -d)
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0
 ok() { pass=$((pass+1)); echo "PASS $1"; }
 ko() { fail=$((fail+1)); echo "FAIL $1: $2"; }
@@ -61,5 +62,4 @@ o="$T/only.md"; python3 -I "$I" apply --target "$o" >/dev/null; chmod 640 "$o"
 out=$(run remove --target "$o"); [[ $? == 0 && ! -s "$o" && $(stat -f %Lp "$o" 2>/dev/null || stat -c %a "$o") == 640 ]] && ok "block-only file emptied, mode kept" || ko "block-only" "$out"
 
 echo "passed=$pass failed=$fail"
-rm -rf "$T"
 [[ $fail == 0 ]]

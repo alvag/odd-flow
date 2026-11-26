@@ -3,7 +3,10 @@
 set -u
 P="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/profile.py"
 EX="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/assets/profiles.example.json"
-T=$(mktemp -d)
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$T"' EXIT
+logical_T=$(CDPATH= cd -L -- "$T" && pwd -L) || exit 1
+T=$logical_T
 export HOME="$T/home" CLAUDE_CONFIG_DIR="$T/claude" CODEX_HOME="$T/codex"
 mkdir -p "$HOME" "$CLAUDE_CONFIG_DIR" "$CODEX_HOME"
 pass=0; fail=0

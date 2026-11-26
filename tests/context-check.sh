@@ -3,7 +3,8 @@
 # Codex rollouts in an isolated home.
 set -u
 C="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/context.py"
-T=$(mktemp -d)
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0
 expect() { # name, expected substring, actual, expected exit, actual exit
   if [[ "$3" == *"$2"* && "$4" == "$5" ]]; then pass=$((pass+1)); echo "PASS $1";
@@ -81,6 +82,5 @@ else
   fail=$((fail+1)); echo "FAIL json: identifies runtime, overridden, and unknown windows"
 fi
 
-rm -rf "$T"
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]

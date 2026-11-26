@@ -2,8 +2,8 @@
 # Replay Antigravity 1.5.16 PreInvocation and PreToolUse hook stdin through the plugin's configured commands.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$scratch"' EXIT
 python3 -I - "$root" "$scratch" <<'PY'
 import hashlib
 import json

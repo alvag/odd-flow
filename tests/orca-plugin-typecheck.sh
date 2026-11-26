@@ -13,9 +13,10 @@ done
 cd -- "$root"
 orca plugin types orca-plugin
 
-prefix=$(mktemp -d)
+prefix=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX")
 trap 'rm -rf -- "$prefix"' EXIT
-npm install --prefix "$prefix" --ignore-scripts --no-save --no-package-lock typescript@7.0.2 @types/node@26.6.10
+cp tests/orca-plugin-typecheck/package.json tests/orca-plugin-typecheck/package-lock.json "$prefix/"
+(cd -P -- "$prefix" && npm ci --ignore-scripts)
 
 node - "$root/orca-plugin" "$prefix" <<'NODE'
 const { readFileSync, writeFileSync } = require('node:fs')

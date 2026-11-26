@@ -4,7 +4,8 @@ set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 CLI="$ROOT/skills/odd-flow/scripts/surface.py"
 HOOK="$ROOT/scripts/pre-tool-use.py"
-T=$(mktemp -d) || exit 1
+T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+trap 'rm -rf -- "$T"' EXIT
 echo "Scratch: $T"
 fail=0
 
