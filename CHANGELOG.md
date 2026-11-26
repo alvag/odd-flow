@@ -38,6 +38,8 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Fixed
 
+- The ODD Flow Orca panel hides finished runs after 12 hours without activity. It keeps runs with open tasks, active dispatches, or tasks it could not load.
+- When a terminal changes sessions, the ODD Flow Orca panel uses an in-memory cutoff to hide earlier finished runs and dispatches and exclude earlier finished tasks from feature document ownership. Active workers and their attention items remain visible.
 - The ODD Flow Orca plugin acknowledges agent and workspace events without waiting for the status refresh, so event bursts no longer pile up behind it.
 - `/odd-flow check` sanitizes paths, file names, reasons, and Orca plugin errors in text output, stripping Unicode format characters and truncating plugin errors longer than 200 characters with `...`. Unreadable session state now includes a reason in text and JSON; other JSON output is unchanged.
 - `profile.py` reports an odd-flow error instead of a traceback when `prune` lacks directory descriptor support or when `use` or `session-mode` cannot write session state. `prune` reports an unreadable plugin data root once per root.

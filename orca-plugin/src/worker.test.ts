@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { test } from 'node:test'
+import { test, type TestContext } from 'node:test'
 import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import type { HostMethods } from 'orca/host'
@@ -1358,9 +1358,9 @@ const runListArgv = ['orchestration', 'run-list', '--environment', 'local', '--j
 const taskSpecMarker = 'private-task-spec-not-for-the-panel'
 
 async function dashboardFixture(
-  root: string | null, { failGit = false, matchWorkspace = true } = {}
+  root: string | null, { failGit = false, matchWorkspace = true, finished = false } = {}
 ) {
-  const started = '2026-11-25T16:00:00Z'
+  const started = finished ? '2020-11-25T16:00:00Z' : '2026-11-25T16:00:00Z'
   const timestamp = Date.parse(started)
   const coordinator = { ...agent('codex'), state: 'blocked' as const, stateStartedAt: timestamp }
   const agents = [coordinator, agent('claude'), dispatched]
@@ -1374,7 +1374,7 @@ async function dashboardFixture(
       const run = argv[argv.indexOf('--run') + 1]
       if (argv[1] === 'worker-list') {
         return cliOk({ workers: [{
-          dispatchId: 'dispatch-1', taskId: 'task-1', state: 'ready', terminal: 'worker-terminal',
+          dispatchId: 'dispatch-1', taskId: 'task-1', state: finished ? 'succeeded' : 'ready', terminal: 'worker-terminal',
           agent: 'codex/gpt-6-luna', attention: ['input'], workspace: root && `workspace::${root}`,
           spec: taskSpecMarker
         }] })
@@ -1397,8 +1397,8 @@ async function dashboardFixture(
         }
         assert.equal(run, 'run-1')
         return cliOk({ tasks: [{
-          id: 'task-1', task_title: 'Gather data', status: 'dispatched', created_at: started,
-          completed_at: null, created_by_terminal_handle: 'codex', run_id: 'run-1', result: null,
+          id: 'task-1', task_title: 'Gather data', status: finished ? 'completed' : 'dispatched', created_at: started,
+          completed_at: finished ? started : null, created_by_terminal_handle: 'codex', run_id: 'run-1', result: null,
           spec: taskSpecMarker
         }] })
       }
@@ -1472,6 +1472,20 @@ test('keeps other sections when one source fails', async (t) => {
   }
 })
 
+test('keeps the Git summary when only a hidden worker supplies the workspace path', async (t) => {
+  const root = await temp(t)
+  const { worker } = await dashboardFixture(root, { matchWorkspace: false, finished: true })
+  try {
+    const { dashboards } = await worker.request('state')
+    assert.deepEqual(dashboards?.codex.workers, [])
+    assert.equal(dashboards?.codex.current, null)
+    assert.equal(dashboards?.codex.errors.workspace, undefined)
+    assert.equal(dashboards?.codex.git?.lastCommit?.hash, 'abc123')
+  } finally {
+    await worker.deactivate()
+  }
+})
+
 test('hides tasks and git when the workspace path is unknown', async () => {
   const { worker, calls } = await dashboardFixture(null)
   try {
@@ -1504,7 +1518,7 @@ test('assigns a cited feature doc only to its owning session while keeping specs
   const root = await temp(t)
   const doc = await scriptAt(join(root, 'odd/tasks/dashboard.md'))
   await writeFile(doc, '# Dashboard\n\nBranch: `feature/dashboard`\n\n## Tasks\n| ID | Work | Status |\n| --- | --- | --- |\n| T1 | Build | in_progress |\n')
-  const started = '2026-11-25T16:00:00Z'
+  const started = new Date().toISOString()
   const worker = await fixture({ profileScript: currentScript }, [agent('codex'), agent('claude')], {
     runExecutable: async (executable, argv) => {
       if (executable === 'git') {
@@ -1561,12 +1575,12 @@ test('assigns a cited feature doc only to its owning session while keeping specs
 
 test('reloads dashboard workers across repeated state requests and cached older runs', async (t) => {
   const root = await temp(t)
-  const started = '2026-11-25T16:00:00Z'
+  const started = new Date().toISOString()
   const runs = Array.from({ length: 10 }, (_, index) => ({
     id: `run_${index}`,
     objective: `Run ${index}`,
     coordinator_handle: 'codex',
-    created_at: `2026-11-25T16:${String(index).padStart(2, '0')}:00Z`
+    created_at: new Date(Date.parse(started) + index * 60_000).toISOString()
   }))
   let includeNewRun = false
   const worker = await fixture({ profileScript: currentScript }, [agent('codex')], {
@@ -1579,7 +1593,7 @@ test('reloads dashboard workers across repeated state requests and cached older 
       }
       if (argv[1] === 'run-list') {
         const all = includeNewRun
-          ? [{ id: 'run_new', objective: 'Newest', coordinator_handle: 'codex', created_at: '2026-11-25T17:00:00Z' }, ...runs]
+          ? [{ id: 'run_new', objective: 'Newest', coordinator_handle: 'codex', created_at: new Date(Date.parse(started) + 60 * 60_000).toISOString() }, ...runs]
           : runs
         return cliOk({ runs: all, nextCursor: null })
       }
@@ -1666,6 +1680,144 @@ test('names the failing command and reason in dashboard workers error without pr
   } finally {
     await worker.deactivate()
   }
+})
+
+const sessionSighting = Date.parse('2026-11-26T16:00:00Z')
+const sessionWorkTime = (seconds: number) => new Date(sessionSighting + seconds * 1000).toISOString()
+
+async function sessionDashboardFixture(
+  t: TestContext,
+  runSeconds: number,
+  tasks: {
+    id: string; seconds: number; spec?: string; finished?: boolean; attention?: string[]; dispatchState?: string | null
+  }[] = [],
+  failTasks = false
+) {
+  const root = await temp(t)
+  let now = sessionSighting - 10_000
+  let sessionId: string | null = 'session-a'
+  let refresh: (() => Promise<void>) | undefined
+  t.mock.method(Date, 'now', () => now)
+  const worker = await fixture({ profileScript: currentScript }, [], {
+    scheduleRefresh: (callback) => {
+      refresh = callback
+      return () => {}
+    },
+    runExecutable: async (executable, argv) => {
+      if (executable === 'git') {
+        return { stdout: argv.includes('branch') ? 'main\n' : argv.includes('status') ? '' : 'abc123\x001764086400\n', stderr: '' }
+      }
+      if (argv[1] === 'run-list') return cliOk({ runs: [
+        { id: 'run', objective: 'Dashboard work', coordinator_handle: 'codex', created_at: sessionWorkTime(runSeconds) }
+      ] })
+      if (argv[1] === 'task-list') {
+        if (failTasks) throw new Error('Task list failed')
+        return cliOk({ tasks: tasks.map(({ id, seconds, spec, finished }) => ({
+          id, task_title: id, status: finished ? 'completed' : 'dispatched', created_at: sessionWorkTime(seconds),
+          completed_at: finished ? sessionWorkTime(seconds) : null,
+          created_by_terminal_handle: 'codex', run_id: 'run', result: null, spec
+        })) })
+      }
+      const workers = tasks.filter(({ dispatchState }) => dispatchState !== null)
+        .map(({ id, finished, attention, dispatchState }) => ({
+          dispatchId: id, taskId: id, state: dispatchState ?? (finished ? 'succeeded' : 'running'), attention
+        }))
+      return cliOk({ workers: argv.includes('--run') ? workers : [] })
+    }
+  }, {
+    'agents.list': () => ({ agents: [agent('codex', sessionId)] }),
+    'workspace.readContext': { workspaceId: 'focus', branch: 'main', displayName: 'Dashboard', terminals: [{ id: 'codex' }] },
+    'workspace.list': {
+      workspaces: [{ id: 'focus', kind: 'worktree', name: 'Dashboard', path: root, branch: 'main', hostId: 'local' }],
+      truncated: false
+    }
+  })
+  t.after(() => worker.deactivate())
+  return {
+    root,
+    dashboard: async () => (await worker.request('state')).dashboards?.codex,
+    switchSession: async () => {
+      await worker.request('state')
+      now = sessionSighting + 500
+      await refresh?.()
+      now += 10_000
+      sessionId = ''
+      await refresh?.()
+      sessionId = null
+      await refresh?.()
+      now += 10_000
+      sessionId = 'session-b'
+    }
+  }
+}
+
+test('keeps an old run visible when its task list fails and a worker is still running', async (t) => {
+  const session = await sessionDashboardFixture(t, -13 * 60 * 60, [{ id: 'running', seconds: -1 }], true)
+  const dashboard = await session.dashboard()
+  assert.match(dashboard?.errors.workers ?? '', /Could not load all Orca work/)
+  assert.equal(dashboard?.current?.objective, 'Dashboard work')
+})
+
+test('hides a run created before the old session was last seen by a status refresh', async (t) => {
+  const session = await sessionDashboardFixture(t, -1)
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.current, null)
+})
+
+test('keeps a run created in the same second as the last sighting', async (t) => {
+  const session = await sessionDashboardFixture(t, 0)
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.current?.objective, 'Dashboard work')
+})
+
+test('keeps a run created between the last sighting and blank session IDs', async (t) => {
+  const session = await sessionDashboardFixture(t, 5)
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.current?.objective, 'Dashboard work')
+})
+
+test('scopes worker dispatches by task creation, keeping work started before the switch was noticed', async (t) => {
+  const session = await sessionDashboardFixture(t, -2, [
+    { id: 'previous-finished', seconds: -2, finished: true },
+    { id: 'previous-active', seconds: -1, finished: true, dispatchState: 'running', attention: ['input'] },
+    { id: 'same-second', seconds: 0, finished: true }, { id: 'not-yet-seen', seconds: 1, finished: true }
+  ])
+  await session.switchSession()
+  const dashboard = await session.dashboard()
+  assert.deepEqual(dashboard?.workers.map(({ dispatchId }) => dispatchId), ['previous-active', 'not-yet-seen', 'same-second'])
+  assert.deepEqual(dashboard?.attention, [{ label: 'previous-active', since: Date.parse(sessionWorkTime(-1)) }])
+  assert.equal(dashboard?.current?.objective, 'Dashboard work')
+})
+
+test('keeps an earlier run with an unfinished task and no dispatch after a session change', async (t) => {
+  const session = await sessionDashboardFixture(t, -2, [{ id: 'open', seconds: -1, dispatchState: null }])
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.current?.objective, 'Dashboard work')
+})
+
+test('excludes previous-session task citations from feature ownership', async (t) => {
+  const path = 'odd/tasks/previous.md'
+  const session = await sessionDashboardFixture(t, 0, [{ id: 'previous', seconds: -1, spec: path, finished: true }])
+  const doc = await scriptAt(join(session.root, path))
+  await writeFile(doc, '# Dashboard\n\nBranch: `feature/previous`\n\n## Tasks\n| ID | Work | Status |\n| --- | --- | --- |\n| 1 | Gather sources | in_progress |\n')
+  assert.equal((await session.dashboard())?.feature?.path, path)
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.feature, null)
+})
+
+test('keeps feature ownership from unfinished work after a session change', async (t) => {
+  const path = 'odd/tasks/active.md'
+  const session = await sessionDashboardFixture(t, -2, [{ id: 'active', seconds: -1, spec: path }])
+  await writeFile(await scriptAt(join(session.root, path)), '# Dashboard\n\nBranch: `feature/active`\n\n## Tasks\n| ID | Work | Status |\n| --- | --- | --- |\n| 1 | Gather sources | in_progress |\n')
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.feature?.path, path)
+})
+
+test('sets no session boundary on first sight of a terminal', async (t) => {
+  const session = await sessionDashboardFixture(t, -20, [{ id: 'existing', seconds: -20, finished: true }])
+  const dashboard = await session.dashboard()
+  assert.equal(dashboard?.current?.objective, 'Dashboard work')
+  assert.deepEqual(dashboard?.workers.map(({ dispatchId }) => dispatchId), ['existing'])
 })
 
 test('status refresh runs no task-list, run-list or git', async () => {

@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { basename, delimiter, isAbsolute, join, resolve } from 'node:path'
 import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { attentionItems, currentWork, featureOwners, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc,
+import { attentionItems, currentWork, featureOwners, hiddenDashboardWork, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc,
   workerRows, type FeatureOwnership, type RawDispatch, type RawRun, type RawTask } from './dashboard'
 import { promptWithWorkerMarker } from './prompt-hook'
 import { isAgentKind, isMode, type Agent, type AgentRow, type Dashboard, type OddState, type ProfileList,
@@ -424,7 +424,20 @@ export function createWorker({
       return cleanEnv
     }
 
-    const getAgents = (signal: AbortSignal) => orca.host.call('agents.list', undefined, { signal })
+    const terminalSessions = new Map<string, { sessionId: string; lastSeen: number; boundary?: number }>()
+    const getAgents = async (signal: AbortSignal) => {
+      const { agents } = await orca.host.call('agents.list', undefined, { signal })
+      const now = Date.now()
+      const sessionBoundaries = new Map<string, number>()
+      for (const { terminalId, sessionId } of agents) {
+        if (!terminalId || !sessionId?.trim()) continue
+        const previous = terminalSessions.get(terminalId)
+        const boundary = previous?.sessionId === sessionId ? previous.boundary : previous?.lastSeen
+        terminalSessions.set(terminalId, { sessionId, lastSeen: now, boundary })
+        if (boundary !== undefined) sessionBoundaries.set(terminalId, boundary)
+      }
+      return { agents, sessionBoundaries }
+    }
     const getScript = async () => resolveScript(home, await orca.settings.get('profileScript'))
     const cachedDispatchIds = new Set<string>()
     const cachedTerminals = new Set<string>()
@@ -505,6 +518,7 @@ export function createWorker({
       const runs: RawRun[] = []
       const tasks: RawTask[] = []
       const dispatches: RawDispatch[] = []
+      const unsettledRunIds = new Set<string>()
       const failed = new Map<string, string>()
       let listError: string | undefined
       let command: string | null = null
@@ -561,6 +575,7 @@ export function createWorker({
             runCache.delete(id)
             return null
           }
+          if (!runTasks || runWorkers?.some(({ state }) => isActiveDispatch(state))) unsettledRunIds.add(id)
           const data = { tasks: runTasks ?? [], dispatches: runWorkers ?? [] }
           if (runTasks && runWorkers) runCache.set(id, data)
           else if (row.coordinator_handle && !failed.has(row.coordinator_handle)) {
@@ -592,7 +607,7 @@ export function createWorker({
       } catch (error) {
         listError = formatWorkerError(command, error)
       }
-      return { runs, tasks, dispatches, failed, listError }
+      return { runs, tasks, dispatches, unsettledRunIds, failed, listError }
     }
 
     async function scopedDispatches(
@@ -658,7 +673,9 @@ export function createWorker({
       return { summary, featureSource }
     }
 
-    async function dashboardsFor(snapshot: State, signal: AbortSignal): Promise<Record<string, Dashboard>> {
+    async function dashboardsFor(
+      snapshot: State, sessionBoundaries: ReadonlyMap<string, number>, signal: AbortSignal
+    ): Promise<Record<string, Dashboard>> {
       const rows = coordinators(snapshot).filter((row): row is typeof row & { terminalId: string } => !!row.terminalId)
       if (!rows.length) return {}
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(DASHBOARD_TIMEOUT_MS)])
@@ -679,19 +696,22 @@ export function createWorker({
         }),
         dashboardRuns(new Set(rows.map(({ terminalId }) => terminalId)), deadline)
       ])
-      const { runs, tasks, dispatches, failed, listError } = sources
-      const byDispatch = new Map(dispatches.map((row) => [row.dispatchId, row]))
+      const { runs, tasks, dispatches, unsettledRunIds, failed, listError } = sources
+      const hidden = hiddenDashboardWork(runs, tasks, dispatches, Date.now(), unsettledRunIds)
       const openSessions = rows.map(({ terminalId }) => terminalId)
       const entries = await Promise.all(rows.map(async (row): Promise<[string, Dashboard]> => {
         const terminalId = row.terminalId
-        const workers = workerRows({ dispatches, tasks, agents: snapshot.agents, coordinator: terminalId, runs })
+        const sessionBoundary = sessionBoundaries.get(terminalId)
+        const { workers, workspaceCandidates } = workerRows({
+          dispatches, tasks, agents: snapshot.agents, coordinator: terminalId, runs, hidden, sessionBoundary
+        })
         const dashboard: Dashboard = {
           terminalId, workers, attention: attentionItems(row, workers), feature: null, current: null, git: null, errors: {}
         }
         const workerError = listError ?? failed.get(terminalId)
         if (workerError) dashboard.errors.workers = `Could not load all Orca work for this session: ${workerError}`
-        const root = workspace.root ?? (!workspace.remote ? workers.map(({ dispatchId }) =>
-          dispatchRoot(byDispatch.get(dispatchId)?.workspace)).find((path) => path !== undefined) : undefined)
+        const root = workspace.root ?? (!workspace.remote ? [...workspaceCandidates]
+          .map(dispatchRoot).find((path) => path !== undefined) : undefined)
         if (!root) {
           dashboard.errors.workspace = 'Workspace path is unavailable.'
           return [terminalId, dashboard]
@@ -702,7 +722,9 @@ export function createWorker({
         if (featureSource.status === 'fulfilled') {
           let owners = ownershipByRoot.get(root)
           if (!owners) {
-            owners = featureOwners({ docs: featureSource.value.docs, tasks, runs, openSessions })
+            owners = featureOwners({
+              docs: featureSource.value.docs, tasks, runs, openSessions, hidden, sessionBoundaries
+            })
             ownershipByRoot.set(root, owners)
           }
           dashboard.feature = selectFeatureDoc(featureSource.value.docs, featureSource.value.branch, {
@@ -711,7 +733,7 @@ export function createWorker({
         } else {
           dashboard.errors.feature = 'Could not read feature documents for this workspace.'
         }
-        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId)
+        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId, hidden, sessionBoundary)
         return [terminalId, dashboard]
       }))
       return Object.fromEntries(entries)
@@ -736,7 +758,9 @@ export function createWorker({
           ))
         ])
         const snapshot: State = { script, profiles, agents, ...(workerCheckError ? { workerCheckError } : {}) }
-        if (includeDashboards && !workerCheckError) snapshot.dashboards = await dashboardsFor(snapshot, signal)
+        if (includeDashboards && !workerCheckError) {
+          snapshot.dashboards = await dashboardsFor(snapshot, listed.sessionBoundaries, signal)
+        }
         return { snapshot, activeDispatches: typeof dispatches === 'string' ? undefined : dispatches.activeDispatches }
       } catch (cause) {
         const error = message(cause)

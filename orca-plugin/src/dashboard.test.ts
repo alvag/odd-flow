@@ -1,13 +1,14 @@
 import { test } from 'node:test'
 import { assert } from 'orca/testing'
 import {
-  attentionItems, currentWork, featureOwners, parseFeatureDoc, parseGit, parseOrcaTime, selectFeatureDoc, workerRows
+  attentionItems, currentWork, featureOwners, hiddenDashboardWork, parseFeatureDoc, parseGit, parseOrcaTime, selectFeatureDoc, workerRows
 } from './dashboard'
 import type { RawDispatch, RawTask } from './dashboard'
 import type { Agent } from './protocol'
 
 const created = '2026-11-25 15:56:54'
 const completed = '2026-11-25T16:00:15.238Z'
+const noneHidden = { runs: new Set<string>(), openRuns: new Set<string>(), activeTaskIds: new Set<string>() }
 const header = '# Orca profile and mode panel plugin\n\nObjective: control profiles. Branch: `feat/orca-profile-plugin`.\n'
 const table = [
   '## Tasks',
@@ -33,9 +34,9 @@ function dispatch(id: string, fields: Partial<RawDispatch> = {}): RawDispatch {
 
 function rows(dispatches: RawDispatch[], tasks: RawTask[], agents: Agent[] = []) {
   return workerRows({
-    dispatches, tasks, agents, coordinator: 'coordinator',
+    dispatches, tasks, agents, coordinator: 'coordinator', hidden: noneHidden,
     runs: [{ id: 'run', objective: 'Our work', coordinator_handle: 'coordinator', created_at: completed }]
-  })
+  }).workers
 }
 
 test('parses both Orca timestamp shapes', () => {
@@ -138,7 +139,7 @@ test("builds current work from the coordinator's newest run", () => {
     task('old-result', { run_id: 'old', status: 'completed', result: '{"subject":"Other run"}', completed_at: completed }),
     task('first', { status: 'completed', completed_at: '2026-11-25T15:58:00Z', result: '{"subject":"First result"}' }),
     task('last', { status: 'completed', completed_at: completed, result: '{"subject":"Latest result","spec":"Not panel data"}' })
-  ], 'coordinator')
+  ], 'coordinator', noneHidden)
   assert.deepEqual(result, {
     objective: 'Current work',
     startedAt: Date.parse('2026-11-25T15:30:00Z'),
@@ -148,6 +149,72 @@ test("builds current work from the coordinator's newest run", () => {
     ],
     lastResult: { title: 'Task last', subject: 'Latest result' }
   })
+})
+
+const stale = '2026-11-25T15:00:00Z'
+const cutoff = Date.parse(completed)
+const now = cutoff + 12 * 60 * 60 * 1000
+
+function run(id: string, created_at = stale) {
+  return { id, objective: id, coordinator_handle: 'coordinator', created_at }
+}
+
+test('selects the newest visible run, ignoring bookkeeping updates to stale finished runs', () => {
+  const staleRun = { ...run('stale'), updated_at: new Date(now).toISOString() }
+  const olderOpenRun = run('older-open', '2026-11-25T14:00:00Z')
+  const runs = [staleRun, olderOpenRun]
+  const tasks = [
+    task('finished', { run_id: 'stale', status: 'completed', created_at: stale, completed_at: stale }),
+    task('open', { run_id: 'older-open', status: 'dispatched' })
+  ]
+  const dispatches = [dispatch('finished', { state: 'succeeded' })]
+  const hidden = hiddenDashboardWork(runs, tasks, dispatches, now)
+  assert.equal(currentWork(runs, tasks, 'coordinator', hidden)?.objective, 'older-open')
+  assert.equal(currentWork([staleRun], tasks, 'coordinator', hidden), null)
+})
+
+test('keeps an old run with an unfinished ready task and no dispatch in Current work', () => {
+  const runs = [run('old')]
+  const tasks = [task('queued', { run_id: 'old', status: 'ready', created_at: stale, completed_at: null })]
+  const hidden = hiddenDashboardWork(runs, tasks, [], now)
+  assert.equal(currentWork(runs, tasks, 'coordinator', hidden)?.objective, 'old')
+})
+
+test('keeps runs with unfinished tasks, active dispatches or activity at the cutoff', () => {
+  const runs = ['dispatched', 'active-dispatch', 'task-ended'].map((id) => run(id))
+  runs.push(run('run-started', completed), run('expired', new Date(cutoff - 1).toISOString()))
+  const tasks = [
+    task('dispatched', { run_id: 'dispatched', status: 'dispatched' }),
+    task('active-dispatch', { run_id: 'active-dispatch', status: 'completed', completed_at: stale }),
+    task('task-ended', { run_id: 'task-ended', status: 'completed', completed_at: completed })
+  ]
+  const dispatches = [dispatch('active-dispatch', { state: 'running' })]
+  assert.deepEqual([...hiddenDashboardWork(runs, tasks, dispatches, now, new Set(['active-dispatch'])).runs], ['expired'])
+})
+
+test('omits workers of hidden runs', () => {
+  const runs = [run('stale'), run('recent', completed)]
+  const tasks = [
+    task('stale-run', { run_id: 'stale', status: 'completed', completed_at: stale }),
+    task('recent-run', { run_id: 'recent', status: 'completed', completed_at: stale })
+  ]
+  const dispatches = tasks.map(({ id }) => dispatch(id, { state: 'succeeded' }))
+  const hidden = hiddenDashboardWork(runs, tasks, dispatches, now)
+  const { workers } = workerRows({ dispatches, tasks, agents: [], coordinator: 'coordinator', runs, hidden })
+  assert.deepEqual(workers.map(({ dispatchId }) => dispatchId), ['recent-run'])
+})
+
+test('does not assign ownership from a hidden run and preserves the branch fallback', () => {
+  const doc = { path: 'odd/tasks/stale.md', mtimeMs: 1, text: `${header}
+${table}` }
+  const runs = [run('stale')]
+  const tasks = [task('finished', {
+    run_id: 'stale', status: 'completed', completed_at: stale, spec: `Spec: ${doc.path}`
+  })]
+  const hidden = hiddenDashboardWork(runs, tasks, [], now)
+  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['coordinator'], hidden })
+  assert.equal(selectFeatureDoc([doc], 'main', { owners, session: 'coordinator' }), null)
+  assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 'coordinator' })?.path, doc.path)
 })
 
 test('raises attention for a blocked coordinator and blocked active workers only', () => {
@@ -226,7 +293,7 @@ test('newest citing session owns the doc', () => {
     task('t1', { created_by_terminal_handle: 's1', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'Spec: odd/tasks/a.md, S1' }),
     task('t2', { created_by_terminal_handle: 's2', run_id: 'r2', created_at: '2026-11-25T15:20:00Z', spec: 'Spec: odd/tasks/a.md, S2' })
   ]
-  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['s1', 's2'] })
+  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['s1', 's2'], hidden: noneHidden })
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 's2' })?.path, 'odd/tasks/a.md')
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 's1' }), null)
 })
@@ -237,7 +304,7 @@ test('a second session that cites nothing gets no card while the owner is open',
   const tasks = [
     task('t1', { created_by_terminal_handle: 'owner', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'Spec: odd/tasks/a.md' })
   ]
-  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['owner', 'research'] })
+  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['owner', 'research'], hidden: noneHidden })
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 'owner' })?.path, 'odd/tasks/a.md')
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 'research' }), null)
 })
@@ -251,7 +318,7 @@ test('ownership moves when another session creates a newer citing task', () => {
   const initialTasks = [
     task('t1', { created_by_terminal_handle: 'claude', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'odd/tasks/a.md' })
   ]
-  const before = featureOwners({ docs: [doc], tasks: initialTasks, runs, openSessions: ['claude', 'codex'] })
+  const before = featureOwners({ docs: [doc], tasks: initialTasks, runs, openSessions: ['claude', 'codex'], hidden: noneHidden })
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners: before, session: 'claude' })?.path, 'odd/tasks/a.md')
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners: before, session: 'codex' }), null)
 
@@ -259,7 +326,7 @@ test('ownership moves when another session creates a newer citing task', () => {
     ...initialTasks,
     task('t2', { created_by_terminal_handle: 'codex', run_id: 'r2', created_at: '2026-11-25T15:40:00Z', spec: 'odd/tasks/a.md' })
   ]
-  const after = featureOwners({ docs: [doc], tasks: afterTasks, runs, openSessions: ['claude', 'codex'] })
+  const after = featureOwners({ docs: [doc], tasks: afterTasks, runs, openSessions: ['claude', 'codex'], hidden: noneHidden })
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners: after, session: 'codex' })?.path, 'odd/tasks/a.md')
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners: after, session: 'claude' }), null)
 })
@@ -270,7 +337,7 @@ test('when the owner closes the doc falls back to the branch rule for remaining 
   const tasks = [
     task('t1', { created_by_terminal_handle: 'closed-owner', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'odd/tasks/a.md' })
   ]
-  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['remaining'] })
+  const owners = featureOwners({ docs: [doc], tasks, runs, openSessions: ['remaining'], hidden: noneHidden })
   assert.equal(selectFeatureDoc([doc], 'feat/orca-profile-plugin', { owners, session: 'remaining' })?.path, 'odd/tasks/a.md')
 })
 
@@ -285,7 +352,7 @@ test('a session owning one doc does not also get a branch-fallback doc', () => {
   const tasks = [
     task('t1', { created_by_terminal_handle: 's1', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'odd/tasks/owned.md' })
   ]
-  const owners = featureOwners({ docs, tasks, runs, openSessions: ['s1', 's2'] })
+  const owners = featureOwners({ docs, tasks, runs, openSessions: ['s1', 's2'], hidden: noneHidden })
   assert.equal(selectFeatureDoc(docs, 'feat/orca-profile-plugin', { owners, session: 's1' })?.path, 'odd/tasks/owned.md')
   assert.equal(selectFeatureDoc(docs, 'feat/orca-profile-plugin', { owners, session: 's2' })?.path, 'odd/tasks/fallback.md')
 })
@@ -298,7 +365,7 @@ test('a cited path that is only a prefix of another path does not match', () => 
   const tasks = [
     task('t1', { created_by_terminal_handle: 's1', run_id: 'r1', created_at: '2026-11-25T15:10:00Z', spec: 'See odd/tasks/a.md-plan.md for details' })
   ]
-  const owners = featureOwners({ docs, tasks, runs, openSessions: ['s1', 's2'] })
+  const owners = featureOwners({ docs, tasks, runs, openSessions: ['s1', 's2'], hidden: noneHidden })
   assert.equal(selectFeatureDoc(docs, 'feat/orca-profile-plugin', { owners, session: 's1' })?.path, 'odd/tasks/a.md-plan.md')
   assert.equal(selectFeatureDoc(docs, 'feat/orca-profile-plugin', { owners, session: 's2' })?.path, 'odd/tasks/a.md')
 })
