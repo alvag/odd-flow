@@ -14,6 +14,7 @@ This file tracks notable changes to odd-flow. It follows
 
 ### Changed
 
+- The Orca dispatch guide explains how dependent specs reference upstream results, how to relay Antigravity's workspace trust prompt to the user, and when to use `--body-file` for messages containing backticks.
 - The first-prompt hook accepts only a valid, unused token for the marker's role, issued no more than 15 minutes ago and no more than 60 seconds in the future. The hook removes the record on first use and leaves wrong-role or expired records for pruning.
 - Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. The tokened marker requires hooks at 0.4.0 or newer. With mixed versions, worker identification falls back to the Orca preamble or first-line `# Role:` rule, so the plugin still works with 0.3.0 hooks. An older hook leaves the record to expire and be pruned.
 
