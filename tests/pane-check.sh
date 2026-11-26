@@ -27,8 +27,14 @@ printf '%s\n' \
   'fi' \
   'case "$1 $2" in' \
   '  "terminal list")' \
-  '    if [ "${3:-}" = --worktree ] && [ "${5:-}" = --json ] && [ "${ORCA_FAIL_BASELINE:-}" = 1 ]; then' \
-  '      echo "{\"ok\":false,\"error\":{\"message\":\"baseline list refused\"}}"; exit 1' \
+  '    if [ "${3:-}" = --worktree ] && [ "${5:-}" != --include-visual-layouts ]; then' \
+  '      case "${ORCA_FAIL_BASELINE:-}" in' \
+  '        1) echo "{\"ok\":false,\"error\":{\"message\":\"baseline list refused\"}}"; exit 1 ;;' \
+  '        truncated) echo "{\"ok\":true,\"result\":{\"terminals\":[{\"handle\":\"term_parent\"}],\"truncated\":true}}"; exit 0 ;;' \
+  '        non-list) echo "{\"ok\":true,\"result\":{\"terminals\":{}}}"; exit 0 ;;' \
+  '        nohandle) echo "{\"ok\":true,\"result\":{\"terminals\":[{\"handle\":\"term_parent\"},{}]}}"; exit 0 ;;' \
+  '        timeout) exec sleep 5 ;;' \
+  '      esac' \
   '    fi' \
   '    cat "$ORCA_LAYOUT" ;;' \
   '  "terminal create")' \
@@ -165,7 +171,7 @@ calls() {
 
 p=$(leaf term_parent); r1=$(leaf term_r1); r2=$(leaf term_r2); r3=$(leaf term_r3)
 list_call=$'\nargv:\nterminal\nlist\n--include-visual-layouts\n--json'
-baseline_call=$'\nterminal\nlist\n--worktree\ncurrent\n--json'
+baseline_call=$'\nterminal\nlist\n--worktree\ncurrent\n--limit\n1000\n--json'
 tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\n--command\nclaude\n--json'
 right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\nclaude\n--json'
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
@@ -289,6 +295,8 @@ expect "tab create reply without a handle warns that a terminal may have opened"
 out=$(trace_timeout=1 open_pane --role verify --cols 118); ec=$?
 expect "create baseline uses the shipped timeout under the pane lock" 0 "$ec" \
   $'Orca subprocess timeout: 30s\nBaseline list lock held: True\nOrca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n' "$list_call$baseline_call$tab_call"
+expect "create baseline requests up to 1000 terminals" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab"' $'\nterminal\nlist\n--worktree\ncurrent\n--limit\n1000\n--json'
 
 out=$(fail_baseline=1 open_pane --role verify --cols 118); ec=$?
 expect "baseline list failure does not block a successful create" 0 "$ec" \
@@ -297,6 +305,22 @@ expect "baseline list failure does not block a successful create" 0 "$ec" \
 out=$(fail_baseline=1 fail_create=nohandle open_pane --role verify --cols 118); ec=$?
 expect "uncertain create reports why the baseline is unavailable" 1 "$ec" \
   'Pre-create handles unavailable: Orca terminal list: baseline list refused.'
+
+out=$(fail_baseline=truncated fail_create=nohandle open_pane --role verify --cols 118); ec=$?
+expect "truncated create baseline is rejected without blocking create" 1 "$ec" \
+  'Pre-create handles unavailable: terminal list is incomplete.' "$list_call$baseline_call$tab_call"$'\n\nend argv'
+
+out=$(fail_baseline=non-list fail_create=nohandle open_pane --role verify --cols 118); ec=$?
+expect "non-list terminals are rejected without blocking create" 1 "$ec" \
+  'Pre-create handles unavailable: terminal list is incomplete.' "$list_call$baseline_call$tab_call"$'\n\nend argv'
+
+out=$(fail_baseline=nohandle fail_create=nohandle open_pane --role verify --cols 118); ec=$?
+expect "baseline row without a handle is rejected without blocking create" 1 "$ec" \
+  'Pre-create handles unavailable: terminal list contains a row without a handle.' "$list_call$baseline_call$tab_call"$'\n\nend argv'
+
+out=$(fail_baseline=timeout fail_create=nohandle trace_timeout=1 orca_timeout=1 open_pane --role verify --cols 118); ec=$?
+expect "create baseline timeout is reported without blocking create" 1 "$ec" \
+  'Pre-create handles unavailable: Orca terminal list: timed out (limit: 1s).' "$list_call$baseline_call$tab_call"$'\n\nend argv'
 
 out=$(hang=list orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "list timeout stops placement" 1 "$ec" \

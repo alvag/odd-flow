@@ -252,7 +252,7 @@ def open_pane(args):
             )
             timeout_context = f" Worktree: current; title: {quoted_title}."
             try:
-                baseline = terminal("list", "--worktree", "current")
+                baseline = terminal("list", "--worktree", "current", "--limit", "1000")
                 rows = baseline.get("terminals") if isinstance(baseline, dict) else None
                 if not isinstance(rows, list) or baseline.get("truncated"):
                     raise RuntimeError("terminal list is incomplete")
