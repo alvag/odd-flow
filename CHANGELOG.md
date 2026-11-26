@@ -39,10 +39,13 @@ separately; see the [compatibility table](docs/compatibility.md).
 - Before reading worker token records, the first-prompt hook rejects a relative `ODD_FLOW_STATE_DIR` and requires a real `worker-tokens` directory (not a symlink), mode `0700`, owned by the running user.
 - The ODD Flow Orca plugin applies the same directory checks before issuing tokens, checking ownership where the platform exposes the user ID. If issuance fails, it leaves the prompt unchanged and logs the role, reason, and directory without including the token.
 - Orca terminal calls during worker placement time out after 30 seconds so a hung call does not hold the pane lock indefinitely.
+- During worker placement, the initial Orca split and its single retry time out after 40 seconds so Orca can finish its own 30-second wait; other placement calls keep the 30-second limit.
 - Orca worker placement timeout errors name the split target and direction or the new tab's worktree, plus the intended title, so coordinators can identify and close late terminals.
 - Unparseable Orca placement replies and replies without a handle now include the same placement context as timeouts.
 - When Orca reports a split timeout with a pending leaf ID, worker placement waits once for that pane under the same lock instead of starting another split.
+- If that split retry fails, the placement error keeps the original leaf ID and Orca message so the late pane can be identified.
 - Uncertain Orca tab creation errors include the pre-create terminal handles so late tabs can be recovered without relying on titles.
+- Orca lists up to 1,000 terminals in the current worktree before creating a worker tab, reducing incomplete baselines without guessing when the list is unavailable.
 - Orca worker placement ignores saved terminal widths with timestamps in the future.
 - The Orca terminal dispatch guide explains how to create and reuse an orchestration Run before creating Tasks.
 - The Codex plugin check (`tests/codex-plugin-check.sh`) passes when the checkout is reached through a symlinked path, such as a temporary worktree under `/var` on macOS.

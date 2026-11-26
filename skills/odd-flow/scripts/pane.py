@@ -22,15 +22,17 @@ from profile import ProfileError, load_profiles, orca_line, orca_terminal, resol
 SPLIT_HINT = "A pane may have opened. Check terminal list and close it."
 CREATE_HINT = "A terminal may have opened. Check terminal list and close it."
 ORCA_TIMEOUT_SECS = 30
+ORCA_SPLIT_TIMEOUT_SECS = 40
 
 
 def terminal(*args, timeout_context=""):
     hint = {"split": f". {SPLIT_HINT}", "create": f". {CREATE_HINT}"}.get(args[0], "")
     uncertain = hint + timeout_context
+    timeout = ORCA_SPLIT_TIMEOUT_SECS if args[0] == "split" else ORCA_TIMEOUT_SECS
     try:
         proc = subprocess.run(
             [os.environ.get("ORCA_CLI_COMMAND", "orca"), "terminal", *args, "--json"],
-            capture_output=True, text=True, timeout=ORCA_TIMEOUT_SECS,
+            capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
@@ -54,11 +56,21 @@ def terminal(*args, timeout_context=""):
             if pending and not retrying:
                 split_id = recovery.get("splitId")
                 if isinstance(split_id, str) and re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", split_id):
-                    return terminal(*args, "--retry-split", split_id, timeout_context=timeout_context)
+                    try:
+                        return terminal(*args, "--retry-split", split_id, timeout_context=timeout_context)
+                    except (OSError, RuntimeError) as exc:
+                        raise RuntimeError(f"{exc} Original split reply for leaf {split_id}: {detail}") from exc
             if pending or retrying:
                 detail = str(detail).rstrip(".") + uncertain
         raise RuntimeError(f"Orca terminal {args[0]}: {detail}")
-    return data.get("result", {})
+    result = data.get("result", {})
+    if args[0] == "split":
+        pane = result.get("split") if isinstance(result, dict) else None
+        handle = pane.get("handle") if isinstance(pane, dict) else None
+        if not isinstance(handle, str) or not handle:
+            raise RuntimeError(f"Orca terminal split: missing split handle{uncertain}")
+        return handle
+    return result
 
 
 def malformed_layout(detail):
@@ -242,7 +254,7 @@ def open_pane(args):
             )
             timeout_context = f" Worktree: current; title: {quoted_title}."
             try:
-                baseline = terminal("list", "--worktree", "current")
+                baseline = terminal("list", "--worktree", "current", "--limit", "1000")
                 rows = baseline.get("terminals") if isinstance(baseline, dict) else None
                 if not isinstance(rows, list) or baseline.get("truncated"):
                     raise RuntimeError("terminal list is incomplete")
@@ -262,12 +274,8 @@ def open_pane(args):
             return result, role
         timeout_context = (f" Split target: {result['target']}; direction: {direction};"
                            f" intended title: {quoted_title}.")
-        split = terminal("split", "--terminal", result["target"], "--direction", direction,
-                         "--command", command, timeout_context=timeout_context)
-        pane = split.get("split") if isinstance(split, dict) else None
-        handle = pane.get("handle") if isinstance(pane, dict) else None
-        if not isinstance(handle, str) or not handle:
-            raise RuntimeError(f"Orca terminal split: missing split handle. {SPLIT_HINT}{timeout_context}")
+        handle = terminal("split", "--terminal", result["target"], "--direction", direction,
+                          "--command", command, timeout_context=timeout_context)
         result["handle"] = handle
         if direction == "vertical" and args.cols is None and cols is not None and cols >= min_cols:
             try:
