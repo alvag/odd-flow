@@ -5,6 +5,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -25,6 +26,7 @@ ORCA_TIMEOUT_SECS = 30
 
 def terminal(*args, timeout_context=""):
     hint = {"split": f". {SPLIT_HINT}", "create": f". {CREATE_HINT}"}.get(args[0], "")
+    uncertain = hint + timeout_context
     try:
         proc = subprocess.run(
             [os.environ.get("ORCA_CLI_COMMAND", "orca"), "terminal", *args, "--json"],
@@ -32,7 +34,7 @@ def terminal(*args, timeout_context=""):
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
-            f"Orca terminal {args[0]}: timed out (limit: {exc.timeout}s){hint}{timeout_context}"
+            f"Orca terminal {args[0]}: timed out (limit: {exc.timeout}s){uncertain}"
         ) from exc
     try:
         data = json.loads(proc.stdout)
@@ -40,11 +42,21 @@ def terminal(*args, timeout_context=""):
             raise ValueError("expected an object")
     except ValueError as exc:
         detail = proc.stderr.strip() or proc.stdout.strip() or str(exc)
-        raise RuntimeError(f"Orca terminal {args[0]}: {detail}{hint}") from exc
+        raise RuntimeError(f"Orca terminal {args[0]}: {detail}{uncertain}") from exc
     if proc.returncode or data.get("ok") is False:
         detail = data.get("error") or proc.stderr.strip() or proc.stdout.strip()
+        recovery = detail.get("data") if isinstance(detail, dict) else None
         if isinstance(detail, dict):
             detail = detail.get("message") or detail
+        if args[0] == "split":
+            retrying = args[-2:-1] == ("--retry-split",)
+            pending = isinstance(recovery, dict) and recovery.get("splitMayStillComplete") is True
+            if pending and not retrying:
+                split_id = recovery.get("splitId")
+                if isinstance(split_id, str) and re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", split_id):
+                    return terminal(*args, "--retry-split", split_id, timeout_context=timeout_context)
+            if pending or retrying:
+                detail = str(detail).rstrip(".") + uncertain
         raise RuntimeError(f"Orca terminal {args[0]}: {detail}")
     return data.get("result", {})
 
@@ -228,23 +240,34 @@ def open_pane(args):
                 "parent terminal width is unknown" if cols is None
                 else f"parent terminal is {cols} columns wide (minimum {min_cols})"
             )
+            timeout_context = f" Worktree: current; title: {quoted_title}."
+            try:
+                baseline = terminal("list", "--worktree", "current")
+                rows = baseline.get("terminals") if isinstance(baseline, dict) else None
+                if not isinstance(rows, list) or baseline.get("truncated"):
+                    raise RuntimeError("terminal list is incomplete")
+                handles = [row.get("handle") if isinstance(row, dict) else None for row in rows]
+                if any(not isinstance(handle, str) or not handle for handle in handles):
+                    raise RuntimeError("terminal list contains a row without a handle")
+                timeout_context += f" Pre-create handles: {json.dumps(sorted(set(handles)))}."
+            except (OSError, RuntimeError) as exc:
+                timeout_context += f" Pre-create handles unavailable: {exc}."
             created = terminal("create", "--worktree", "current", "--title", args.title,
-                               "--command", command,
-                               timeout_context=f" Worktree: current; title: {quoted_title}.")
+                               "--command", command, timeout_context=timeout_context)
             tab = created.get("terminal") if isinstance(created, dict) else None
             handle = tab.get("handle") if isinstance(tab, dict) else None
             if not isinstance(handle, str) or not handle:
-                raise RuntimeError(f"Orca terminal create: missing terminal handle. {CREATE_HINT}")
+                raise RuntimeError(f"Orca terminal create: missing terminal handle. {CREATE_HINT}{timeout_context}")
             result["handle"] = handle
             return result, role
+        timeout_context = (f" Split target: {result['target']}; direction: {direction};"
+                           f" intended title: {quoted_title}.")
         split = terminal("split", "--terminal", result["target"], "--direction", direction,
-                         "--command", command,
-                         timeout_context=f" Split target: {result['target']}; direction: {direction};"
-                                         f" intended title: {quoted_title}.")
+                         "--command", command, timeout_context=timeout_context)
         pane = split.get("split") if isinstance(split, dict) else None
         handle = pane.get("handle") if isinstance(pane, dict) else None
         if not isinstance(handle, str) or not handle:
-            raise RuntimeError(f"Orca terminal split: missing split handle. {SPLIT_HINT}")
+            raise RuntimeError(f"Orca terminal split: missing split handle. {SPLIT_HINT}{timeout_context}")
         result["handle"] = handle
         if direction == "vertical" and args.cols is None and cols is not None and cols >= min_cols:
             try:

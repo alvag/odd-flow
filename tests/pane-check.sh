@@ -26,7 +26,11 @@ printf '%s\n' \
   '  sleep 5' \
   'fi' \
   'case "$1 $2" in' \
-  '  "terminal list") cat "$ORCA_LAYOUT" ;;' \
+  '  "terminal list")' \
+  '    if [ "${3:-}" = --worktree ] && [ "${5:-}" = --json ] && [ "${ORCA_FAIL_BASELINE:-}" = 1 ]; then' \
+  '      echo "{\"ok\":false,\"error\":{\"message\":\"baseline list refused\"}}"; exit 1' \
+  '    fi' \
+  '    cat "$ORCA_LAYOUT" ;;' \
   '  "terminal create")' \
   '    case "${ORCA_FAIL_CREATE:-}" in' \
   '      1) echo "{\"ok\":false,\"error\":{\"message\":\"create refused\"}}"; exit 1 ;;' \
@@ -38,6 +42,12 @@ printf '%s\n' \
   '    case "${ORCA_FAIL_SPLIT:-}" in' \
   '      garbage) echo "not json"; exit 0 ;;' \
   '      nohandle) echo "{\"ok\":true,\"result\":{}}"; exit 0 ;;' \
+  '      timeout|timeout-repeat)' \
+  '        leaf=11111111-2222-4333-8444-555555555555' \
+  '        if [ "${9:-}" != --retry-split ] || [ "${10:-}" != "$leaf" ] || [ "$ORCA_FAIL_SPLIT" = timeout-repeat ]; then' \
+  '          printf "{\"id\":\"request\",\"ok\":false,\"error\":{\"code\":\"runtime_error\",\"message\":\"Timed out waiting for split pane handle: pane %s in tab tab-example may still open and run its command.\",\"data\":{\"splitId\":\"%s\",\"tabId\":\"tab-example\",\"splitMayStillComplete\":true,\"nextSteps\":[\"Do not split again. With an orca CLI that has --retry-split, re-run the same command with --retry-split %s to wait for this pane and get its handle.\",\"Before splitting again, check \`orca terminal list --json\` for a pane with this leafId: its command may already be running.\"]}},\"_meta\":{\"runtimeId\":\"runtime-example\"}}\n" "$leaf" "$leaf" "$leaf"' \
+  '          exit 1' \
+  '        fi ;;' \
   '    esac' \
   '    if [ "${ORCA_FAIL_SPLIT:-}" = 1 ]; then' \
   '      echo "{\"ok\":false,\"error\":{\"message\":\"split refused\"}}"; exit 1' \
@@ -64,6 +74,10 @@ printf '%s\n' \
   'if os.environ.get("ORCA_TRACE_TIMEOUT"):' \
   '    run = pane.subprocess.run' \
   '    def trace_timeout(argv, **kwargs):' \
+  '        if argv[2:5] == ["list", "--worktree", "current"]:' \
+  '            print("Baseline list lock held:", lock_held(), file=sys.stderr)' \
+  '        if "--retry-split" in argv:' \
+  '            print("Split retry lock held:", lock_held(), file=sys.stderr)' \
   '        print("Orca subprocess timeout: {}s".format(kwargs.get("timeout")), file=sys.stderr)' \
   '        return run(argv, **kwargs)' \
   '    pane.subprocess.run = trace_timeout' \
@@ -111,7 +125,9 @@ printf '%s\n' \
 leaf() { printf '{"type":"terminal","handle":"%s","title":"%s"}' "$1" "${2:-}"; }
 split() { printf '{"type":"pane-split","direction":"%s","first":%s,"second":%s}' "$1" "$2" "$3"; }
 layout() {
-  printf '{"ok":true,"result":{"visualLayouts":[{"root":{"type":"group","tabs":[]}},{"root":{"type":"split","first":{"type":"group","tabs":[]},"second":{"type":"group","tabs":[{"title":"Parent","panes":%s}%s]}}}]}}\n' "$1" "${2:+,$2}" >"$T/layout"
+  local handles
+  handles=$(printf '%s\n' "$1" "${2:-}" | grep -o '"handle":"[^"]*"' | sed 's/.*/{&}/' | paste -sd ',' -)
+  printf '{"ok":true,"result":{"terminals":[%s],"visualLayouts":[{"root":{"type":"group","tabs":[]}},{"root":{"type":"split","first":{"type":"group","tabs":[]},"second":{"type":"group","tabs":[{"title":"Parent","panes":%s}%s]}}}]}}\n' "$handles" "$1" "${2:+,$2}" >"$T/layout"
 }
 open_pane() {
   local command=(python3 -I "$P") format=(--json)
@@ -127,7 +143,7 @@ open_pane() {
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
-    ORCA_HANG="${hang-}" ORCA_TRACE_TIMEOUT="${trace_timeout-}" \
+    ORCA_HANG="${hang-}" ORCA_TRACE_TIMEOUT="${trace_timeout-}" ORCA_FAIL_BASELINE="${fail_baseline-}" \
     "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
 }
 calls() {
@@ -142,12 +158,13 @@ calls() {
 
 p=$(leaf term_parent); r1=$(leaf term_r1); r2=$(leaf term_r2); r3=$(leaf term_r3)
 list_call=$'\nargv:\nterminal\nlist\n--include-visual-layouts\n--json'
+baseline_call=$'\nterminal\nlist\n--worktree\ncurrent\n--json'
 tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\n--command\nclaude\n--json'
 right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\nclaude\n--json'
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
 width_record="$T/odd-flow-pane-term_parent.cols"
 
-expect_late() { # name, expected handle
+expect_late() { # name, expected result, [earlier handles...]
   local timeout_error="$out" out ec
   out=$(ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" "$T/orca" terminal list --worktree current --include-visual-layouts --json |
     python3 -I -c '
@@ -155,26 +172,41 @@ import json, re, sys
 
 error = sys.argv[1]
 split = re.search(r"Split target: (\S+); direction: (\w+);", error)
-create = re.search(r"Worktree: current; title: \"([^\"]+)\"\.", error)
-matches = []
+result = json.load(sys.stdin)["result"]
 
-def walk(node):
+def first_handle(node):
+    while node["type"] == "pane-split":
+        node = node["first"]
+    return node.get("handle")
+
+def split_candidates(node):
     if node["type"] in ("split", "pane-split"):
         first, second = node["first"], node["second"]
-        if split and node["type"] == "pane-split" and (first.get("handle"), node["direction"]) == split.groups():
-            matches.append(second["handle"])
-        walk(first)
-        walk(second)
+        if node["type"] == "pane-split" and (first_handle(first), node["direction"]) == split.groups():
+            yield first_handle(second)
+        yield from split_candidates(first)
+        yield from split_candidates(second)
     for tab in node.get("tabs", []):
-        if create and tab.get("title") == create[1]:
-            matches.append(tab["panes"]["handle"])
-        walk(tab["panes"])
+        yield from split_candidates(tab["panes"])
 
-for layout in json.load(sys.stdin)["result"]["visualLayouts"]:
-    walk(layout["root"])
-handle, = matches
-print(handle)
-' "$timeout_error"); ec=$?
+if split:
+    matches = {handle for layout in result["visualLayouts"] for handle in split_candidates(layout["root"])}
+else:
+    _, marker, baseline = error.rpartition(" Pre-create handles: ")
+    if not marker or result.get("truncated"):
+        sys.exit("No reliable terminal baseline or later list")
+    before, _ = json.JSONDecoder().raw_decode(baseline)
+    matches = {row["handle"] for row in result["terminals"]} - set(before)
+matches.difference_update(sys.argv[2:])
+
+if not matches:
+    print("No match")
+elif len(matches) > 1:
+    print("Multiple matches: " + ", ".join(sorted(matches)))
+else:
+    print(next(iter(matches)))
+' "$timeout_error" "${@:3}"); ec=$?
+  [[ "$out" == "$2" ]] || ec=1
   expect "$1" 0 "$ec" "$2"
 }
 
@@ -182,7 +214,7 @@ layout "$p"
 rm -f "$width_record"
 out=$(widths='118' settle_ms=0 open_pane --role verify); ec=$?
 expect "narrow width without a recorded split creates a titled tab" 0 "$ec" \
-  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
+  '"placement": "tab", "handle": "term_tab"' "$list_call$baseline_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
 expect "created tab reports the resolved verify role and null defaults" 0 "$ec" \
   '"role": "verify", "agent": "claude", "model": null, "effort": null'
 
@@ -190,12 +222,12 @@ rm -f "$width_record"
 out=$(widths='80 81 82' settle_ms=200 open_pane --role verify); ec=$?
 expect "width stays narrow: tab at the bound using the last width" 0 "$ec" \
   '"cols": 82, "min_cols": 160, "reason": "parent terminal is 82 columns wide (minimum 160)"' \
-  "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
+  "$list_call$baseline_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n200 True'
 
 rm -f "$width_record"
 out=$(widths='80 80 80' settle_ms=150 open_pane --role verify); ec=$?
 expect "partial last step stays within the bound" 0 "$ec" \
-  '"cols": 80' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n150 True'
+  '"cols": 80' "$list_call$baseline_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True\n150 True'
 
 out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
 expect "consecutive launches: measure again and split right at 219 columns" 0 "$ec" \
@@ -212,11 +244,11 @@ expect "parent alone after a split closes: use the fresh recorded width after se
 printf '219\n' >"$width_record"
 touch -t 200001010000 "$width_record" || exit 1
 out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
-expect "an expired wide record is ignored" 0 "$ec" '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
+expect "an expired wide record is ignored" 0 "$ec" '"placement": "tab", "handle": "term_tab"' "$list_call$baseline_call$tab_call"
 
 out=$(record_age=-1 widths='110' settle_ms=0 open_pane --role verify); ec=$?
 expect "a future-dated wide record is ignored" 0 "$ec" \
-  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
+  '"placement": "tab", "handle": "term_tab"' "$list_call$baseline_call$tab_call"
 
 out=$(record_age=600 widths='110' settle_ms=0 open_pane --role verify); ec=$?
 expect "a record exactly 10 minutes old is reused" 0 "$ec" \
@@ -224,35 +256,47 @@ expect "a record exactly 10 minutes old is reused" 0 "$ec" \
 
 out=$(record_age=600.001 widths='110' settle_ms=0 open_pane --role verify); ec=$?
 expect "a record just over 10 minutes old is ignored" 0 "$ec" \
-  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
+  '"placement": "tab", "handle": "term_tab"' "$list_call$baseline_call$tab_call"
 
 layout "$(split horizontal "$p" "$r1")"
 printf '219\n' >"$width_record"
 out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
 expect "parent shares its tab: ignore the recorded wide width" 0 "$ec" \
-  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
+  '"placement": "tab", "handle": "term_tab"' "$list_call$baseline_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
 layout "$p"
 
 out=$(fail_create=1 open_pane --role verify --cols 118); ec=$?
 expect "tab create refusal is visible" 1 "$ec" 'Orca terminal create: create refused' \
-  "$list_call$tab_call"$'\n\nend argv'
+  "$list_call$baseline_call$tab_call"$'\n\nend argv'
 
 out=$(fail_create=garbage open_pane --role verify --cols 118); ec=$?
 expect "non-JSON tab create reply warns that a terminal may have opened" 1 "$ec" \
-  'A terminal may have opened. Check terminal list and close it.' "$list_call$tab_call"$'\n\nend argv'
+  'A terminal may have opened. Check terminal list and close it. Worktree: current; title: "T1 verify: example". Pre-create handles: ["term_parent"].' \
+  "$list_call$baseline_call$tab_call"$'\n\nend argv'
 
 out=$(fail_create=nohandle open_pane --role verify --cols 118); ec=$?
 expect "tab create reply without a handle warns that a terminal may have opened" 1 "$ec" \
-  'missing terminal handle. A terminal may have opened' "$list_call$tab_call"$'\n\nend argv'
+  'missing terminal handle. A terminal may have opened. Check terminal list and close it. Worktree: current; title: "T1 verify: example". Pre-create handles: ["term_parent"].' \
+  "$list_call$baseline_call$tab_call"$'\n\nend argv'
 
 out=$(trace_timeout=1 open_pane --role verify --cols 118); ec=$?
-expect "Orca subprocesses use the shipped 30-second timeout" 0 "$ec" \
-  $'Orca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n' "$list_call$tab_call"
+expect "create baseline uses the shipped timeout under the pane lock" 0 "$ec" \
+  $'Orca subprocess timeout: 30s\nBaseline list lock held: True\nOrca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n' "$list_call$baseline_call$tab_call"
+
+out=$(fail_baseline=1 open_pane --role verify --cols 118); ec=$?
+expect "baseline list failure does not block a successful create" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab"' "$list_call$baseline_call$tab_call"$'\n\nend argv'
+
+out=$(fail_baseline=1 fail_create=nohandle open_pane --role verify --cols 118); ec=$?
+expect "uncertain create reports why the baseline is unavailable" 1 "$ec" \
+  'Pre-create handles unavailable: Orca terminal list: baseline list refused.'
 
 out=$(hang=list orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "list timeout stops placement" 1 "$ec" \
   'odd-flow: Orca terminal list: timed out (limit: 1s)' "$list_call"$'\n\nend argv'
 
+pre_existing_tab='{"title":"T1 verify: example","panes":'"$r2"'}'
+layout "$p" "$pre_existing_tab"
 started=$SECONDS
 out=$(hang=create orca_timeout=1 open_pane --role verify --cols 118); ec=$?
 if (( SECONDS - started >= 4 )); then
@@ -261,12 +305,16 @@ if (( SECONDS - started >= 4 )); then
 fi
 expect "create timeout does not wait for a child holding the output pipe" 1 "$ec" \
   'Orca terminal create: timed out (limit: 1s). A terminal may have opened. Check terminal list and close it.' \
-  "$list_call$tab_call"$'\n\nend argv'
-expect "create timeout identifies the late tab by worktree and title" 1 "$ec" \
-  'Worktree: current; title: "T1 verify: example".'
-layout "$(leaf term_parent 'T1 verify: example')" \
-  '{"title":"T1 verify: example","panes":'"$(leaf term_late_tab 'Claude Code')"'}'
-expect_late "create timeout matches the late tab title, not a running title" term_late_tab
+  "$list_call$baseline_call$tab_call"$'\n\nend argv'
+expect "create timeout reports all pre-create handles" 1 "$ec" \
+  'Worktree: current; title: "T1 verify: example". Pre-create handles: ["term_parent", "term_r2"].'
+layout "$p" "$pre_existing_tab"
+expect_late "create recovery reports no match before the late tab opens" 'No match'
+late_tab='{"title":"Claude Code","panes":'"$(leaf term_late_tab 'Claude Code')"'}'
+layout "$p" "$pre_existing_tab,$late_tab"
+expect_late "create recovery ignores a matching old title and finds the late handle" term_late_tab
+layout "$p" "$pre_existing_tab,$late_tab,"'{"title":"Own earlier placement","panes":'"$r3"'}'
+expect_late "create recovery excludes an earlier placement outside the baseline" term_late_tab term_r3
 
 layout "$p"
 out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
@@ -275,6 +323,9 @@ expect "split-right timeout names the parent and vertical direction" 1 "$ec" \
   "$list_call$right_call"$'\n\nend argv'
 layout "$(split vertical "$p" "$(leaf term_late_right)")"
 expect_late "split-right timeout matches the late pane in the right column" term_late_right
+layout "$(split vertical "$(split vertical "$p" "$(leaf term_foreign)")" "$(leaf term_late_right)")"
+expect_late "split recovery reports multiple matches instead of selecting a foreign sibling" \
+  'Multiple matches: term_foreign, term_late_right'
 
 layout "$(split vertical "$p" "$r1")"
 out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
@@ -286,6 +337,17 @@ expect "split-below timeout names the right pane and horizontal direction" 1 "$e
 layout "$(split vertical "$p" "$(split horizontal "$r1" "$(leaf term_late_below)")")"
 expect_late "split-below timeout matches the late pane below the target" term_late_below
 layout "$p"
+
+retry_call="${right_call%$'\n--json'}"$'\n--retry-split\n11111111-2222-4333-8444-555555555555\n--json'
+out=$(fail_split=timeout trace_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "Orca split timeout retries identical placement under the lock and returns the late handle" 0 "$ec" \
+  $'Split retry lock held: True\nOrca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n{"placement": "split-right", "handle": "term_new"' \
+  "$list_call$right_call$retry_call$title_call"$'\n\nend argv'
+
+out=$(fail_split=timeout-repeat open_pane --role verify --cols 160); ec=$?
+expect "a second Orca split timeout reports placement context without another retry" 1 "$ec" \
+  'may still open and run its command. A pane may have opened. Check terminal list and close it. Split target: term_parent; direction: vertical; intended title: "T1 verify: example".' \
+  "$list_call$right_call$retry_call"$'\n\nend argv'
 
 out=$(hang=set-pane-title orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "title timeout preserves the opened pane and reports a title error" 0 "$ec" \
@@ -299,7 +361,7 @@ expect "width settles under lock: split right using the new width" 0 "$ec" \
 out=$(widths='unknown' settle_ms=1000 open_pane --role verify); ec=$?
 expect "unknown first width: tab without retrying" 0 "$ec" \
   '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
-  "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
+  "$list_call$baseline_call$tab_call"$'\n\nend argv\nsamples:\n0 True'
 
 out=$(widths='81' settle_ms=1000 open_pane --role review); ec=$?
 expect "no split command: one sample and no Orca call" 0 "$ec" \
@@ -323,7 +385,7 @@ rm -f "$width_record"
 out=$(widths='80 unknown' settle_ms=500 open_pane --role verify); ec=$?
 expect "width lost mid-wait: tab with unknown width" 0 "$ec" \
   '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
-  "$list_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True'
+  "$list_call$baseline_call$tab_call"$'\n\nend argv\nsamples:\n0 True\n100 True'
 
 for value in -1 invalid; do
   out=$(settle_ms=$value open_pane --role verify --cols 160); ec=$?
@@ -340,7 +402,7 @@ expect "wide parent: split right and set title" 0 "$ec" '"placement": "split-rig
   "$list_call$right_call$title_call"$'\n\nend argv'
 
 out=$(widths='' settle_ms=100 open_pane --role verify --cols 159); ec=$?
-expect "fixed narrow width: tab without sampling" 0 "$ec" '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"$'\n\nend argv'
+expect "fixed narrow width: tab without sampling" 0 "$ec" '"placement": "tab", "handle": "term_tab"' "$list_call$baseline_call$tab_call"$'\n\nend argv'
 
 out=$(min_cols=159 open_pane --role verify --cols 159); ec=$?
 expect "override makes the narrow parent split" 0 "$ec" '"placement": "split-right"'
@@ -366,7 +428,8 @@ expect "tab without a handle reports the resolved review role and null defaults"
   '"role": "review", "agent": "pi", "model": null, "effort": null'
 
 out=$(fail_split=1 open_pane --role verify --cols 200); ec=$?
-expect "split failure is visible" 1 "$ec" "split refused"
+expect "ordinary split refusal is visible and does not retry" 1 "$ec" "split refused" \
+  "$list_call"$'\nterminal\nsplit\n--terminal\nterm_r2\n--direction\nhorizontal\n--command\nclaude\n--json\n\nend argv'
 
 out=$(parent="" open_pane --role verify --cols 200); ec=$?
 expect "outside Orca: refuse" 2 "$ec" "workers fall back to subagents or inline"
@@ -375,16 +438,11 @@ layout "$(split vertical "$p" "$(split horizontal "$(split vertical "$r1" "$r2")
 out=$(open_pane --role verify --cols 80); ec=$?
 expect "vertical split in the column keeps half height" 0 "$ec" '"target": "term_r2"'
 
-hint='A pane may have opened. Check terminal list and close it.'
-hint_ec=1
 for reply in garbage nohandle; do
   out=$(fail_split=$reply open_pane --role verify --cols 200); ec=$?
-  if [[ "$ec" != 1 || "$out" != 'odd-flow: Orca terminal split:'*"$hint" ]]; then
-    hint_ec=0
-    break
-  fi
+  expect "uncertain split reply ($reply) warns of a possible open pane and names its placement" 1 "$ec" \
+    'A pane may have opened. Check terminal list and close it. Split target: term_r2; direction: horizontal; intended title: "T1 verify: example".'
 done
-expect "uncertain split reply reports possible open pane" 1 "$hint_ec" "$hint"
 
 printf '{"ok":true,"result":{"visualLayouts":[{"root":{"type":"group","tabs":null}}]}}\n' >"$T/layout"
 out=$(open_pane --role verify --cols 200); ec=$?
