@@ -42,9 +42,25 @@ def object_from_json(data, label):
 
 
 def version_key(value, label):
-    if not isinstance(value, str) or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value) is None:
-        fail(f"{label}: expected an X.Y.Z version")
-    return tuple(map(int, value.split(".")))
+    number = r"0|[1-9][0-9]*"
+    identifiers = r"[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*"
+    pattern = rf"({number})\.({number})\.({number})(?:-({identifiers}))?(?:\+{identifiers})?"
+    match = re.fullmatch(pattern, value) if isinstance(value, str) else None
+    if match is None:
+        fail(f"{label}: expected a valid SemVer version")
+    major, minor, patch, prerelease = match.groups()
+    identifiers_key = []
+    if prerelease is not None:
+        for identifier in prerelease.split("."):
+            if identifier.isdecimal():
+                if len(identifier) > 1 and identifier.startswith("0"):
+                    fail(f"{label}: expected a valid SemVer version (numeric prerelease has a leading zero)")
+                identifiers_key.append((0, len(identifier), identifier))
+            else:
+                identifiers_key.append((1, 0, identifier))
+    # Length, then lexical order, compares digit strings without converting them to integers.
+    core = tuple((len(part), part) for part in (major, minor, patch))
+    return core, prerelease is None, tuple(identifiers_key)
 
 
 def orca_result(*args):
@@ -95,9 +111,11 @@ for release in releases:
     if not isinstance(release, dict):
         fail("orca-catalog.json: expected a release object")
     version = release.get("version")
+    if version is None or version == "":
+        fail("orca-catalog.json: release versions must be non-empty and unique")
     key = version_key(version, "orca-catalog.json release")
     if key in seen:
-        fail("orca-catalog.json: release versions must be unique")
+        fail("orca-catalog.json: release versions must be non-empty and unique")
     seen.add(key)
     commit = release.get("commit")
     if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:

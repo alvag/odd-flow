@@ -8,7 +8,7 @@ run was recorded.
 
 | odd-flow | ODD Flow Orca plugin | Orca | Claude Code | Codex | Antigravity (agy) | Status | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **Current checkout** 0.4.0 | 0.2.0 | 1.4.278 | 2.1.332 | 0.172.0 | 1.5.18 | tests only | 2026-11-26: installed CLI versions from `orca --version`, `claude --version`, `codex --version`, and `agy --version`. `orca plugin validate orca-plugin --json` reported valid. `orca plugin test orca-plugin --json` passed 157/157. `bash tests/orca-plugin-typecheck.sh`, `bash tests/orca-plugin-docs-check.sh`, and `bash tests/version-check.sh` passed. `bash tests/run.sh` reported 24 passed, 0 failed. `bash tests/orca-catalog-check.sh` and `orca plugin validate orca-catalog.json --json` passed. The catalog install is not yet verified live. |
+| **Current checkout** 0.4.0 | 0.2.0 | 1.4.278 | 2.1.332 | 0.172.0 | 1.5.18 | tests only | 2026-11-26: installed CLI versions from `orca --version`, `claude --version`, `codex --version`, and `agy --version`. `orca plugin validate orca-plugin --json` reported valid. `orca plugin test orca-plugin --json` passed 157/157. `bash tests/orca-plugin-typecheck.sh`, `bash tests/orca-plugin-docs-check.sh`, and `bash tests/version-check.sh` passed. `bash tests/run.sh` reported 25 passed, 0 failed. `bash tests/orca-catalog-check.sh` and `orca plugin validate orca-catalog.json --json` passed. The catalog install is not yet verified live. |
 | 0.4.0 | 0.1.0 | 1.4.278 | 2.1.332 | 0.172.0 | 1.5.17 | verified live | 2026-11-26, installed code at `9801950`: Claude Code, Codex, and Antigravity write workers dispatched through Orca reported `worker_done`; the ODD Flow Orca plugin appended the tokened marker, the prompt hook removed each token record on first use and recorded each session as a worker, and the parent edit guard allowed each worker's edit and denied the parent ([live check log, L3](../odd/tasks/orca-1-4-278-check.md#log)). Native `worker-start --agent codex` returned, but its worker could not reach Orca from the Codex sandbox (`runtime_access_denied`), so Codex workers still start through `scripts/codex-worker.sh` ([L4](../odd/tasks/orca-1-4-278-check.md#log)). `/odd-flow check` reported in sync; `orca plugin test orca-plugin` passed 140/140. |
 | 0.4.0 | 0.1.0 | 1.4.274 | not recorded | not recorded | 1.5.17 | verified live | 2026-11-25: the worker prompt hook ran live with Claude Code, Codex, and Antigravity workers ([workstream brief](../odd/tasks/version-compat.md#log); [worker token log, L20](../odd/tasks/worker-marker-token.md#log), installed code at `04130c5`). The [parent edit guard reference](../skills/odd-flow/references/mode-full-delegation.md#parent-edit-guard) names the Antigravity and Orca versions for live worker marking; the [Orca hooks spike log, L5](../odd/tasks/orca-plugin-hooks-spike.md#log) also records the Antigravity version. |
 | 0.3.0 | 0.1.0 | not recorded | not recorded | not recorded | not recorded | verified live | 2026-11-25: the live panel found the installed Claude Code copy of odd-flow with no `profileScript` override ([profiles panel log, L39–L41](../odd/tasks/orca-profile-plugin.md#log)). The ODD Flow Orca plugin shipped in this release (`6167aea`, `8a7c4d7`). |
@@ -48,9 +48,11 @@ The check still fails for an invalid catalog shape, plugin ID or source;
 malformed or repeated release versions; missing release commits, commits that
 are not ancestors of HEAD, or release versions that do not match their
 committed manifests; and an invalid HEAD manifest version or one lower than
-the newest release. Versions must use numeric `X.Y.Z` form. When Orca is on
-PATH, the check also fails if Orca rejects the catalog or regenerates a
-different newest entry for its commit.
+the newest release. Versions must follow SemVer 2.0.0, including optional
+prerelease and build metadata. A final release ranks above its prereleases;
+build metadata does not affect precedence. Releases with equal precedence count
+as duplicates. When Orca is on PATH, the check also fails if Orca rejects the
+catalog or regenerates a different newest entry for its commit.
 
 ## Without optional components
 

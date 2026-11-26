@@ -55,22 +55,44 @@ def check(case, expected, message="", *, with_orca=False):
     version = json.loads((repo / manifest_path).read_text(encoding="utf-8"))["version"]
     release = dict(plugin["releases"][0], commit=git(repo, "rev-parse", "HEAD"), version=version)
     plugin["releases"] = [release]
-    major, minor, patch = map(int, version.split("."))
-
     if case == "unreleased":
         (repo / "orca-plugin" / "README.md").write_text("Unreleased edit\n", encoding="utf-8")
         commit(repo, "Edit the plugin without releasing")
-    elif case in ("bump", "lower"):
+    elif case in ("bump", "lower", "bump-and-edit"):
         older, newer = "0.9.0", "0.10.0"
-        release_version, head_version = (older, newer) if case == "bump" else (newer, older)
+        release_version, head_version = (newer, older) if case == "lower" else (older, newer)
         if version != release_version:
             release["commit"] = set_version(repo, release_version)
             release["version"] = release_version
+        if case == "bump-and-edit":
+            (repo / "orca-plugin" / "README.md").write_text("Edit with version bump\n", encoding="utf-8")
         set_version(repo, head_version)
+    elif case in ("prerelease", "prerelease-bump", "lower-than-prerelease",
+                  "numeric-prerelease", "alphanumeric-prerelease", "duplicate-precedence"):
+        release_version, head_version = {
+            "prerelease": ("0.3.0-beta.1", None),
+            "prerelease-bump": ("0.3.0-beta.1", "0.3.0"),
+            "lower-than-prerelease": ("0.3.0-beta.1", "0.3.0-alpha"),
+            "numeric-prerelease": ("0.3.0-beta.9", "0.3.0-beta.10"),
+            "alphanumeric-prerelease": ("0.3.0--a", "0.3.0-99"),
+            "duplicate-precedence": ("0.3.0+build.01", "0.3.0+build.02"),
+        }[case]
+        release["commit"] = set_version(repo, release_version)
+        release["version"] = release_version
+        if head_version is not None:
+            head_commit = set_version(repo, head_version)
+            if case == "duplicate-precedence":
+                plugin["releases"].insert(0, dict(release, commit=head_commit, version=head_version))
     elif case == "invalid-head-version":
         set_version(repo, "1.2")
     elif case == "invalid-release-version":
         release["version"] = "1.2"
+    elif case == "leading-zero-core":
+        release["version"] = "1.02.0"
+    elif case == "leading-zero-prerelease":
+        release["version"] = "1.2.0-alpha.01"
+    elif case == "empty-version":
+        release["version"] = ""
     elif case == "missing-commit":
         release["commit"] = "0" * 40
     elif case == "non-ancestor":
@@ -78,7 +100,7 @@ def check(case, expected, message="", *, with_orca=False):
         release["commit"] = commit(repo, "Edit the plugin off the release branch")
         git(repo, "checkout", "--quiet", "--detach", "HEAD^")
     elif case == "release-version-mismatch":
-        release["version"] = f"{major}.{minor}.{patch + 1}"
+        release["version"] = "0.0.0" if version != "0.0.0" else "0.0.1"
     elif case == "duplicate-version":
         plugin["releases"].append(release)
     elif case == "wrong-shape":
@@ -122,12 +144,22 @@ def check(case, expected, message="", *, with_orca=False):
 check("unreleased", "note", "docs/compatibility.md")
 check("bump", "note", "docs/compatibility.md")
 check("lower", "fail", "is lower than")
-check("invalid-head-version", "fail", "expected an X.Y.Z version")
-check("invalid-release-version", "fail", "expected an X.Y.Z version")
+check("prerelease", "pass")
+check("prerelease-bump", "note", "docs/compatibility.md")
+check("lower-than-prerelease", "fail", "is lower than")
+check("bump-and-edit", "note", "docs/compatibility.md")
+check("numeric-prerelease", "note", "docs/compatibility.md")
+check("alphanumeric-prerelease", "fail", "is lower than")
+check("invalid-head-version", "fail", "expected a valid SemVer version")
+check("invalid-release-version", "fail", "expected a valid SemVer version")
+check("leading-zero-core", "fail", "expected a valid SemVer version")
+check("leading-zero-prerelease", "fail", "expected a valid SemVer version")
+check("empty-version", "fail", "release versions must be non-empty and unique")
 check("missing-commit", "fail", "cat-file -t")
 check("non-ancestor", "fail", "is not an ancestor of HEAD")
 check("release-version-mismatch", "fail", "does not match")
-check("duplicate-version", "fail", "unique")
+check("duplicate-version", "fail", "release versions must be non-empty and unique")
+check("duplicate-precedence", "fail", "release versions must be non-empty and unique")
 check("wrong-shape", "fail", "expected catalogVersion 2")
 check("wrong-id", "fail", "plugin id must")
 check("wrong-source", "fail", "expected git source")
