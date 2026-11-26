@@ -5,7 +5,8 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 python=$(command -v python3)
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
-export HOME="$scratch/home"
+export HOME="$scratch/home" ODD_FLOW_HOME="$scratch/home/odd-state"
+export CLAUDE_CONFIG_DIR="$scratch/home/claude-config" CODEX_HOME="$scratch/home/codex-config"
 bin="$scratch/bin"
 mkdir -p "$bin" "$scratch/empty-bin" "$HOME"
 cd "$scratch"
@@ -33,6 +34,28 @@ printf 'ignored\n' > "$codex_install/.git/config"
 printf 'ignored\n' > "$codex_install/untracked"
 printf 'ignored\n' > "$codex_install/skills/odd-flow/scripts/__pycache__/ignored.pyc"
 printf 'worker-token-secret\n' > "$HOME/.odd-flow/worker-tokens/test"
+
+claude_data="$CLAUDE_CONFIG_DIR/plugins/data/odd-flow-test"
+claude_default_data="$HOME/.claude/plugins/data/odd-flow-test"
+codex_data="$CODEX_HOME/plugins/data/odd-flow-test"
+agy_data="$HOME/.gemini/antigravity-cli/plugin_data/odd-flow"
+export CLAUDE_PLUGIN_DATA="$HOME/foreign-data" PLUGIN_DATA="$HOME/foreign-data"
+record=$(printf '%064d' 1)
+mkdir -p "$ODD_FLOW_HOME/sessions" "$claude_data/prompt-sessions" \
+    "$claude_default_data/session-modes" "$codex_data/session-modes" \
+    "$agy_data/session-modes" "$PLUGIN_DATA/prompt-sessions"
+printf '{}\n' > "$ODD_FLOW_HOME/sessions/recent.json"
+printf '{}\n' > "$ODD_FLOW_HOME/sessions/old.json"
+touch -t 200001010000 "$ODD_FLOW_HOME/sessions/old.json"
+printf 'not a binding\n' > "$ODD_FLOW_HOME/sessions/unrelated"
+printf 'prompt\n' > "$claude_data/prompt-sessions/$record"
+touch -t 200001010000 "$claude_data/prompt-sessions/$record"
+ln -s "$record" "$claude_data/prompt-sessions/$(printf '%064d' 2)"
+printf 'foreign prompt\n' > "$PLUGIN_DATA/prompt-sessions/$record"
+for data in "$claude_default_data" "$codex_data" "$agy_data"; do
+    printf 'organic\n' > "$data/session-modes/$record"
+    touch -t 200001010000 "$data/session-modes/$record"
+done
 
 export CLAUDE_FOLDER="$claude" CLAUDE_VERSION="$version"
 export ORCA_VERSION
@@ -62,12 +85,12 @@ check() {
 }
 
 assert_json() {
-    "$python" -I - "$1" "$version" "$claude" <<'PY'
+    "$python" -I - "$1" "$version" "$claude" "$codex_path" "$agy" "$ORCA_VERSION" <<'PY'
 import json
 from pathlib import Path
 import sys
 
-case, version, folder = sys.argv[1:]
+case, version, folder, codex_path, agy, orca_version = sys.argv[1:]
 lines = Path("out").read_text().splitlines()
 assert len(lines) == 1, lines
 assert not Path("err").read_text()
@@ -77,11 +100,26 @@ assert report["schema"] == "odd-flow.install-check/v1"
 rows = {row["runtime"]: row for row in report["installs"]}
 assert set(rows) == {"claude", "codex", "antigravity", "orca"}, rows
 if case == "sync":
+    legacy_report = {key: value for key, value in report.items() if key != "session_state"}
+    assert legacy_report == {
+        "schema": "odd-flow.install-check/v1",
+        "installs": [
+            {"runtime": runtime, "status": "in sync", "path": path, "version": version,
+             "expected_version": version, "files_differ": []}
+            for runtime, path in (("claude", folder), ("codex", codex_path), ("antigravity", agy))
+        ] + [
+            {"runtime": "orca", "status": "in sync", "version": orca_version,
+             "expected_version": orca_version, "plugin_status": "running"}
+        ],
+        "warnings": [],
+    }, legacy_report
+    assert report.get("session_state") == {
+        "session_bindings": 2, "prompt_sessions": 1, "session_modes": 3,
+    }, report
+elif case == "unreadable-session-state":
+    assert report.get("session_state") == {"status": "unreadable"}, report
     assert all(row["status"] == "in sync" for row in rows.values()), rows
-    assert rows["claude"]["path"] == folder and rows["claude"]["version"] == version
-    assert rows["orca"]["plugin_status"] == "running"
-    assert "plugin_error" not in rows["orca"]
-    assert not report["warnings"]
+    assert "reason" not in report, report
 elif case == "marketplace":
     assert rows["claude"]["status"] == "files differ", rows["claude"]
     assert rows["claude"]["path"] == str(Path(folder).with_name("claude-marketplace"))
@@ -124,6 +162,9 @@ elif case == "unreadable":
     assert rows["codex"]["status"] == "files differ"
 else:
     assert all(row["status"] == "not installed" for row in rows.values()), rows
+    assert report.get("session_state") == {
+        "session_bindings": 0, "prompt_sessions": 0, "session_modes": 0,
+    }, report
 PY
 }
 
@@ -136,7 +177,15 @@ grep -Fx "Codex: in sync [$codex_path] (odd-flow $version)" out
 grep -Fx "Antigravity: in sync [$agy] (odd-flow $version)" out
 grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: running)" out
 grep -F 'ignored' out
+grep -Fx 'Session state: 2 session binding(s), 1 prompt-hook record(s), 3 mode-notice record(s)' out
 diff -r "$scratch/before" "$HOME"
+
+printf 'not a directory\n' > "$codex_data/prompt-sessions"
+check unreadable-session-state 0 --json
+assert_json unreadable-session-state
+check human-unreadable-session-state 0
+grep -Fx 'Session state: unreadable' out
+rm "$codex_data/prompt-sessions"
 
 cp "$bin/claude" "$scratch/claude-folder"
 cp -R "$claude" "$HOME/claude-marketplace"
@@ -225,7 +274,8 @@ check unreadable 3 --json
 assert_json unreadable
 
 bin="$scratch/empty-bin"
-export HOME="$scratch/missing-home"
+export HOME="$scratch/missing-home" ODD_FLOW_HOME="$scratch/missing-home/odd-state"
+export CLAUDE_CONFIG_DIR="$scratch/missing-home/claude-config" CODEX_HOME="$scratch/missing-home/codex-config"
 check absent 0 --json
 assert_json absent
 

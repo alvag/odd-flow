@@ -12,10 +12,13 @@ beside `profiles` because a profile's keys are roles only.
 """
 
 import argparse
+from contextlib import contextmanager
 import difflib
 import json
 import os
+from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,6 +36,7 @@ WORKFLOW_FIELDS = ("orchestratorMode",)
 CLAUDE_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 ORCA_HANDLE_RE = re.compile(r"[A-Za-z0-9_:.-]{1,200}")
+RECORD_NAME_RE = re.compile(r"[0-9a-f]{64}")
 CODEX_LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-worker.sh")
 
 # First present variable wins. The agent column is the Orca agent id of the
@@ -116,14 +120,19 @@ def write_json_atomic(path, data):
         raise
 
 
-def remove_session_file(path):
-    """Remove a session binding file; False when it does not exist, ProfileError when it cannot be removed."""
+def _state_path_error(exc, path):
+    return OSError(exc.errno, exc.strerror, str(path))
+
+
+def remove_session_file(path, *, dir_fd=None, label="session binding"):
+    """Remove a state file; return False if missing, raise ProfileError on failure."""
     try:
-        os.unlink(path)
+        os.unlink(os.path.basename(path) if dir_fd is not None else path, dir_fd=dir_fd)
     except FileNotFoundError:
         return False
     except OSError as exc:
-        raise ProfileError(f"{path}: cannot remove session binding: {exc}") from exc
+        detail = _state_path_error(exc, path) if dir_fd is not None else exc
+        raise ProfileError(f"{path}: cannot remove {label}: {detail}") from exc
     return True
 
 
@@ -761,31 +770,177 @@ def cmd_set_mode(args):
         print(f"profile '{args.name}' mode: {args.mode}")
 
 
-def cmd_prune(args):
-    folder = os.path.join(home_dir(), "sessions")
+@contextmanager
+def _open_state_dir(base, *parts):
+    """Follow the configured base, but not symlinks inside odd-flow state."""
+    flags = os.O_RDONLY | os.O_DIRECTORY
     try:
-        entries = os.listdir(folder)
+        fd = os.open(base, flags)
     except FileNotFoundError:
-        print("no session bindings")
+        yield None
         return
     except OSError as exc:
-        raise ProfileError(f"{folder}: cannot read session bindings: {exc}") from exc
-    cutoff = time.time() - args.days * 86400
-    removed = 0
-    for entry in entries:
-        path = os.path.join(folder, entry)
-        if not entry.endswith(".json"):
-            continue
+        raise _state_path_error(exc, base.joinpath(*parts)) from exc
+    try:
+        path = base
+        for part in parts:
+            path /= part
+            try:
+                child = None if stat.S_ISLNK(os.lstat(part, dir_fd=fd).st_mode) else os.open(
+                    part, flags | os.O_NOFOLLOW, dir_fd=fd
+                )
+            except FileNotFoundError:
+                child = None
+            except OSError as exc:
+                raise _state_path_error(exc, path) from exc
+            if child is None:
+                yield None
+                return
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def _record_state_error(errors, message, cause):
+    error = ProfileError(message)
+    if errors is None:
+        raise error from cause
+    errors.append(error)
+
+
+def discover_plugin_data_dirs(*, errors=None):
+    """Yield real odd-flow plugin data directories from installed runtime layouts."""
+    home = Path.home()
+    claude_config = os.environ.get("CLAUDE_CONFIG_DIR")
+    codex_config = Path(os.environ.get("CODEX_HOME") or home / ".codex")
+    roots = [home / ".claude", codex_config]
+    if claude_config:
+        roots.insert(0, Path(claude_config))
+    roots = [(root / "plugins/data", False) for root in roots]
+    roots.append((home / ".gemini/antigravity-cli/plugin_data", True))
+    found = set()
+    for root, antigravity in roots:
+        root = root.absolute()
         try:
-            if not os.path.isfile(path) or os.path.getmtime(path) >= cutoff:
-                continue
+            with _open_state_dir(root) as fd:
+                if fd is None:
+                    continue
+                for entry in os.listdir(fd):
+                    if not (entry == "odd-flow" if antigravity else entry.startswith("odd-flow-")):
+                        continue
+                    try:
+                        info = os.lstat(entry, dir_fd=fd)
+                    except FileNotFoundError:
+                        continue
+                    except OSError as exc:
+                        detail = _state_path_error(exc, root / entry)
+                        _record_state_error(errors, f"{root}: cannot discover plugin data: {detail}", exc)
+                        continue
+                    identity = info.st_dev, info.st_ino
+                    if stat.S_ISDIR(info.st_mode) and identity not in found:
+                        found.add(identity)
+                        yield root / entry
+        except NotADirectoryError:
+            continue
+        except OSError as exc:
+            path = root / exc.filename if exc.filename else root
+            detail = _state_path_error(exc, path)
+            _record_state_error(errors, f"{root}: cannot discover plugin data: {detail}", exc)
+
+
+def _state_folders(data_dirs):
+    yield "session_bindings", Path(home_dir()), ("sessions",), "session binding"
+    for data_dir in data_dirs:
+        data_dir = Path(data_dir)
+        yield "prompt_sessions", data_dir.parent, (data_dir.name, "prompt-sessions"), "prompt-hook record"
+        yield "session_modes", data_dir.parent, (data_dir.name, "session-modes"), "mode-notice record"
+
+
+def _list_state_files(fd, folder, label, cutoff, errors):
+    try:
+        entries = os.listdir(fd)
+    except OSError as exc:
+        detail = _state_path_error(exc, folder)
+        raise ProfileError(f"{folder}: cannot read {label}s: {detail}") from exc
+    for entry in entries:
+        if not (entry.endswith(".json") if label == "session binding" else RECORD_NAME_RE.fullmatch(entry)):
+            continue
+        path = folder / entry
+        try:
+            info = os.lstat(entry, dir_fd=fd)
         except FileNotFoundError:
             continue
         except OSError as exc:
-            raise ProfileError(f"{path}: cannot inspect session binding: {exc}") from exc
-        if remove_session_file(path):
-            removed += 1
-    print(f"removed {removed} session binding(s) older than {args.days} days")
+            detail = _state_path_error(exc, path)
+            _record_state_error(errors, f"{path}: cannot inspect {label}: {detail}", exc)
+            continue
+        if stat.S_ISREG(info.st_mode) and (cutoff is None or info.st_mtime < cutoff):
+            yield path
+
+
+def _scan_session_state(data_dirs, cutoff, *, remove, errors=None):
+    result = {key: [] for key in ("session_bindings", "prompt_sessions", "session_modes")}
+    bindings_found = False
+    for key, base, parts, label in _state_folders(data_dirs):
+        folder = base.joinpath(*parts)
+        try:
+            with _open_state_dir(base, *parts) as fd:
+                if fd is None:
+                    continue
+                if key == "session_bindings":
+                    bindings_found = True
+                for path in _list_state_files(fd, folder, label, cutoff, errors):
+                    if remove:
+                        try:
+                            if not remove_session_file(path, dir_fd=fd, label=label):
+                                continue
+                        except ProfileError as exc:
+                            errors.append(exc)
+                            continue
+                    result[key].append(path)
+        except OSError as exc:
+            _record_state_error(errors, f"{folder}: cannot read {label}s: {exc}", exc)
+        except ProfileError as exc:
+            if errors is None:
+                raise
+            errors.append(exc)
+    return result, bindings_found
+
+
+def list_session_state(data_dirs, *, cutoff=None):
+    """List regular state files per category without removing them; cutoff is an mtime."""
+    return _scan_session_state(data_dirs, cutoff, remove=False)[0]
+
+
+def prune_session_state(data_dirs, cutoff, *, errors=None):
+    """Return removed counts, continuing past failures and collecting them if requested."""
+    if errors is None:
+        errors = []
+    removed, bindings_found = _scan_session_state(data_dirs, cutoff, remove=True, errors=errors)
+    counts = {key: len(paths) for key, paths in removed.items()}
+    if not bindings_found:
+        counts["session_bindings"] = None
+    return counts
+
+
+def cmd_prune(args):
+    cutoff = time.time() - args.days * 86400
+    errors = []
+    counts = prune_session_state(discover_plugin_data_dirs(errors=errors), cutoff, errors=errors)
+    suffix = f"older than {args.days} days"
+    bindings = counts["session_bindings"]
+    if bindings is None and not errors:
+        print("no session bindings")
+    else:
+        print(f"removed {bindings or 0} session binding(s) {suffix}")
+    print(f"removed {counts['prompt_sessions']} prompt-hook record(s) {suffix}")
+    print(f"removed {counts['session_modes']} mode-notice record(s) {suffix}", flush=bool(errors))
+    if errors:
+        for error in errors:
+            print(f"odd-flow: {error}", file=sys.stderr)
+        return 2
 
 
 def main(argv=None):
@@ -830,16 +985,15 @@ def main(argv=None):
     session_mode = sub.add_parser("session-mode", help="set the orchestrator mode for this session only")
     session_mode.add_argument("mode", choices=MODES)
     session_mode.set_defaults(func=cmd_session_mode)
-    prune = sub.add_parser("prune", help="remove old session bindings")
+    prune = sub.add_parser("prune", help="remove old session bindings and hook records")
     prune.add_argument("--days", type=int, default=30)
     prune.set_defaults(func=cmd_prune)
     args = parser.parse_args(argv)
     try:
-        args.func(args)
+        return args.func(args) or 0
     except ProfileError as exc:
         print(f"odd-flow: {exc}", file=sys.stderr)
         return 2
-    return 0
 
 
 if __name__ == "__main__":

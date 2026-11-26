@@ -90,7 +90,17 @@ With none present, `use` fails; pass `ODD_PROFILE` at launch instead.
 | `/odd-flow --profile-mode B full-delegation` | `profile.py set-mode B full-delegation` (dry run), show its diff, ask to confirm; on yes, the same command with `--yes`. Then run `profile.py mode` and load the mode file it names |
 | "back to the default profile" | `profile.py clear` |
 | check agents exist in Orca | `profile.py check` |
-| remove old session bindings | `profile.py prune --days 30` |
+| remove old session bindings, prompt-hook records, and mode-notice records | `profile.py prune --days 30` |
+
+`prune` uses file modification time (30 days by default). It scans the session
+bindings and the plugin data directories for Claude Code, Codex, and Antigravity.
+Resuming a pruned session uses the default profile and mode unless another override applies.
+
+SessionStart also removes records and bindings older than 30 days. It checks
+only session bindings and the current runtime's plugin data directory, at most
+once every 24 hours per data directory. Without a plugin data directory, it skips
+automatic cleanup. Both forms continue past failures; the hook stays silent,
+while `prune` reports partial counts and errors and exits with status 2.
 
 A bare profile name (`/odd-flow B`) is not a command: ask whether the user meant `--profile B`.
 

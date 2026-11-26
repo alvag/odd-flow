@@ -13,8 +13,10 @@ blocks the session.
 import json
 import os
 import runpy
+import stat
 import subprocess
 import sys
+import time
 
 CODEX = sys.argv[1:] == ["--runtime", "codex"]
 ANTIGRAVITY = sys.argv[1:] == ["--runtime", "antigravity"]
@@ -29,6 +31,7 @@ CORE_BLOCKS = {
     "full-delegation": os.path.join(SKILL_DIR, "assets", "core-block-full-delegation.md"),
 }
 PROFILE_SCRIPT = os.path.join(SKILL_DIR, "scripts", "profile.py")
+SECONDS_PER_DAY = 86400
 
 
 def read_payload():
@@ -97,18 +100,50 @@ def profile_state(env):
     return text or "odd-flow profile state unavailable (no output)."
 
 
-def remember_injected_mode(session_id, mode):
-    if not isinstance(session_id, str) or not session_id:
+def cleanup_session_state(data):
+    if not data:
         return
+    try:
+        import fcntl
+
+        directory = os.open(data, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            stamp = os.open("session-cleanup.stamp", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
+                            | os.O_NONBLOCK, 0o600, dir_fd=directory)
+            try:
+                # Claim the daily scan through the stamp without waiting for another hook.
+                fcntl.flock(stamp, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                info = os.fstat(stamp)
+                now = time.time()
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    return
+                if info.st_size and now - info.st_mtime < SECONDS_PER_DAY:
+                    return
+                os.write(stamp, b"\n")
+            finally:
+                os.close(stamp)
+        finally:
+            os.close(directory)
+        helpers = runpy.run_path(PROFILE_SCRIPT)
+        helpers["prune_session_state"]([data], now - 30 * SECONDS_PER_DAY)
+    except Exception:
+        pass  # Cleanup must not change the SessionStart response.
+
+
+def update_session_state(session_id, mode):
     try:
         # The hooks run with Python -I, which leaves the script directory off sys.path.
         # Load the sibling without running its CLI to share its data directory and hash.
         sibling = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompt-submit.py")
         helpers = runpy.run_path(sibling)
+    except (OSError, ValueError):
+        return
+    try:
         marker = helpers["session_marker"](session_id, "session-modes")
         helpers["record_session_mode"](marker, mode)
     except (OSError, ValueError):
         pass  # A missing or unwritable marker must not suppress the core block.
+    cleanup_session_state(os.environ.get(helpers["DATA_VAR"]))
 
 
 def emit_context(context):
@@ -139,7 +174,7 @@ def main():
         f"```\n{profile_state(env)}\n```"
     )
     emit_context("\n\n".join(parts))
-    remember_injected_mode(session_id, mode)
+    update_session_state(session_id, mode)
     return 0
 
 

@@ -33,7 +33,7 @@ The modes differ only in who writes and what follows from it; exploring, verifyi
 | [`orca-plugin/`](orca-plugin/README.md) | Orca panel, status item, and commands for switching session profiles and modes |
 | `hooks/hooks.json` | Claude Code hooks: `SessionStart` on startup, resume, clear and compact; `UserPromptSubmit` and `PreToolUse` |
 | `hooks/codex-hooks.json` | Codex hooks: `SessionStart` on startup, resume, clear and compact; `UserPromptSubmit`; `PreToolUse` for `apply_patch`, `spawn_agent` and `Bash` |
-| `scripts/session-start.py` | Injects the core block of the session's mode (`assets/core-block.md` or `assets/core-block-full-delegation.md`) and the active profile into the session |
+| `scripts/session-start.py` | Injects the core block of the session's mode (`assets/core-block.md` or `assets/core-block-full-delegation.md`) and the active profile into the session, then [prunes expired session state](skills/odd-flow/references/profiles.md) at most once a day per runtime plugin data directory |
 | `scripts/prompt-submit.py` | Records a per-session parent or worker marker from the first prompt, recognizing known Orca preambles, a first-line role header, or a trailing `odd-flow-worker: <role> <token>` line from the ODD Flow Orca plugin. The hook accepts only a valid, unused token for that role. The hook consumes a valid, unused token even when another rule already identifies the worker. A bare marker does not identify a worker. The hook rejects a relative `ODD_FLOW_STATE_DIR` and requires `worker-tokens` to be a real directory (not a symlink), mode `0700`, owned by the running user. In full delegation, restates the coordinator or worker rules on each prompt. Gives coordinators a one-time notice when the effective mode changes, including a switch to organic. |
 | `scripts/pre-tool-use.py` | Checks edit surface declarations for supported writer launches in both modes; guards the parent's direct Claude Code edits and direct Codex `apply_patch` calls in full delegation |
 | `.claude-plugin/` | Claude Code plugin manifest and marketplace |
@@ -126,6 +126,8 @@ The [ODD Flow Orca plugin](orca-plugin/README.md) shows and switches the odd-flo
 ## Updating
 
 Run `/odd-flow check [--json]` for a read-only install report, or run `python3 -I skills/odd-flow/scripts/install_check.py [--json]` from the checkout you want to compare against. The report lists missing, changed, or extra shipped files and any error reported when the ODD Flow Orca plugin is not running. Neither command reinstalls anything.
+
+The report also counts session bindings, prompt-hook records, and mode-notice records of any age without deleting them. JSON includes these counts in `session_state` as `session_bindings`, `prompt_sessions`, and `session_modes`. If the state cannot be read, the report says so (`{"status": "unreadable"}` in `session_state`); this does not affect the exit code.
 
 The tokened worker marker requires odd-flow 0.4.0 or newer hooks. Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. With mixed versions, the hooks do not recognize the marker and identify workers by the Orca preamble or first-line `# Role:` rule instead. An older hook leaves the token record to expire and be pruned. The plugin still works with odd-flow 0.3.0 hooks because those fallback rules remain in place.
 
