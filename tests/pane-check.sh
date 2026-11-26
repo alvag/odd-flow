@@ -22,10 +22,18 @@ printf '%s\n' \
   'if [ "$2" = list ]; then printf "%s\n" "${ORCA_HANG:+hung }list entered" >>"$ORCA_LOG.lists"; fi' \
   'if [ "$2" = "${ORCA_HANG:-}" ]; then' \
   '  if [ "$2" = list ]; then exec sleep 5; fi' \
+  '  case "$2" in' \
+  '    split|create) printf "%s\n" "$2" >"$ORCA_LOG.pending" ;;' \
+  '  esac' \
   '  sleep 5' \
   'fi' \
   'case "$1 $2" in' \
-  '  "terminal list") cat "$ORCA_LAYOUT" ;;' \
+  '  "terminal list")' \
+  '    case "$(cat "$ORCA_LOG.pending" 2>/dev/null)" in' \
+  '      split) echo "{\"ok\":true,\"result\":{\"terminals\":[{\"handle\":\"term_late_split\",\"title\":null,\"command\":\"claude\"}]}}"; exit 0 ;;' \
+  '      create) echo "{\"ok\":true,\"result\":{\"terminals\":[{\"handle\":\"term_late_tab\",\"title\":\"T1 verify: example\",\"command\":\"claude\"}]}}"; exit 0 ;;' \
+  '    esac' \
+  '    cat "$ORCA_LAYOUT" ;;' \
   '  "terminal create")' \
   '    case "${ORCA_FAIL_CREATE:-}" in' \
   '      1) echo "{\"ok\":false,\"error\":{\"message\":\"create refused\"}}"; exit 1 ;;' \
@@ -116,6 +124,7 @@ open_pane() {
   fi
   : >"$T/argv"
   : >"$T/argv.samples"
+  : >"$T/argv.pending"
   env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" \
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
@@ -220,11 +229,19 @@ fi
 expect "create timeout does not wait for a child holding the output pipe" 1 "$ec" \
   'Orca terminal create: timed out (limit: 1s). A terminal may have opened. Check terminal list and close it.' \
   "$list_call$tab_call"$'\n\nend argv'
+out="$out"$'\n'"$(ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" "$T/orca" terminal list --json)"
+expect "create timeout identifies the late tab by worktree and title" 1 "$ec" \
+  'Worktree: current; title: "T1 verify: example".'$'\n''{"ok":true,"result":{"terminals":[{"handle":"term_late_tab","title":"T1 verify: example","command":"claude"}]}}'
 
+layout "$(split vertical "$p" "$r1")"
 out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "split timeout warns that a pane may have opened" 1 "$ec" \
   'Orca terminal split: timed out (limit: 1s). A pane may have opened. Check terminal list and close it.' \
-  "$list_call$right_call"$'\n\nend argv'
+  "$list_call"$'\nterminal\nsplit\n--terminal\nterm_r1\n--direction\nhorizontal\n--command\nclaude\n--json\n\nend argv'
+out="$out"$'\n'"$(ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" "$T/orca" terminal list --json)"
+expect "split timeout identifies the late untitled pane by split target and direction" 1 "$ec" \
+  'Split target: term_r1; direction: horizontal; intended title: "T1 verify: example".'$'\n''{"ok":true,"result":{"terminals":[{"handle":"term_late_split","title":null,"command":"claude"}]}}'
+layout "$p"
 
 out=$(hang=set-pane-title orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "title timeout preserves the opened pane and reports a title error" 0 "$ec" \
