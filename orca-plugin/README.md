@@ -288,6 +288,11 @@ sends a prompt, or launches an agent.
   `Could not update odd-flow status:` means Orca rejected a status update,
   not that the command itself failed. The reason is shortened or redacted
   when needed.
+- If the plugin log shows `exceeded the pending event limit` followed by
+  `worker exited unexpectedly (code null)`, Orca killed the worker.
+  After four such exits, Orca marks the plugin errored. Run
+  `orca plugin restart <key>` to clear the error state, using the installed
+  plugin key.
 
 ## Develop
 

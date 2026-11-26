@@ -940,8 +940,11 @@ export function createWorker({
         trace.branch = `switched to ${mode}`
         return `Switched odd-flow mode to ${mode}.`
       }))
-    orca.events.on('agent.status.changed', () => refreshStatus())
-    orca.events.on('workspace.changed', () => refreshStatus())
+    const refreshOnEvent = () => {
+      void refreshStatus().catch(() => logDiagnostic(() => 'Could not refresh odd-flow status.'))
+    }
+    orca.events.on('agent.status.changed', refreshOnEvent)
+    orca.events.on('workspace.changed', refreshOnEvent)
     const stopRefresh = scheduleRefresh(refreshStatus)
     return () => {
       lifetime.abort()

@@ -38,6 +38,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Fixed
 
+- The ODD Flow Orca plugin acknowledges agent and workspace events without waiting for the status refresh, so event bursts no longer pile up behind it.
 - `/odd-flow check` sanitizes paths, file names, reasons, and Orca plugin errors in text output, stripping Unicode format characters and truncating plugin errors longer than 200 characters with `...`. Unreadable session state now includes a reason in text and JSON; other JSON output is unchanged.
 - `profile.py` reports an odd-flow error instead of a traceback when `prune` lacks directory descriptor support or when `use` or `session-mode` cannot write session state. `prune` reports an unreadable plugin data root once per root.
 - SessionStart treats future-dated cleanup stamps as stale and limits automatic cleanup to 1 second. If it reaches the limit, it leaves the stamp unchanged so cleanup resumes at the next session start.
