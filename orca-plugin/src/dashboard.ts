@@ -48,6 +48,7 @@ export function parseOrcaTime(value: unknown): number | null {
 }
 
 const taskStatuses = ['pending', 'in_progress', 'done', 'blocked', 'dropped'] as const
+const STALE_WORK_MS = 12 * 60 * 60 * 1000
 const activeDispatchStates = new Set(['ready', 'dispatched', 'running'])
 type DashboardWorker = WorkerRow & { attentionSince?: number }
 
@@ -120,6 +121,7 @@ export function featureOwners(input: {
   tasks: RawTask[]
   runs: RawRun[]
   openSessions: Iterable<string>
+  hiddenRunIds: ReadonlySet<string>
 }): FeatureOwnership {
   const open = new Set(input.openSessions)
   const runCoordinator = new Map(
@@ -128,6 +130,7 @@ export function featureOwners(input: {
   )
   const openTasks: { spec: string; session: string; createdAt: number | null; completedAt: number | null }[] = []
   for (const task of input.tasks) {
+    if (task.run_id && input.hiddenRunIds.has(task.run_id)) continue
     if (typeof task.spec !== 'string' || !task.spec) continue
     const session = (task.created_by_terminal_handle && open.has(task.created_by_terminal_handle))
       ? task.created_by_terminal_handle
@@ -201,10 +204,37 @@ function newestFirst(a: number | null, b: number | null): number {
   return b - a
 }
 
+export function hiddenDashboardWork(runs: RawRun[], tasks: RawTask[], dispatches: RawDispatch[], now: number) {
+  const cutoff = now - STALE_WORK_MS
+  const activeTaskIds = new Set(dispatches.filter(({ state }) => isActiveDispatch(state)).map(({ taskId }) => taskId))
+  const activity = new Map(runs.map(({ id, created_at }) => [id, { latest: parseOrcaTime(created_at), open: false }]))
+  const standaloneTasks = new Set<string>()
+  for (const task of tasks) {
+    const completedAt = parseOrcaTime(task.completed_at)
+    const active = activeTaskIds.has(task.id)
+    if (!task.run_id) {
+      if (!active && completedAt !== null && completedAt < cutoff) standaloneTasks.add(task.id)
+      continue
+    }
+    const run = activity.get(task.run_id)
+    if (!run) continue
+    run.open ||= active || completedAt === null
+    for (const at of [parseOrcaTime(task.created_at), completedAt]) {
+      if (newestFirst(at, run.latest) < 0) run.latest = at
+    }
+  }
+  const hiddenRuns = new Set<string>()
+  for (const [id, { latest, open }] of activity) {
+    if (!open && latest !== null && latest < cutoff) hiddenRuns.add(id)
+  }
+  return { runs: hiddenRuns, standaloneTasks }
+}
+
 export function workerRows(input: {
   dispatches: RawDispatch[]; tasks: RawTask[]; agents: Agent[]; coordinator: string; runs: RawRun[]
-}): DashboardWorker[] {
-  const { dispatches, tasks, agents, coordinator, runs } = input
+  hidden: ReturnType<typeof hiddenDashboardWork>
+}) {
+  const { dispatches, tasks, agents, coordinator, runs, hidden } = input
   const runIds = new Set(runs.filter((run) => run.coordinator_handle === coordinator).map((run) => run.id))
   const taskById = new Map(tasks.map((task) => [task.id, task]))
   const blockedTerminals = new Map(agents.filter((agent) => agent.state === 'blocked')
@@ -216,11 +246,14 @@ export function workerRows(input: {
 
   const activeTerminals = new Set<string>()
   const workers: DashboardWorker[] = []
+  const workspaceCandidates = new Set<string>()
   for (const { dispatch, task, active, startedAt } of candidates) {
     const terminal = dispatch.terminal
     const newestActive = active && !!terminal && !activeTerminals.has(terminal)
     if (active && terminal) activeTerminals.add(terminal)
     if (!task || !(task.created_by_terminal_handle === coordinator || (task.run_id && runIds.has(task.run_id)))) continue
+    if (dispatch.workspace) workspaceCandidates.add(dispatch.workspace)
+    if (task.run_id ? hidden.runs.has(task.run_id) : hidden.standaloneTasks.has(task.id)) continue
 
     const blocked = newestActive ? blockedTerminals.get(terminal ?? null) : undefined
     // Orca projects pending questions as input, not as a question category.
@@ -237,7 +270,7 @@ export function workerRows(input: {
       ...(blocked?.stateStartedAt != null ? { attentionSince: blocked.stateStartedAt } : {})
     })
   }
-  return workers
+  return { workers, workspaceCandidates }
 }
 
 export function attentionItems(coordinator: Agent, workers: DashboardWorker[]): Attention[] {
@@ -265,8 +298,10 @@ function resultSubject(result: string | null): string | null {
   }
 }
 
-export function currentWork(runs: RawRun[], tasks: RawTask[], coordinator: string): CurrentWork | null {
-  const run = runs.filter((item) => item.coordinator_handle === coordinator)
+export function currentWork(
+  runs: RawRun[], tasks: RawTask[], coordinator: string, hiddenRunIds: ReadonlySet<string>
+): CurrentWork | null {
+  const run = runs.filter((item) => item.coordinator_handle === coordinator && !hiddenRunIds.has(item.id))
     .map((item) => ({ item, startedAt: parseOrcaTime(item.created_at) }))
     .sort((a, b) => newestFirst(a.startedAt, b.startedAt))[0]
   if (!run) return null

@@ -173,9 +173,14 @@ their sources. It refreshes on agent status and workspace changes. Use
 
 **Feature tasks** shows progress for the feature document owned by the
 session (whose tasks most recently cite it), or an unowned document on the
-current branch as a fallback, with completed tasks folded. Without a matching
-feature document, **Current work** shows the latest Orca run for that
-coordinator, its tasks, and the latest result. It also shows a Git summary;
+current branch as a fallback, with completed tasks folded. Hidden runs do not
+establish document ownership, but the branch fallback can still show their
+documents. Without a matching feature document, **Current work** shows the
+newest visible Orca run for that coordinator, its tasks, and the latest result.
+A run is hidden when all its tasks have a completion timestamp, none has an
+active dispatch, and the newest of the run's creation time and its tasks'
+creation and completion times is more than 12 hours old.
+**Current work** also shows a Git summary;
 when there is no feature document or run, only the Git summary appears. If the
 workspace path is unavailable, the panel shows a note rather than guessing.
 
@@ -199,7 +204,9 @@ recorded mode. The notice tells the agent that the previous mode's rules no
 longer apply. Switching does not interrupt a running turn or change an
 already launched worker.
 
-**Workers** shows the coordinator's dispatches, active first. Each worker
+**Workers** shows the coordinator's dispatches, active first. It excludes
+dispatches from hidden runs and dispatches for tasks without a run that
+completed more than 12 hours ago and have no active dispatch. Each worker
 has a status badge and a one-line title, followed by its agent/model and live
 elapsed time or final duration. Finished workers beyond the newest three are
 folded. Worker rows have no profile details or controls.

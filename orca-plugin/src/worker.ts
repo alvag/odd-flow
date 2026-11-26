@@ -5,7 +5,7 @@ import { homedir } from 'node:os'
 import { basename, delimiter, isAbsolute, join, resolve } from 'node:path'
 import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
-import { attentionItems, currentWork, featureOwners, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc,
+import { attentionItems, currentWork, featureOwners, hiddenDashboardWork, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc,
   workerRows, type FeatureOwnership, type RawDispatch, type RawRun, type RawTask } from './dashboard'
 import { promptWithWorkerMarker } from './prompt-hook'
 import { isAgentKind, isMode, type Agent, type AgentRow, type Dashboard, type OddState, type ProfileList,
@@ -680,18 +680,20 @@ export function createWorker({
         dashboardRuns(new Set(rows.map(({ terminalId }) => terminalId)), deadline)
       ])
       const { runs, tasks, dispatches, failed, listError } = sources
-      const byDispatch = new Map(dispatches.map((row) => [row.dispatchId, row]))
+      const hidden = hiddenDashboardWork(runs, tasks, dispatches, Date.now())
       const openSessions = rows.map(({ terminalId }) => terminalId)
       const entries = await Promise.all(rows.map(async (row): Promise<[string, Dashboard]> => {
         const terminalId = row.terminalId
-        const workers = workerRows({ dispatches, tasks, agents: snapshot.agents, coordinator: terminalId, runs })
+        const { workers, workspaceCandidates } = workerRows({
+          dispatches, tasks, agents: snapshot.agents, coordinator: terminalId, runs, hidden
+        })
         const dashboard: Dashboard = {
           terminalId, workers, attention: attentionItems(row, workers), feature: null, current: null, git: null, errors: {}
         }
         const workerError = listError ?? failed.get(terminalId)
         if (workerError) dashboard.errors.workers = `Could not load all Orca work for this session: ${workerError}`
-        const root = workspace.root ?? (!workspace.remote ? workers.map(({ dispatchId }) =>
-          dispatchRoot(byDispatch.get(dispatchId)?.workspace)).find((path) => path !== undefined) : undefined)
+        const root = workspace.root ?? (!workspace.remote ? [...workspaceCandidates]
+          .map(dispatchRoot).find((path) => path !== undefined) : undefined)
         if (!root) {
           dashboard.errors.workspace = 'Workspace path is unavailable.'
           return [terminalId, dashboard]
@@ -702,7 +704,7 @@ export function createWorker({
         if (featureSource.status === 'fulfilled') {
           let owners = ownershipByRoot.get(root)
           if (!owners) {
-            owners = featureOwners({ docs: featureSource.value.docs, tasks, runs, openSessions })
+            owners = featureOwners({ docs: featureSource.value.docs, tasks, runs, openSessions, hiddenRunIds: hidden.runs })
             ownershipByRoot.set(root, owners)
           }
           dashboard.feature = selectFeatureDoc(featureSource.value.docs, featureSource.value.branch, {
@@ -711,7 +713,7 @@ export function createWorker({
         } else {
           dashboard.errors.feature = 'Could not read feature documents for this workspace.'
         }
-        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId)
+        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId, hidden.runs)
         return [terminalId, dashboard]
       }))
       return Object.fromEntries(entries)

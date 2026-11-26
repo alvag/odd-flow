@@ -1358,9 +1358,9 @@ const runListArgv = ['orchestration', 'run-list', '--environment', 'local', '--j
 const taskSpecMarker = 'private-task-spec-not-for-the-panel'
 
 async function dashboardFixture(
-  root: string | null, { failGit = false, matchWorkspace = true } = {}
+  root: string | null, { failGit = false, matchWorkspace = true, finished = false } = {}
 ) {
-  const started = '2026-11-25T16:00:00Z'
+  const started = finished ? '2020-11-25T16:00:00Z' : '2026-11-25T16:00:00Z'
   const timestamp = Date.parse(started)
   const coordinator = { ...agent('codex'), state: 'blocked' as const, stateStartedAt: timestamp }
   const agents = [coordinator, agent('claude'), dispatched]
@@ -1374,7 +1374,7 @@ async function dashboardFixture(
       const run = argv[argv.indexOf('--run') + 1]
       if (argv[1] === 'worker-list') {
         return cliOk({ workers: [{
-          dispatchId: 'dispatch-1', taskId: 'task-1', state: 'ready', terminal: 'worker-terminal',
+          dispatchId: 'dispatch-1', taskId: 'task-1', state: finished ? 'succeeded' : 'ready', terminal: 'worker-terminal',
           agent: 'codex/gpt-6-luna', attention: ['input'], workspace: root && `workspace::${root}`,
           spec: taskSpecMarker
         }] })
@@ -1397,8 +1397,8 @@ async function dashboardFixture(
         }
         assert.equal(run, 'run-1')
         return cliOk({ tasks: [{
-          id: 'task-1', task_title: 'Gather data', status: 'dispatched', created_at: started,
-          completed_at: null, created_by_terminal_handle: 'codex', run_id: 'run-1', result: null,
+          id: 'task-1', task_title: 'Gather data', status: finished ? 'completed' : 'dispatched', created_at: started,
+          completed_at: finished ? started : null, created_by_terminal_handle: 'codex', run_id: 'run-1', result: null,
           spec: taskSpecMarker
         }] })
       }
@@ -1472,6 +1472,20 @@ test('keeps other sections when one source fails', async (t) => {
   }
 })
 
+test('keeps the Git summary when only a hidden worker supplies the workspace path', async (t) => {
+  const root = await temp(t)
+  const { worker } = await dashboardFixture(root, { matchWorkspace: false, finished: true })
+  try {
+    const { dashboards } = await worker.request('state')
+    assert.deepEqual(dashboards?.codex.workers, [])
+    assert.equal(dashboards?.codex.current, null)
+    assert.equal(dashboards?.codex.errors.workspace, undefined)
+    assert.equal(dashboards?.codex.git?.lastCommit?.hash, 'abc123')
+  } finally {
+    await worker.deactivate()
+  }
+})
+
 test('hides tasks and git when the workspace path is unknown', async () => {
   const { worker, calls } = await dashboardFixture(null)
   try {
@@ -1504,7 +1518,7 @@ test('assigns a cited feature doc only to its owning session while keeping specs
   const root = await temp(t)
   const doc = await scriptAt(join(root, 'odd/tasks/dashboard.md'))
   await writeFile(doc, '# Dashboard\n\nBranch: `feature/dashboard`\n\n## Tasks\n| ID | Work | Status |\n| --- | --- | --- |\n| T1 | Build | in_progress |\n')
-  const started = '2026-11-25T16:00:00Z'
+  const started = new Date().toISOString()
   const worker = await fixture({ profileScript: currentScript }, [agent('codex'), agent('claude')], {
     runExecutable: async (executable, argv) => {
       if (executable === 'git') {
@@ -1561,12 +1575,12 @@ test('assigns a cited feature doc only to its owning session while keeping specs
 
 test('reloads dashboard workers across repeated state requests and cached older runs', async (t) => {
   const root = await temp(t)
-  const started = '2026-11-25T16:00:00Z'
+  const started = new Date().toISOString()
   const runs = Array.from({ length: 10 }, (_, index) => ({
     id: `run_${index}`,
     objective: `Run ${index}`,
     coordinator_handle: 'codex',
-    created_at: `2026-11-25T16:${String(index).padStart(2, '0')}:00Z`
+    created_at: new Date(Date.parse(started) + index * 60_000).toISOString()
   }))
   let includeNewRun = false
   const worker = await fixture({ profileScript: currentScript }, [agent('codex')], {
@@ -1579,7 +1593,7 @@ test('reloads dashboard workers across repeated state requests and cached older 
       }
       if (argv[1] === 'run-list') {
         const all = includeNewRun
-          ? [{ id: 'run_new', objective: 'Newest', coordinator_handle: 'codex', created_at: '2026-11-25T17:00:00Z' }, ...runs]
+          ? [{ id: 'run_new', objective: 'Newest', coordinator_handle: 'codex', created_at: new Date(Date.parse(started) + 60 * 60_000).toISOString() }, ...runs]
           : runs
         return cliOk({ runs: all, nextCursor: null })
       }
