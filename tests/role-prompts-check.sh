@@ -79,6 +79,7 @@ for block in core-block.md core-block-full-delegation.md; do
     need "$root/skills/odd-flow/assets/$block" 'Close every request with the verified outcome, every failed, skipped or pending check, residual risks workers reported, and the next step. Never report a check as passed without observed output.'
 done
 need "$root/skills/odd-flow/references/odd-protocol.md" 'Report verified outcome, every failed, skipped or pending check, residual risks workers reported (the writer'"'"'s `risks:` and the verifier'"'"'s `advisories` and `unverified` items), and the next step.'
+need "$root/skills/odd-flow/references/odd-protocol.md" 'Items the writer judged missing count as residual risks, even when its `risks:` field also says `Risk: none`.'
 need "$root/skills/odd-flow/SKILL.md" 'Close every request with: verified outcome; every failed, skipped or pending check; residual risks workers reported; next step; `Risk: item N (reason)` or `Risk: none` for code changes; and the profile and roles used when workers ran.'
 
 parent_inputs=$(sed -n '/^## What the parent passes$/,/^## Correction bounds$/p' "$delegation")
