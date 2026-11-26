@@ -53,6 +53,8 @@ def terminal(*args, timeout_context=""):
         if args[0] == "split":
             retrying = args[-2:-1] == ("--retry-split",)
             pending = isinstance(recovery, dict) and recovery.get("splitMayStillComplete") is True
+            if pending and retrying and recovery.get("splitId") == args[-1]:
+                return None, args[-1]
             if pending and not retrying:
                 split_id = recovery.get("splitId")
                 if isinstance(split_id, str) and re.fullmatch(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}", split_id):
@@ -69,7 +71,7 @@ def terminal(*args, timeout_context=""):
         handle = pane.get("handle") if isinstance(pane, dict) else None
         if not isinstance(handle, str) or not handle:
             raise RuntimeError(f"Orca terminal split: missing split handle{uncertain}")
-        return handle
+        return handle, None
     return result
 
 
@@ -237,6 +239,7 @@ def open_pane(args):
             recorded = recorded_width(width_path)
             if recorded is not None and recorded >= min_cols:
                 saved_cols = recorded
+        direction = None
         if target:
             result.update(placement="split-below", target=target, reason="right column exists")
             direction = "horizontal"
@@ -252,6 +255,31 @@ def open_pane(args):
                 "parent terminal width is unknown" if cols is None
                 else f"parent terminal is {cols} columns wide (minimum {min_cols})"
             )
+
+        orphan_leaf = None
+        if direction is not None:
+            timeout_context = (f" Split target: {result['target']}; direction: {direction};"
+                               f" intended title: {quoted_title}.")
+            handle, orphan_leaf = terminal("split", "--terminal", result["target"], "--direction", direction,
+                                           "--command", command, timeout_context=timeout_context)
+            if orphan_leaf is None:
+                result["handle"] = handle
+                if direction == "vertical" and args.cols is None and cols is not None and cols >= min_cols:
+                    try:
+                        fd = os.open(
+                            width_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK,
+                            0o600,
+                        )
+                        with os.fdopen(fd, "w") as record:
+                            record.write(f"{cols}\n")
+                    except OSError:
+                        # The split already succeeded; a missing record must not hide its handle.
+                        pass
+            else:
+                result.update(placement="tab", target=None, reason="split timed out after one retry",
+                              orphan_leaf=orphan_leaf)
+
+        if result["placement"] == "tab":
             timeout_context = f" Worktree: current; title: {quoted_title}."
             try:
                 baseline = terminal("list", "--worktree", "current", "--limit", "1000")
@@ -264,30 +292,22 @@ def open_pane(args):
                 timeout_context += f" Pre-create handles: {json.dumps(sorted(set(handles)))}."
             except (OSError, RuntimeError) as exc:
                 timeout_context += f" Pre-create handles unavailable: {exc}."
-            created = terminal("create", "--worktree", "current", "--title", args.title,
-                               "--command", command, timeout_context=timeout_context)
-            tab = created.get("terminal") if isinstance(created, dict) else None
-            handle = tab.get("handle") if isinstance(tab, dict) else None
-            if not isinstance(handle, str) or not handle:
-                raise RuntimeError(f"Orca terminal create: missing terminal handle. {CREATE_HINT}{timeout_context}")
+            try:
+                created = terminal("create", "--worktree", "current", "--title", args.title,
+                                   "--command", command, timeout_context=timeout_context)
+                tab = created.get("terminal") if isinstance(created, dict) else None
+                handle = tab.get("handle") if isinstance(tab, dict) else None
+                if not isinstance(handle, str) or not handle:
+                    raise RuntimeError(f"Orca terminal create: missing terminal handle. {CREATE_HINT}{timeout_context}")
+            except (OSError, RuntimeError) as exc:
+                if orphan_leaf is None:
+                    raise
+                detail = str(exc).rstrip()
+                if not detail.endswith((".", "!", "?")):
+                    detail += "."
+                raise RuntimeError(f"{detail} Orphan split leaf: {orphan_leaf}.") from exc
             result["handle"] = handle
             return result, role
-        timeout_context = (f" Split target: {result['target']}; direction: {direction};"
-                           f" intended title: {quoted_title}.")
-        handle = terminal("split", "--terminal", result["target"], "--direction", direction,
-                          "--command", command, timeout_context=timeout_context)
-        result["handle"] = handle
-        if direction == "vertical" and args.cols is None and cols is not None and cols >= min_cols:
-            try:
-                fd = os.open(
-                    width_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK,
-                    0o600,
-                )
-                with os.fdopen(fd, "w") as record:
-                    record.write(f"{cols}\n")
-            except OSError:
-                # The split already succeeded; a missing record must not hide its handle.
-                pass
 
     try:
         terminal("set-pane-title", "--terminal", handle, "--title", args.title)
@@ -318,6 +338,8 @@ def main():
         print(json.dumps(result))
     else:
         line = f"pane: {result['placement']} {result['handle'] or '-'}: {result['reason']}"
+        if orphan_leaf := result.get("orphan_leaf"):
+            line += f"; orphan split leaf: {orphan_leaf}"
         if result["title_error"]:
             line += f"; {result['title_error']}"
         line += " | " + role["notice"].split(" | ", 1)[1]

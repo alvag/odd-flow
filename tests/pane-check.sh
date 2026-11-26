@@ -52,8 +52,11 @@ printf '%s\n' \
   '        echo "{\"ok\":false,\"error\":{\"message\":\"Split timed out with an invalid leaf ID\",\"data\":{\"splitId\":\"not-a-uuid\",\"splitMayStillComplete\":true}}}"; exit 1 ;;' \
   '      timeout-missing-id)' \
   '        echo "{\"ok\":false,\"error\":{\"message\":\"Split timed out without a leaf ID\",\"data\":{\"splitMayStillComplete\":true}}}"; exit 1 ;;' \
-  '      timeout|timeout-repeat|timeout-refused|timeout-nohandle|timeout-hang)' \
+  '      timeout|timeout-repeat|timeout-other-leaf|timeout-refused|timeout-nohandle|timeout-hang)' \
   '        leaf=11111111-2222-4333-8444-555555555555' \
+  '        if [ "${9:-}" = --retry-split ] && [ "$ORCA_FAIL_SPLIT" = timeout-other-leaf ]; then' \
+  '          leaf=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' \
+  '        fi' \
   '        if [ "${9:-}" != --retry-split ] || [ "${10:-}" != "$leaf" ] || [ "$ORCA_FAIL_SPLIT" = timeout-repeat ]; then' \
   '          printf "{\"id\":\"request\",\"ok\":false,\"error\":{\"code\":\"runtime_error\",\"message\":\"Timed out waiting for split pane handle: pane %s in tab tab-example may still open and run its command.\",\"data\":{\"splitId\":\"%s\",\"tabId\":\"tab-example\",\"splitMayStillComplete\":true,\"nextSteps\":[\"Do not split again. With an orca CLI that has --retry-split, re-run the same command with --retry-split %s to wait for this pane and get its handle.\",\"Before splitting again, check \`orca terminal list --json\` for a pane with this leafId: its command may already be running.\"]}},\"_meta\":{\"runtimeId\":\"runtime-example\"}}\n" "$leaf" "$leaf" "$leaf"' \
   '          exit 1' \
@@ -374,16 +377,50 @@ layout "$(split vertical "$p" "$(split horizontal "$r1" "$(leaf term_late_below)
 expect_late "split-below timeout matches the late pane below the target" term_late_below
 layout "$p"
 
-retry_call="${right_call%$'\n--json'}"$'\n--retry-split\n11111111-2222-4333-8444-555555555555\n--json'
+orphan_leaf=11111111-2222-4333-8444-555555555555
+retry_call="${right_call%$'\n--json'}"$'\n--retry-split\n'"$orphan_leaf"$'\n--json'
 out=$(fail_split=timeout trace_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "Orca split timeout retries identical placement under the lock and returns the late handle" 0 "$ec" \
   $'Orca subprocess timeout: 30s\nOrca subprocess timeout: 40s\nSplit retry lock held: True\nOrca subprocess timeout: 40s\nOrca subprocess timeout: 30s\n{"placement": "split-right", "handle": "term_new"' \
   "$list_call$right_call$retry_call$title_call"$'\n\nend argv'
 
-out=$(fail_split=timeout-repeat open_pane --role verify --cols 160); ec=$?
-expect "a second Orca split timeout reports placement context without another retry" 1 "$ec" \
-  'may still open and run its command. A pane may have opened. Check terminal list and close it. Split target: term_parent; direction: vertical; intended title: "T1 verify: example".' \
+out=$(fail_split=timeout-repeat trace_timeout=1 open_pane --role explore --cols 160); ec=$?
+explore_command="agy --model 'gemini-4' --effort 'low'"
+fallback_calls="$list_call${right_call/claude/$explore_command}${retry_call/claude/$explore_command}$baseline_call${tab_call/claude/$explore_command}"$'\n\nend argv'
+expect "a second pending split timeout creates a tab under the pane lock and reports the orphan" 0 "$ec" \
+  $'Baseline list lock held: True\nOrca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n''{"placement": "tab", "handle": "term_tab", "parent": "term_parent", "target": null, "cols": 160, "min_cols": 160, "reason": "split timed out after one retry", "title_error": null, "orphan_leaf": "'"$orphan_leaf"'", "role": "explore", "agent": "antigravity", "model": "gemini-4", "effort": "low"}' \
+  "$fallback_calls"
+
+out=$(fail_split=timeout-repeat text_output=1 open_pane --role explore --cols 160); ec=$?
+expect "text fallback reports both the tab handle and the orphan leaf" 0 "$ec" \
+  "pane: tab term_tab: split timed out after one retry; orphan split leaf: $orphan_leaf | " \
+  "$fallback_calls"
+
+out=$(fail_split=timeout-repeat fail_create=1 open_pane --role explore --cols 160); ec=$?
+expect "refused tab fallback separates the create error from the orphan leaf" 1 "$ec" \
+  "Orca terminal create: create refused. Orphan split leaf: $orphan_leaf." \
+  "$fallback_calls"
+
+out=$(fail_split=timeout-repeat fail_create=nohandle open_pane --role explore --cols 160); ec=$?
+expect "failed tab fallback retains create context and identifies the orphan" 1 "$ec" \
+  'missing terminal handle. A terminal may have opened. Check terminal list and close it. Worktree: current; title: "T1 verify: example". Pre-create handles: ["term_parent"]. Orphan split leaf: '"$orphan_leaf." \
+  "$fallback_calls"
+
+out=$(fail_split=timeout-other-leaf open_pane --role verify --cols 160); ec=$?
+expect "a pending retry for a different leaf remains a split error and creates no tab" 1 "$ec" \
+  'Orca terminal split: Timed out waiting for split pane handle: pane aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee in tab tab-example may still open and run its command. A pane may have opened. Check terminal list and close it. Split target: term_parent; direction: vertical; intended title: "T1 verify: example".' \
   "$list_call$right_call$retry_call"$'\n\nend argv'
+
+layout "$(split vertical "$p" "$r1")"
+below_call="${right_call/term_parent/term_r1}"
+below_call="${below_call/vertical/horizontal}"
+below_retry="${retry_call/term_parent/term_r1}"
+below_retry="${below_retry/vertical/horizontal}"
+out=$(fail_split=timeout-repeat open_pane --role verify --cols 160); ec=$?
+expect "a second pending split-below timeout creates a tab and reports the orphan" 0 "$ec" \
+  '{"placement": "tab", "handle": "term_tab", "parent": "term_parent", "target": null, "cols": 160, "min_cols": 160, "reason": "split timed out after one retry", "title_error": null, "orphan_leaf": "'"$orphan_leaf"'"' \
+  "$list_call$below_call$below_retry$baseline_call$tab_call"$'\n\nend argv'
+layout "$p"
 
 out=$(fail_split=timeout-bad-id open_pane --role verify --cols 160); ec=$?
 expect "pending split with a non-UUID leaf ID does not retry" 1 "$ec" \
