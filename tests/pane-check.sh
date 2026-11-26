@@ -513,6 +513,10 @@ per_launch_rule='Run `pane.py open` again for every launch; never reuse a placem
 out=$(grep -F -- "$per_launch_rule" "$ROOT/skills/odd-flow/references/orca-dispatch.md"); ec=$?
 expect "dispatch guide requires fresh placement on every launch" 0 "$ec" "$per_launch_rule"
 
+create_recovery_rule='**Create:** Run `ORCA terminal list --worktree current --limit 1000 --json`.'
+out=$(grep -F -- "$create_recovery_rule" "$ROOT/skills/odd-flow/references/orca-dispatch.md"); ec=$?
+expect "dispatch guide requests 1000 terminals for create recovery" 0 "$ec" "$create_recovery_rule"
+
 role_rule='Pass the unit’s own role to `--role`; never hardcode a role in a reused helper or loop.'
 mismatch_rule='Before `task-create`, compare the returned `agent`, `model` and `effort` with the same fields in the resolve JSON from step 1 (`null` means the profile does not set that field). On a mismatch, close the returned handle, if any, with `ORCA terminal close --terminal <handle>` and report the mismatch without launching.'
 out=$(grep -F -e "$role_rule" -e "$mismatch_rule" "$ROOT/skills/odd-flow/references/orca-dispatch.md")
