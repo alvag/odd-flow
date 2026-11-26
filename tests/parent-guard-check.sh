@@ -262,6 +262,8 @@ for session, pair, state_dir, mode in (
 ):
     token = pair * 16
     record = issue(token)
+    if mode == 0o2700:
+        os.chown(tokens, -1, os.getgid())
     tokens.chmod(mode)
     if mode == 0o2700 and stat.S_IMODE(tokens.lstat().st_mode) == 0o700:
         print(f"SKIP S8/S12 {session}: chmod(02700) left mode 0700 (setgid not retained)")

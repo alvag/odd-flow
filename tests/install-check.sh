@@ -5,7 +5,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 python=$(command -v python3)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$scratch"' EXIT
-cd -P -- "$scratch"
+cd -L -- "$scratch"
 scratch=$PWD
 export HOME="$scratch/home" ODD_FLOW_HOME="$scratch/home/odd-state"
 export CLAUDE_CONFIG_DIR="$scratch/home/claude-config" CODEX_HOME="$scratch/home/codex-config"
