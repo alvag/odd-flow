@@ -47,12 +47,13 @@ Profile: `claude-gpt`.
 
 ## Follow-ups (out of scope)
 
-- R4-001 (WARNING): after a split/create timeout, a pane Orca opens late runs the worker command with no Task, no title and no identifier in the error; the guide's recheck is bound to the next launch only.
+- R4-001 (WARNING, fixed in pane-followups 5ad69af and 0381df5): after a split/create timeout, a pane Orca opens late runs the worker command with no Task, no title and no identifier in the error; the guide's recheck is bound to the next launch only.
 - R3-001 (WARNING, fixed in T6): make the lock-release test prove the second launch waited on the lock (for example by checking that its first Orca call comes after the first launch's timeout).
-- R3-002 (SUGGESTION): no test pins the 30 s default.
+- R3-002 (SUGGESTION, fixed in pane-followups 39d9fae): no test pins the 30 s default.
 - Unverified live: real Orca split/create timeout; run_required from task-create without a Run.
 - 2026-11-25: merge_ready sent (msg_fe34c115932c); bot ended its turn without answering. Not resent; waiting for Max's answer. No merge or push.
 - 2026-11-25: Max chose option 2 (S9). T6 committed 9668b78 test: prove the second launch waits on the pane lock. T7 scoped re-verify launched. Bot: main moved to 20e70c2 (worker-token-hardening merged, 4 CHANGELOG bullets); rebase onto it before the merge request, keeping both sets of bullets. Rebase waits until T7 reports so the verifier's live tree does not move.
 - 2026-11-25: T7 passed, no blockers. Advisories: macOS mktemp -d ignores TMPDIR so pane-check.sh scratch lands in /var/folders and is never deleted (pre-existing); the 1 s start-wait loop could fail visibly under extreme load. Next: rebase onto main 20e70c2 keeping both CHANGELOG bullet sets.
 - 2026-11-25: Rebased onto 20e70c2 (pre-rebase HEAD 5746dae) with a per-command union merge for CHANGELOG.md (core.attributesFile in scratch, no repo or .git file changed). Result had two "### Fixed" headings under [Unreleased]; T8 writer (task_5049d23827bf) merges them. T8 placement fell back to a tab: parent read 110 cols and the last right split (T7, 23:46) was over 10 minutes old, so the width record was not reused (expected).
 - 2026-11-26: T8 committed 1676d76 docs: merge the unreleased fixed sections in the changelog. On the rebased branch every tests/*.sh exits 0 (22 scripts; pane-check 49/0, full-delegation-check 100/0); git diff --check 20e70c2..HEAD clean. A detached temp worktree of main 20e70c2 failed tests/codex-plugin-check.sh and tests/run.sh (exit 1), cause not investigated. merge_ready re-sent.
+- 2026-11-25: pane-followups (odd/tasks/pane-followups.md) closed R4-001 and R3-002 and the pane-check.sh scratch leak from the T7 advisory (e5b9878).
