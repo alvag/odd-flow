@@ -14,6 +14,7 @@ import subprocess
 SCHEMA = "odd-flow.install-check/v1"
 VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
 HOOKS_MIN_VERSION = (0, 4, 0)
+PLUGIN_LIST_TIMEOUT_SECS = 30
 MANIFEST_BY_RUNTIME = {
     "claude": ".claude-plugin/plugin.json",
     "codex": ".codex-plugin/plugin.json",
@@ -82,21 +83,28 @@ def raise_walk_error(error):
     raise error
 
 
-def checkout_hashes(root):
-    files = list(SHIPPED_FILES)
+def shipped_tree_files(root, *, allow_missing=False):
+    files = set()
     for name in SHIPPED_DIRS:
         directory_path = root / name
-        if directory(directory_path) != directory_path:
+        resolved = directory(directory_path)
+        if resolved is None and allow_missing:
+            continue
+        if resolved != directory_path:
             raise CheckError("cannot read shipped directory")
         for parent, dirs, names in os.walk(directory_path, onerror=raise_walk_error):
             dirs[:] = [child for child in dirs if child != "__pycache__"]
-            files.extend(
+            files.update(
                 (Path(parent) / child).relative_to(root).as_posix()
                 for child in names if child != ".DS_Store" and not child.endswith(".pyc")
             )
+    return files
+
+
+def checkout_hashes(root):
     return {
         relative: hashlib.sha256(shipped_file(root, relative).read_bytes()).digest()
-        for relative in sorted(files)
+        for relative in sorted(shipped_tree_files(root).union(SHIPPED_FILES))
     }
 
 
@@ -106,7 +114,7 @@ def list_plugins(cli):
     try:
         result = subprocess.run(
             [cli, "plugin", "list", "--json"], capture_output=True, stdin=subprocess.DEVNULL,
-            check=True,
+            check=True, timeout=PLUGIN_LIST_TIMEOUT_SECS,
         )
         data = json.loads(result.stdout)
         if cli == "orca":
@@ -117,6 +125,8 @@ def list_plugins(cli):
         if not isinstance(data, list) or not all(isinstance(entry.get(key), str) for entry in data):
             raise ValueError
         return data
+    except subprocess.TimeoutExpired as error:
+        raise CheckError(f"plugin list timed out (limit: {error.timeout}s)") from None
     except (OSError, subprocess.CalledProcessError, ValueError, TypeError, KeyError, AttributeError):
         raise CheckError("cannot read plugin list") from None
 
@@ -159,14 +169,14 @@ def compare_install(runtime, path, version, root, hashes):
             return status(runtime, "not installed")
         installed_version = version if version is not None else manifest_version(install, runtime)
         expected_version = manifest_version(root, runtime)
-        differing = []
+        differing = shipped_tree_files(install, allow_missing=True).difference(hashes)
         for relative, expected in hashes.items():
             try:
                 actual = hashlib.sha256(shipped_file(install, relative).read_bytes()).digest()
             except FileNotFoundError:
                 actual = None
             if actual != expected:
-                differing.append(relative)
+                differing.add(relative)
         state = "in sync"
         if installed_version != expected_version:
             state = "version differs"
@@ -174,7 +184,7 @@ def compare_install(runtime, path, version, root, hashes):
             state = "files differ"
         return status(
             runtime, state, path=str(path), version=installed_version,
-            expected_version=expected_version, files_differ=differing,
+            expected_version=expected_version, files_differ=sorted(differing),
         )
     except (CheckError, OSError, RuntimeError) as error:
         return unreadable(runtime, error, "cannot read shipped files")
@@ -190,8 +200,12 @@ def check_orca(root):
                     raise CheckError("invalid Orca plugin status")
                 expected = manifest_version(root, "orca")
                 state = "in sync" if version == expected else "version differs"
-                return status("orca", state, version=version, expected_version=expected,
-                              plugin_status=plugin_status)
+                row = status("orca", state, version=version, expected_version=expected,
+                             plugin_status=plugin_status)
+                error = entry.get("error")
+                if plugin_status != "running" and isinstance(error, str) and error:
+                    row["plugin_error"] = error
+                return row
         return status("orca", "not installed")
     except CheckError as error:
         return unreadable("orca", error, "cannot read Orca plugin state")
@@ -246,6 +260,8 @@ def print_report(report):
                 line += f'; checkout {row["expected_version"]}'
             if "plugin_status" in row:
                 line += f'; Orca status: {row["plugin_status"]}'
+            if "plugin_error" in row:
+                line += f'; {row["plugin_error"]}'
             line += ")"
         if row.get("files_differ"):
             prefix = ": " if row["status"] == "files differ" else ": files differ: "
@@ -255,8 +271,9 @@ def print_report(report):
         print(f'Checkout: unreadable ({report["reason"]})')
     for warning in report["warnings"]:
         print(f"Warning: {warning}")
-    print("Only checkout shipped files are compared; other files (.git, docs, tests, "
-          "untracked extras outside shipped paths, Python bytecode) are ignored. "
+    print("Compared: files under skills/, scripts/, and hooks/ in both trees, hooks.json, "
+          "and runtime manifests. Other files (including .git, untracked extras outside "
+          "shipped paths, Python bytecode, and .DS_Store) are ignored. "
           "Orca reports its listed version and state only.")
 
 

@@ -44,7 +44,7 @@ SH
 cat > "$bin/orca" <<'SH'
 #!/bin/bash
 [[ "$*" = "plugin list --json" ]] || exit 99
-printf '{"ok":true,"result":{"plugins":[{"pluginKey":"local.odd-flow-profiles","version":"%s","status":"running"}]}}\n' "$ORCA_VERSION"
+printf '{"ok":true,"result":{"plugins":[{"pluginKey":"local.odd-flow-profiles","version":"%s","status":"%s","error":"plugin local.odd-flow-profiles is errored after repeated failures"}]}}\n' "$ORCA_VERSION" "${ORCA_STATUS:-running}"
 SH
 chmod +x "$bin/claude" "$bin/orca"
 
@@ -79,7 +79,28 @@ if case == "sync":
     assert all(row["status"] == "in sync" for row in rows.values()), rows
     assert rows["claude"]["path"] == folder and rows["claude"]["version"] == version
     assert rows["orca"]["plugin_status"] == "running"
+    assert "plugin_error" not in rows["orca"]
     assert not report["warnings"]
+elif case == "marketplace":
+    assert rows["claude"]["status"] == "files differ", rows["claude"]
+    assert rows["claude"]["path"] == str(Path(folder).with_name("claude-marketplace"))
+    assert rows["claude"]["version"] == version
+    assert rows["claude"]["files_differ"] == ["hooks.json"]
+elif case == "extra-shipped":
+    assert rows["codex"]["status"] == "files differ", rows["codex"]
+    assert rows["codex"]["files_differ"] == ["skills/stale-skill/SKILL.md"]
+elif case == "orca-error":
+    assert rows["orca"]["status"] == "in sync", rows["orca"]
+    assert rows["orca"]["plugin_status"] == "errored"
+    assert rows["orca"].get("plugin_error") == (
+        "plugin local.odd-flow-profiles is errored after repeated failures"
+    ), rows["orca"]
+elif case == "cli-timeout":
+    for runtime in ("claude", "orca"):
+        assert rows[runtime]["status"] == "unreadable", rows[runtime]
+        assert "timed out" in rows[runtime]["reason"] and "30" in rows[runtime]["reason"], rows[runtime]
+        assert "path" not in rows[runtime]
+    assert rows["codex"]["status"] == rows["antigravity"]["status"] == "in sync", rows
 elif case == "drift":
     assert rows["claude"]["status"] == "version differs"
     assert rows["codex"]["status"] == "files differ"
@@ -107,6 +128,55 @@ grep -F "Claude Code: in sync" out
 grep -F "$claude" out
 grep -F 'ignored' out
 diff -r "$scratch/before" "$HOME"
+
+cp "$bin/claude" "$scratch/claude-folder"
+cp -R "$claude" "$HOME/claude-marketplace"
+printf '\n' >> "$HOME/claude-marketplace/hooks.json"
+cat > "$bin/claude" <<'SH'
+#!/bin/bash
+[[ "$*" = "plugin list --json" ]] || exit 99
+printf '[{"id":"odd-flow@odd-flow","version":"%s","installPath":"%s/claude-marketplace"}]\n' "$CLAUDE_VERSION" "$HOME"
+SH
+check marketplace 1 --json
+assert_json marketplace
+cp "$scratch/claude-folder" "$bin/claude"
+
+mkdir -p "$codex_install/skills/stale-skill"
+printf -- '---\nname: stale\n---\n' > "$codex_install/skills/stale-skill/SKILL.md"
+check extra-shipped 1 --json
+assert_json extra-shipped
+rm -r "$codex_install/skills/stale-skill"
+
+export ORCA_STATUS=errored
+check orca-error 0 --json
+assert_json orca-error
+check human-orca-error 0
+grep -F 'Orca status: errored; plugin local.odd-flow-profiles is errored after repeated failures' out
+unset ORCA_STATUS
+
+result=0
+PATH="$bin" "$python" -I - "$root/skills/odd-flow/scripts/install_check.py" --json > out 2> err <<'PY' || result=$?
+import runpy
+import subprocess
+import sys
+from unittest.mock import patch
+
+
+def timed_out(command, *, timeout=None, **kwargs):
+    assert timeout == 30, (command, timeout)
+    raise subprocess.TimeoutExpired(command, timeout)
+
+
+sys.argv.pop(0)
+with patch("subprocess.run", side_effect=timed_out):
+    runpy.run_path(sys.argv[0], run_name="__main__")
+PY
+if [ "$result" -ne 3 ]; then
+    printf 'FAIL cli-timeout: expected exit 3, got %s\n' "$result" >&2
+    cat out err >&2
+    exit 1
+fi
+assert_json cli-timeout
 
 CLAUDE_VERSION=0.3.0
 ORCA_VERSION=0.0.1
