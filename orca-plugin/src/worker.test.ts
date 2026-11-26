@@ -974,6 +974,20 @@ test('logs a background refresh rejection without rejecting the event or leaking
   }
 })
 
+test('handles a non-Error throw from a fire-and-forget timer refresh', async () => {
+  const failure = Object.defineProperty({}, 'stderr', {
+    get: () => { throw 'Private refresh failure details.' }
+  })
+  const fixture = await controlsFixture(() => { throw failure })
+  try {
+    void fixture.tick()
+    await nextTurn()
+    assert.deepEqual(fixture.worker.logs, ['Could not refresh odd-flow status.'])
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
 test('Open ODD Flow panel discovers one enabled key at command time or uses the override, always with argv', async () => {
   for (const override of ['', 'custom.odd-flow-profiles']) {
     const calls: (readonly string[])[] = []

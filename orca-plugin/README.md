@@ -288,11 +288,13 @@ sends a prompt, or launches an agent.
   `Could not update odd-flow status:` means Orca rejected a status update,
   not that the command itself failed. The reason is shortened or redacted
   when needed.
-- If the plugin log shows `exceeded the pending event limit` followed by
-  `worker exited unexpectedly (code null)`, Orca killed the worker.
-  After four such exits, Orca marks the plugin errored. Run
-  `orca plugin restart <key>` to clear the error state, using the installed
-  plugin key.
+- Orca kills the worker when 64 events are pending (`exceeded the pending
+  event limit`) or one event runs for more than 300 seconds
+  (`did not finish within 300000ms`). Orca counts any unexpected worker
+  exit or failed start, not just these event failures. It retries up to
+  three times with backoff, then marks the plugin errored if the worker
+  fails again. Run `orca plugin restart <key>` to clear the error state,
+  using the installed plugin key.
 
 ## Develop
 

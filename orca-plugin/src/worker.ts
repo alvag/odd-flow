@@ -765,7 +765,7 @@ export function createWorker({
         try {
           do {
             refreshAgain = false
-            const current = snapshot ?? await readState(signal, false, false, true)
+            const current = await (snapshot ?? readState(signal, false, false, true))
             snapshot = undefined
             if (signal.aborted) return
             const status = statusFor(current, panelOpenError)
@@ -784,6 +784,8 @@ export function createWorker({
               })
             }
           } while (refreshAgain)
+        } catch {
+          if (!signal.aborted) logDiagnostic(() => 'Could not refresh odd-flow status.')
         } finally {
           refreshing = undefined
         }
@@ -941,7 +943,7 @@ export function createWorker({
         return `Switched odd-flow mode to ${mode}.`
       }))
     const refreshOnEvent = () => {
-      void refreshStatus().catch(() => logDiagnostic(() => 'Could not refresh odd-flow status.'))
+      void refreshStatus()
     }
     orca.events.on('agent.status.changed', refreshOnEvent)
     orca.events.on('workspace.changed', refreshOnEvent)
