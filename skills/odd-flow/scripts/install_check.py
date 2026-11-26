@@ -87,7 +87,10 @@ def shipped_tree_files(root, *, allow_missing=False):
     files = set()
     for name in SHIPPED_DIRS:
         directory_path = root / name
-        resolved = directory(directory_path)
+        try:
+            resolved = directory(directory_path)
+        except CheckError:
+            raise CheckError("cannot read shipped files") from None
         if resolved is None and allow_missing:
             continue
         if resolved != directory_path:
@@ -203,8 +206,10 @@ def check_orca(root):
                 row = status("orca", state, version=version, expected_version=expected,
                              plugin_status=plugin_status)
                 error = entry.get("error")
-                if plugin_status != "running" and isinstance(error, str) and error:
-                    row["plugin_error"] = error
+                if plugin_status != "running" and isinstance(error, str):
+                    error = re.sub(r"[\s\x00-\x1f\x7f-\x9f]+", " ", error).strip()
+                    if error:
+                        row["plugin_error"] = error
                 return row
         return status("orca", "not installed")
     except CheckError as error:
@@ -274,7 +279,7 @@ def print_report(report):
     print("Compared: files under skills/, scripts/, and hooks/ in both trees, hooks.json, "
           "and runtime manifests. Other files (including .git, untracked extras outside "
           "shipped paths, Python bytecode, and .DS_Store) are ignored. "
-          "Orca reports its listed version and state only.")
+          "Orca reports its listed version, state, and any error for a non-running plugin.")
 
 
 def main():

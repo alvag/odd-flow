@@ -31,12 +31,16 @@ Profile: `claude-gpt`.
 | T1 | S1-S15 | install_check.py, tests/install-check.sh, SKILL.md command, README line, CHANGELOG | orca:write (full delegation: every workspace change goes to a writer) | done | task_4536d36c17bb, base e72b4c2; RED/GREEN `bash tests/install-check.sh` (worker); spot check exit 0 `install-check: passed` (parent) |
 | T2 | S1-S15 | independent verify of T1 | orca:verify (brief asks for an independent verify: reads several homes) | done | task_77a5b9cb289a: 1 blocker (B1), S1-S6, S8-S13, S15 met |
 | T3 | S7, S14, S16-S18 | correction: B1 extras inside shipped paths, Orca error string, CLI timeout, Claude installPath | orca:write (verifier code blocker; relaunch of the T1 writer, counts as its correction) | done | task_c54893c9b1f9, base e52af68; RED/GREEN `bash tests/install-check.sh` (worker); spot check exit 0 (parent) |
+| T5 | S8, S16 | correction: B2 reason text, Orca error control characters, footer wording | orca:write (Max approved one more round, L8) | done | task_36312bf14696, base 0c5c752; RED/GREEN `bash tests/install-check.sh` (worker); spot check exit 0 (parent) |
+| T6 | S8, S16 | recheck limited to T5 | orca:verify | pending | |
 | T4 | S7, S14, S16-S18 | recheck limited to T3 | orca:verify | done | task_2b134e5d5971: B1 fixed, S7, S8, S9, S14, S16-S18 met; new blocker B2; `bash tests/run.sh` 22 passed |
 
 ## Log
 
 - L1 (user, 2026-11-25): "Goal (Max approved, idea from gentle-shell fa13f2540, a read-only `setup --check [--json]`): a read-only odd-flow command that reports whether each install matches the checkout it was installed from, and why not." Full brief: the workstream message from the supervisor (install-check), quoted in S1-S12.
 - L2 (2026-11-25): surfaces and location (S13-S14) sent to the bot as status before T1 launches.
+- L9 (2026-11-25): T5 done. Parent spot check `bash tests/install-check.sh` exit 0; live footer now reads "Orca reports its listed version, state, and any error for a non-running plugin." Next: T6 recheck.
+- L8 (Max via bot, 2026-11-25): "1 one-more-fix". After the scoped recheck passes, commit and send merge_ready.
 - L7 (2026-11-25): the bot ended its turn without answering msg_983649184e05 ("do it yourself or tell your owner"). An unanswered question is not consent: no further correction round and no merge_ready until Max decides. Question stays open; not resent.
 - L6 (2026-11-25): T4 recheck on 564d9df: B1 fixed; S7, S8, S9, S14, S16, S17, S18 met; `bash tests/run.sh` 22 passed, 0 failed. New blocker B2: an install whose hooks/ is a regular file reports "plugin path is not a directory" instead of the base "cannot read shipped files" (exit 3 on both). Advisory: plugin_error is printed raw, so a newline in Orca's error text can break the human line and fake a row; the footer still says Orca reports "version and state only". Unverified: S18 against a real GitHub-marketplace install, S17 against a real CLI hang. B2 is a new finding after the one correction round, so another round needs Max; asked the bot.
 - L5 (2026-11-25): T3 done. Parent spot check `bash tests/install-check.sh` exit 0; live run exit 1 with the Orca row now printing "plugin local.odd-flow-profiles is errored after repeated failures". The writer again saw `parent-guard-check.sh` S8/S12 fail in its Codex sandbox on base and candidate (environmental, see L4). Next: T4 recheck.

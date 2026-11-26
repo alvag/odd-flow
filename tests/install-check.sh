@@ -44,7 +44,7 @@ SH
 cat > "$bin/orca" <<'SH'
 #!/bin/bash
 [[ "$*" = "plugin list --json" ]] || exit 99
-printf '{"ok":true,"result":{"plugins":[{"pluginKey":"local.odd-flow-profiles","version":"%s","status":"%s","error":"plugin local.odd-flow-profiles is errored after repeated failures"}]}}\n' "$ORCA_VERSION" "${ORCA_STATUS:-running}"
+printf '{"ok":true,"result":{"plugins":[{"pluginKey":"local.odd-flow-profiles","version":"%s","status":"%s","error":"%s"}]}}\n' "$ORCA_VERSION" "${ORCA_STATUS:-running}" "${ORCA_ERROR:-plugin local.odd-flow-profiles is errored after repeated failures}"
 SH
 chmod +x "$bin/claude" "$bin/orca"
 
@@ -89,7 +89,11 @@ elif case == "marketplace":
 elif case == "extra-shipped":
     assert rows["codex"]["status"] == "files differ", rows["codex"]
     assert rows["codex"]["files_differ"] == ["skills/stale-skill/SKILL.md"]
-elif case == "orca-error":
+elif case == "shipped-directory-is-file":
+    assert rows["codex"]["status"] == "unreadable", rows["codex"]
+    assert rows["codex"]["reason"] == "cannot read shipped files", rows["codex"]
+    assert "path" not in rows["codex"], rows["codex"]
+elif case in ("orca-error", "orca-error-controls"):
     assert rows["orca"]["status"] == "in sync", rows["orca"]
     assert rows["orca"]["plugin_status"] == "errored"
     assert rows["orca"].get("plugin_error") == (
@@ -147,11 +151,25 @@ check extra-shipped 1 --json
 assert_json extra-shipped
 rm -r "$codex_install/skills/stale-skill"
 
+mv "$codex_install/hooks" "$scratch/codex-hooks"
+printf 'not a directory\n' > "$codex_install/hooks"
+check shipped-directory-is-file 3 --json
+assert_json shipped-directory-is-file
+rm "$codex_install/hooks"
+mv "$scratch/codex-hooks" "$codex_install/hooks"
+
 export ORCA_STATUS=errored
 check orca-error 0 --json
 assert_json orca-error
 check human-orca-error 0
 grep -F 'Orca status: errored; plugin local.odd-flow-profiles is errored after repeated failures' out
+export ORCA_ERROR='\nplugin local.odd-flow-profiles is errored\r\n\t after\u001b\u009b repeated\u2028failures\u007f'
+check orca-error-controls 0 --json
+assert_json orca-error-controls
+check human-orca-error-controls 0
+grep -Fx "ODD Flow Orca plugin: in sync (version $ORCA_VERSION; Orca status: errored; plugin local.odd-flow-profiles is errored after repeated failures)" out
+grep -F 'Orca reports its listed version, state, and any error for a non-running plugin.' out
+unset ORCA_ERROR
 unset ORCA_STATUS
 
 result=0
