@@ -40,7 +40,7 @@ Source: GitHub issue alvag/odd-flow#15, "Clean up accumulated per-session state 
 | T2 | S1, S4, S5, S7, S9-S10 | SessionStart hook: once-per-day cleanup with stamp, reusing the T1 helper; hook test for the stamp and for recent records; docs; CHANGELOG | orca:write (depends on T1) | done | task_41b03be36fb6; writer RED 5 failing → GREEN 4 tests; parent spot check `bash tests/session-cleanup-check.sh` OK (4 tests), `codex-runtime-check.sh` ok |
 | T3 | S3, S6-S9 | `install_check.py`: read-only counts in text and JSON (added fields only, exit codes kept); `tests/install-check.sh`; docs; CHANGELOG | orca:write (depends on T1; after T2 for CHANGELOG) | done | task_ff0a52a9ce66; writer RED (no session_state) → GREEN; parent spot check `bash tests/install-check.sh` passed; real read-only run: 15 bindings, 287 prompt-hook, 204 mode-notice records, schema v1 kept |
 | T4 | S1-S10 | Independent verification of T1-T3 (Risk item 1: deletes stored files) | orca:verify (Verification trigger) | done | task_f8fc76ae2805; base e844437, candidate 0bdf751: S1-S10 met, run.sh 23/0, 1 blocker (prune errno text basename) fixed in 03e9864; recheck: byte-identical to base, run.sh 23/0 |
-| T5 | S1-S10 | Review and refute after verification | orca:review, orca:refute (Review trigger) | pending | |
+| T5 | S1-S10 | Review and refute after verification | orca:review, orca:refute (Review trigger) | done | risk task_6cbec58f3b7a, resilience task_3f88eb3ec21a; base c931827, candidate 2afa52f: risk 0 blocking (2 SUGGESTION), resilience 0 blocking (2 WARNING, 4 SUGGESTION); no BLOCKER/CRITICAL, so no refute and no correction |
 
 ## Log
 
