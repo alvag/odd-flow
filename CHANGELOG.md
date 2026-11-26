@@ -33,6 +33,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 - Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. The tokened marker requires odd-flow 0.4.0 or newer hooks. With mixed versions, worker identification falls back to the Orca preamble or first-line `# Role:` rule, so the plugin still works with odd-flow 0.3.0 hooks. An older hook leaves the record to expire and be pruned.
 - Install-check text: Runtime rows print `(odd-flow <installed>` instead of `(version <installed>`, and a mismatch adds `; checkout odd-flow <expected>`. The Orca row prints `(ODD Flow Orca plugin <installed>`, and a mismatch adds `; checkout ODD Flow Orca plugin <expected>`. The older-hooks warning prints `<Runtime label> (odd-flow <version>): the Orca tokened marker requires odd-flow hooks 0.4.0 or newer.` See **Fixed** below for text sanitization and the unreadable session state reason in text and JSON.
 - The profiles guide explains how cleanup can reclassify a resumed coordinator as a worker, which plugin data directories and files `prune` and `/odd-flow check` match, and how to set `CLAUDE_PLUGIN_DATA` when running hooks by hand.
+- `tests/orca-plugin-typecheck.sh` uses `npm ci` with a committed lockfile to pin direct and transitive dependencies.
 
 ### Fixed
 
@@ -53,6 +54,8 @@ separately; see the [compatibility table](docs/compatibility.md).
 - Orca worker placement ignores saved terminal widths with timestamps in the future.
 - The Orca terminal dispatch guide explains how to create and reuse an orchestration Run before creating Tasks.
 - The Codex plugin check (`tests/codex-plugin-check.sh`) passes when the checkout is reached through a symlinked path, such as a temporary worktree under `/var` on macOS.
+- Tests that create scratch directories honor `TMPDIR` and remove those directories on exit.
+- `tests/parent-guard-check.sh` prints `SKIP` with the reason when `chmod` cannot set setgid on the worker-token directory, as can happen in the Codex workspace-write sandbox. When setgid is retained, the test still checks that the guard rejects the directory.
 
 ## [0.4.0] - 2026-11-25
 
