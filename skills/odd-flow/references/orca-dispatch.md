@@ -11,6 +11,7 @@
    `python3 <skill-dir>/scripts/profile.py resolve <role> --json`
    Use its `flags` exactly and print its `notice`. On a non-zero exit, stop and report the error; do not launch with guessed flags.
 2. Build the spec from `assets/spec-template.md` and `assets/roles/<role>.md`. Write it with the file tool to a scratch file outside the worktree (for example `$TMPDIR/odd-flow/<session>/<task-id>.md`). Never use heredocs. In `task-create` and `worker-start`, pass the resolved literal path to `--spec-file`, quoted if needed, not a variable (such as `$SPEC`), command substitution, or glob. In Claude Code, a guard denial means the launch did not run: fix the spec or pass a readable literal path and retry; do not bypass the guard. The hook checks the declaration at launch, not subsequent edits.
+   A dependent unit's spec must point to the feature document or commits for upstream results. Orca does not include those results in the dispatch.
 3. For a writer in a folder without Git, use Project folders without Git below. Otherwise run placement for this launch:
    `python3 <skill-dir>/scripts/pane.py open --role <role> --title "<T# role: short title>" --json`
    Pass the unit’s own role to `--role`; never hardcode a role in a reused helper or loop. A handle starts one worker. Run `pane.py open` again for every launch; never reuse a placement result or handle.
@@ -43,6 +44,8 @@
         ```
 
         If the user declines or does not answer, close the pane and report the `taskId` as described below. With the user's choice, run `ORCA terminal send --terminal <handle> --text <n>` and confirm with `ORCA terminal send --terminal <handle> --text '' --enter`. This input answers Codex's startup menu, not an agent prompt. Option 1 opens a review screen these steps do not cover; with option 3, the odd-flow hooks do not run in that worker. Re-run the wait and continue to step 4 only once it succeeds.
+
+        In a new worktree, Antigravity prompts for workspace trust. If the wait exits 1 with `"blockedReason": "agent-trust-workspace"`, keep the terminal open and do not run step 4 yet. Read the prompt with `ORCA terminal read --terminal <handle> --screen` and relay it and its options to the user unchanged. Only the user decides how to answer for that worktree. Re-run the wait after applying the user's choice and continue to step 4 only once it succeeds.
      4. `ORCA orchestration worker-start --environment local --task <taskId> --terminal <handle> --json`, without `flags`.
      If a step fails, close the pane or terminal you opened (`ORCA terminal close --terminal <handle>`) and report the error with the `taskId` if one exists. The task stays unassigned for a retry with `worker-start --task`; never fall back to `worker-start --agent codex`.
 4. End the turn. Orca wakes you; never poll.
@@ -60,6 +63,8 @@ At task close, if you registered the folder for this task, wait until the writer
 Start every independent worker of one parallel batch from a single shell command, as the orchestration guide's `references/parallel-start.md` shows. Serial launches void the parallel writer reason. Run each worker's `pane.py open` and its launch steps in order in that worker's background group. The pane lock orders width reads, layout reads and splits.
 
 ## When Orca wakes you
+
+For any `ORCA orchestration send` message body containing backticks, write the body to a file and pass it with `--body-file`, even for one line. The shell can expand backticks in a double-quoted `--body`.
 
 - `worker_done`: read the report, check it against the role's Return format, spot-check one reported command, compare a writer's changed files with its surface, then update the feature document.
 - After `worker_done` of a terminal or split-pane launch, release it: `ORCA orchestration worker-release --environment local --dispatch <dispatch_id>`. Orca does not close a terminal it did not start (`reason=external_terminal`); if the handle is still in `ORCA terminal list --json`, close it with `ORCA terminal close --terminal <handle>`, unless the user asked to keep it open.
