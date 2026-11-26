@@ -116,8 +116,14 @@ if case == "sync":
     assert report.get("session_state") == {
         "session_bindings": 2, "prompt_sessions": 1, "session_modes": 3,
     }, report
+elif case == "unrelated-session-root":
+    assert report.get("session_state") == {
+        "session_bindings": 2, "prompt_sessions": 0, "session_modes": 3,
+    }, report
 elif case == "unreadable-session-state":
-    assert report.get("session_state") == {"status": "unreadable"}, report
+    assert report.get("session_state") == {
+        "status": "unreadable", "reason": "cannot scan session state directories",
+    }, report
     assert all(row["status"] == "in sync" for row in rows.values()), rows
     assert "reason" not in report, report
 elif case == "marketplace":
@@ -128,6 +134,10 @@ elif case == "marketplace":
 elif case == "extra-shipped":
     assert rows["codex"]["status"] == "files differ", rows["codex"]
     assert rows["codex"]["files_differ"] == ["skills/stale-skill/SKILL.md"]
+elif case == "hostile-claude":
+    assert rows["claude"]["status"] == "files differ", rows["claude"]
+    assert rows["claude"]["path"] == str(Path(folder).with_name("claude-\u202efolder"))
+    assert rows["claude"]["files_differ"] == ["skills/stale\n\u202escript"]
 elif case == "shipped-directory-is-file":
     assert rows["codex"]["status"] == "unreadable", rows["codex"]
     assert rows["codex"]["reason"] == "cannot read shipped files", rows["codex"]
@@ -138,6 +148,10 @@ elif case in ("orca-error", "orca-error-controls"):
     assert rows["orca"].get("plugin_error") == (
         "plugin local.odd-flow-profiles is errored after repeated failures"
     ), rows["orca"]
+elif case == "orca-error-format":
+    assert rows["orca"].get("plugin_error") == "plugin\u202e error\u200b", rows["orca"]
+elif case == "orca-error-long":
+    assert rows["orca"].get("plugin_error") == "x" * 200 + "tail", rows["orca"]
 elif case == "cli-timeout":
     for runtime in ("claude", "orca"):
         assert rows[runtime]["status"] == "unreadable", rows[runtime]
@@ -180,12 +194,31 @@ grep -F 'ignored' out
 grep -Fx 'Session state: 2 session binding(s), 1 prompt-hook record(s), 3 mode-notice record(s)' out
 diff -r "$scratch/before" "$HOME"
 
+if [ "$(id -u)" -ne 0 ]; then
+    unrelated_config="$HOME/unrelated-config"
+    unrelated_data="$unrelated_config/plugins/data"
+    mkdir -p "$unrelated_data/other-plugin"
+    chmod 400 "$unrelated_data"
+    CLAUDE_CONFIG_DIR="$unrelated_config" check unrelated-session-root 0 --json
+    chmod 700 "$unrelated_data"
+    assert_json unrelated-session-root
+fi
+
 printf 'not a directory\n' > "$codex_data/prompt-sessions"
 check unreadable-session-state 0 --json
 assert_json unreadable-session-state
 check human-unreadable-session-state 0
-grep -Fx 'Session state: unreadable' out
+grep -Fx 'Session state: unreadable (cannot scan session state directories)' out
 rm "$codex_data/prompt-sessions"
+
+hostile_claude=$(printf '%s/claude-\342\200\256folder' "$HOME")
+hostile_name=$(printf 'stale\n\342\200\256script')
+cp -R "$claude" "$hostile_claude"
+touch "$hostile_claude/skills/$hostile_name"
+CLAUDE_FOLDER="$hostile_claude" check hostile-claude 1 --json
+assert_json hostile-claude
+CLAUDE_FOLDER="$hostile_claude" check human-hostile-claude 1
+grep -Fx "Claude Code: files differ [$claude] (odd-flow $version): skills/stale script" out
 
 cp "$bin/claude" "$scratch/claude-folder"
 cp -R "$claude" "$HOME/claude-marketplace"
@@ -223,6 +256,17 @@ assert_json orca-error-controls
 check human-orca-error-controls 0
 grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; plugin local.odd-flow-profiles is errored after repeated failures)" out
 grep -F 'Orca reports its listed version, state, and any error for a non-running plugin.' out
+export ORCA_ERROR='plugin\u202e error\u200b'
+check orca-error-format 0 --json
+assert_json orca-error-format
+check human-orca-error-format 0
+grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; plugin error)" out
+error_prefix=$(printf '%200s' '' | tr ' ' x)
+export ORCA_ERROR="${error_prefix}tail"
+check orca-error-long 0 --json
+assert_json orca-error-long
+check human-orca-error-long 0
+grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; ${error_prefix}...)" out
 unset ORCA_ERROR
 unset ORCA_STATUS
 

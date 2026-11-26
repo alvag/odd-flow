@@ -94,13 +94,34 @@ With none present, `use` fails; pass `ODD_PROFILE` at launch instead.
 
 `prune` uses file modification time (30 days by default). It scans the session
 bindings and the plugin data directories for Claude Code, Codex, and Antigravity.
+`prune` and `/odd-flow check` treat every `odd-flow-*` directory under Claude Code
+and Codex plugin data roots as odd-flow's. Within plugin data, `prune` removes
+only expired regular files named with 64 lowercase hex characters directly in
+`prompt-sessions/` or `session-modes/`; `/odd-flow check` counts matching files
+without removing them.
+
 Resuming a pruned session uses the default profile and mode unless another override applies.
+If cleanup prunes a coordinator's prompt-hook record after 30 days, the next
+prompt marks the session as a worker if it starts with an Orca dispatch preamble
+or a first-line `# Role:` header, or ends with a valid worker token marker. In
+full delegation, the session is exempt from the parent edit guard and receives
+the worker reminder.
+
+When running odd-flow hooks by hand from a Claude Code shell, set
+`CLAUDE_PLUGIN_DATA` explicitly to odd-flow's data directory. The Claude Code
+Codex plugin exports its own directory through `CLAUDE_ENV_FILE`, so the shell
+can inherit that path instead. Stray odd-flow records there are harmless and
+can be deleted by hand.
 
 SessionStart also removes records and bindings older than 30 days. It checks
 only session bindings and the current runtime's plugin data directory, at most
-once every 24 hours per data directory. Without a plugin data directory, it skips
-automatic cleanup. Both forms continue past failures; the hook stays silent,
-while `prune` reports partial counts and errors and exits with status 2.
+once every 24 hours per data directory unless the cleanup stamp is in the
+future, in which case it treats the stamp as stale. Automatic cleanup has a
+1-second budget. If it runs out, files already removed stay removed and the
+stamp is not refreshed, so cleanup resumes at the next session start. Without a
+plugin data directory, SessionStart skips automatic cleanup. Both forms continue
+past failures; the hook stays silent, while `prune` reports partial counts and
+errors and exits with status 2.
 
 A bare profile name (`/odd-flow B`) is not a command: ask whether the user meant `--profile B`.
 

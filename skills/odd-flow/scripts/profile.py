@@ -12,7 +12,7 @@ beside `profiles` because a profile's keys are roles only.
 """
 
 import argparse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import difflib
 import json
 import os
@@ -248,7 +248,10 @@ def write_session(data):
     if not data:
         remove_session_file(path)
         return var
-    write_json_atomic(path, {**data, "key": var, "updated_at": int(time.time())})
+    try:
+        write_json_atomic(path, {**data, "key": var, "updated_at": int(time.time())})
+    except OSError as exc:
+        raise ProfileError(f"cannot write session binding: {exc}") from exc
     return var
 
 
@@ -818,15 +821,15 @@ def discover_plugin_data_dirs(*, errors=None):
     roots = [home / ".claude", codex_config]
     if claude_config:
         roots.insert(0, Path(claude_config))
-    roots = [(root / "plugins/data", False) for root in roots]
-    roots.append((home / ".gemini/antigravity-cli/plugin_data", True))
+    roots = [(root.absolute() / "plugins/data", False) for root in roots]
+    roots.append((home.absolute() / ".gemini/antigravity-cli/plugin_data", True))
     found = set()
-    for root, antigravity in roots:
-        root = root.absolute()
+    for root, antigravity in dict.fromkeys(roots):
         try:
             with _open_state_dir(root) as fd:
                 if fd is None:
                     continue
+                reported_lookup_error = False
                 for entry in os.listdir(fd):
                     if not (entry == "odd-flow" if antigravity else entry.startswith("odd-flow-")):
                         continue
@@ -835,8 +838,10 @@ def discover_plugin_data_dirs(*, errors=None):
                     except FileNotFoundError:
                         continue
                     except OSError as exc:
-                        detail = _state_path_error(exc, root / entry)
-                        _record_state_error(errors, f"{root}: cannot discover plugin data: {detail}", exc)
+                        if not reported_lookup_error:
+                            detail = _state_path_error(exc, root)
+                            _record_state_error(errors, f"{root}: cannot discover plugin data: {detail}", exc)
+                            reported_lookup_error = True
                         continue
                     identity = info.st_dev, info.st_ino
                     if stat.S_ISDIR(info.st_mode) and identity not in found:
@@ -858,32 +863,41 @@ def _state_folders(data_dirs):
         yield "session_modes", data_dir.parent, (data_dir.name, "session-modes"), "mode-notice record"
 
 
-def _list_state_files(fd, folder, label, cutoff, errors):
+def _list_state_files(fd, folder, label, cutoff, errors, deadline):
     try:
-        entries = os.listdir(fd)
+        # Automatic cleanup must not enumerate an entire directory before checking the deadline.
+        listing = nullcontext(os.listdir(fd)) if deadline is None else os.scandir(fd)
     except OSError as exc:
         detail = _state_path_error(exc, folder)
         raise ProfileError(f"{folder}: cannot read {label}s: {detail}") from exc
-    for entry in entries:
-        if not (entry.endswith(".json") if label == "session binding" else RECORD_NAME_RE.fullmatch(entry)):
-            continue
-        path = folder / entry
-        try:
-            info = os.lstat(entry, dir_fd=fd)
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            detail = _state_path_error(exc, path)
-            _record_state_error(errors, f"{path}: cannot inspect {label}: {detail}", exc)
-            continue
-        if stat.S_ISREG(info.st_mode) and (cutoff is None or info.st_mtime < cutoff):
-            yield path
+    with listing as entries:
+        for item in entries:
+            if deadline is not None and time.monotonic() >= deadline:
+                return
+            entry = item if deadline is None else item.name
+            if not (entry.endswith(".json") if label == "session binding" else RECORD_NAME_RE.fullmatch(entry)):
+                continue
+            path = folder / entry
+            try:
+                info = os.lstat(entry, dir_fd=fd)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                detail = _state_path_error(exc, path)
+                _record_state_error(errors, f"{path}: cannot inspect {label}: {detail}", exc)
+                continue
+            if stat.S_ISREG(info.st_mode) and (cutoff is None or info.st_mtime < cutoff):
+                if deadline is not None and time.monotonic() >= deadline:
+                    return
+                yield path
 
 
-def _scan_session_state(data_dirs, cutoff, *, remove, errors=None):
+def _scan_session_state(data_dirs, cutoff, *, remove, errors=None, deadline=None):
     result = {key: [] for key in ("session_bindings", "prompt_sessions", "session_modes")}
     bindings_found = False
     for key, base, parts, label in _state_folders(data_dirs):
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         folder = base.joinpath(*parts)
         try:
             with _open_state_dir(base, *parts) as fd:
@@ -891,7 +905,7 @@ def _scan_session_state(data_dirs, cutoff, *, remove, errors=None):
                     continue
                 if key == "session_bindings":
                     bindings_found = True
-                for path in _list_state_files(fd, folder, label, cutoff, errors):
+                for path in _list_state_files(fd, folder, label, cutoff, errors, deadline):
                     if remove:
                         try:
                             if not remove_session_file(path, dir_fd=fd, label=label):
@@ -914,11 +928,13 @@ def list_session_state(data_dirs, *, cutoff=None):
     return _scan_session_state(data_dirs, cutoff, remove=False)[0]
 
 
-def prune_session_state(data_dirs, cutoff, *, errors=None):
-    """Return removed counts, continuing past failures and collecting them if requested."""
+def prune_session_state(data_dirs, cutoff, *, errors=None, deadline=None):
+    """Return removed counts, optionally collecting failures or stopping at a monotonic deadline."""
     if errors is None:
         errors = []
-    removed, bindings_found = _scan_session_state(data_dirs, cutoff, remove=True, errors=errors)
+    removed, bindings_found = _scan_session_state(
+        data_dirs, cutoff, remove=True, errors=errors, deadline=deadline,
+    )
     counts = {key: len(paths) for key, paths in removed.items()}
     if not bindings_found:
         counts["session_bindings"] = None
@@ -926,6 +942,11 @@ def prune_session_state(data_dirs, cutoff, *, errors=None):
 
 
 def cmd_prune(args):
+    # Older Python versions advertise lstat's dir_fd support under stat.
+    if (not hasattr(os, "O_DIRECTORY")
+            or not {os.open, os.stat, os.unlink} <= os.supports_dir_fd
+            or os.listdir not in os.supports_fd):
+        raise ProfileError("prune requires O_DIRECTORY and directory file descriptor support")
     cutoff = time.time() - args.days * 86400
     errors = []
     counts = prune_session_state(discover_plugin_data_dirs(errors=errors), cutoff, errors=errors)
