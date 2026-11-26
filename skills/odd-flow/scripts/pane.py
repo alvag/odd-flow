@@ -22,15 +22,17 @@ from profile import ProfileError, load_profiles, orca_line, orca_terminal, resol
 SPLIT_HINT = "A pane may have opened. Check terminal list and close it."
 CREATE_HINT = "A terminal may have opened. Check terminal list and close it."
 ORCA_TIMEOUT_SECS = 30
+ORCA_SPLIT_TIMEOUT_SECS = 40
 
 
 def terminal(*args, timeout_context=""):
     hint = {"split": f". {SPLIT_HINT}", "create": f". {CREATE_HINT}"}.get(args[0], "")
     uncertain = hint + timeout_context
+    timeout = ORCA_SPLIT_TIMEOUT_SECS if args[0] == "split" else ORCA_TIMEOUT_SECS
     try:
         proc = subprocess.run(
             [os.environ.get("ORCA_CLI_COMMAND", "orca"), "terminal", *args, "--json"],
-            capture_output=True, text=True, timeout=ORCA_TIMEOUT_SECS,
+            capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(

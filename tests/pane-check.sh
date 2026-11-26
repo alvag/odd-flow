@@ -84,6 +84,7 @@ printf '%s\n' \
   'import pane' \
   'if orca_timeout:' \
   '    pane.ORCA_TIMEOUT_SECS = int(orca_timeout)' \
+  '    pane.ORCA_SPLIT_TIMEOUT_SECS = int(orca_timeout)' \
   'if os.environ.get("ORCA_TRACE_TIMEOUT"):' \
   '    run = pane.subprocess.run' \
   '    def trace_timeout(argv, **kwargs):' \
@@ -372,7 +373,7 @@ layout "$p"
 retry_call="${right_call%$'\n--json'}"$'\n--retry-split\n11111111-2222-4333-8444-555555555555\n--json'
 out=$(fail_split=timeout trace_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "Orca split timeout retries identical placement under the lock and returns the late handle" 0 "$ec" \
-  $'Split retry lock held: True\nOrca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n{"placement": "split-right", "handle": "term_new"' \
+  $'Orca subprocess timeout: 30s\nOrca subprocess timeout: 40s\nSplit retry lock held: True\nOrca subprocess timeout: 40s\nOrca subprocess timeout: 30s\n{"placement": "split-right", "handle": "term_new"' \
   "$list_call$right_call$retry_call$title_call"$'\n\nend argv'
 
 out=$(fail_split=timeout-repeat open_pane --role verify --cols 160); ec=$?
