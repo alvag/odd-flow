@@ -23,7 +23,7 @@ CREATE_HINT = "A terminal may have opened. Check terminal list and close it."
 ORCA_TIMEOUT_SECS = 30
 
 
-def terminal(*args):
+def terminal(*args, timeout_context=""):
     hint = {"split": f". {SPLIT_HINT}", "create": f". {CREATE_HINT}"}.get(args[0], "")
     try:
         proc = subprocess.run(
@@ -31,7 +31,9 @@ def terminal(*args):
             capture_output=True, text=True, timeout=ORCA_TIMEOUT_SECS,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"Orca terminal {args[0]}: timed out (limit: {exc.timeout}s){hint}") from exc
+        raise RuntimeError(
+            f"Orca terminal {args[0]}: timed out (limit: {exc.timeout}s){hint}{timeout_context}"
+        ) from exc
     try:
         data = json.loads(proc.stdout)
         if not isinstance(data, dict):
@@ -176,6 +178,7 @@ def open_pane(args):
     except ValueError as exc:
         raise ProfileError("ODD_FLOW_SPLIT_SETTLE_MS must be a non-negative integer") from exc
     command = role["split_command"]
+    quoted_title = json.dumps(args.title, ensure_ascii=False)
 
     pane_path = os.path.join(tempfile.gettempdir(), f"odd-flow-pane-{parent}")
     width_path = pane_path + ".cols"
@@ -226,7 +229,8 @@ def open_pane(args):
                 else f"parent terminal is {cols} columns wide (minimum {min_cols})"
             )
             created = terminal("create", "--worktree", "current", "--title", args.title,
-                               "--command", command)
+                               "--command", command,
+                               timeout_context=f" Worktree: current; title: {quoted_title}.")
             tab = created.get("terminal") if isinstance(created, dict) else None
             handle = tab.get("handle") if isinstance(tab, dict) else None
             if not isinstance(handle, str) or not handle:
@@ -234,7 +238,9 @@ def open_pane(args):
             result["handle"] = handle
             return result, role
         split = terminal("split", "--terminal", result["target"], "--direction", direction,
-                         "--command", command)
+                         "--command", command,
+                         timeout_context=f" Split target: {result['target']}; direction: {direction};"
+                                         f" intended title: {quoted_title}.")
         pane = split.get("split") if isinstance(split, dict) else None
         handle = pane.get("handle") if isinstance(pane, dict) else None
         if not isinstance(handle, str) or not handle:
