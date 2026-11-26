@@ -8,7 +8,7 @@ Organic Driven Development (ODD) is the default workflow for every request, run 
 - For a file outside the workspace, never delegate: the parent writes only after the user names the file and confirms the exact diff shown to them.
 - Outside an Orca terminal, writers run as subagents. If no writer can run, report the blocker; never edit a file yourself.
 - Task size decides tracking and risk only, never who writes. Large tasks get a feature document in `odd/tasks/<feature>.md` before the first writer launches.
-- Close every request with the verified outcome, every failed, skipped or pending check, and the next step. Never report a check as passed without observed output.
+- Close every request with the verified outcome, every failed, skipped or pending check, residual risks workers reported, and the next step. Never report a check as passed without observed output.
 
 ### Authorized work continuity
 

@@ -74,6 +74,13 @@ need "$root/skills/odd-flow/references/odd-protocol.md" 'GREEN with the minimum 
 need "$root/skills/odd-flow/references/odd-protocol.md" 'A reported bug is reproduced before it is fixed or declared working'
 need "$root/skills/odd-flow/references/commit.md" 'every testable change it carries has observed local proof'
 
+need "$delegation" 'Spot check: re-run one command a worker reported before accepting its result: the command that proves the main acceptance criterion, or the RED-to-GREEN test when the writer worked test-first.'
+for block in core-block.md core-block-full-delegation.md; do
+    need "$root/skills/odd-flow/assets/$block" 'Close every request with the verified outcome, every failed, skipped or pending check, residual risks workers reported, and the next step. Never report a check as passed without observed output.'
+done
+need "$root/skills/odd-flow/references/odd-protocol.md" 'Report verified outcome, every failed, skipped or pending check, residual risks workers reported (the writer'"'"'s `risks:` and the verifier'"'"'s `advisories` and `unverified` items), and the next step.'
+need "$root/skills/odd-flow/SKILL.md" 'Close every request with: verified outcome; every failed, skipped or pending check; residual risks workers reported; next step; `Risk: item N (reason)` or `Risk: none` for code changes; and the profile and roles used when workers ran.'
+
 parent_inputs=$(sed -n '/^## What the parent passes$/,/^## Correction bounds$/p' "$delegation")
 printf '%s\n' "$parent_inputs" | grep -qE '^- For .*verify.*Base commit.*Candidate commit.*git commit-tree' || fail 'B1: parent pins both verifier commits'
 
