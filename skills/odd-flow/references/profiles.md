@@ -99,7 +99,8 @@ Resuming a pruned session uses the default profile and mode unless another overr
 SessionStart also removes records and bindings older than 30 days. It checks
 only session bindings and the current runtime's plugin data directory, at most
 once every 24 hours per data directory. Without a plugin data directory, it skips
-automatic cleanup. Cleanup failures do not change the hook's output.
+automatic cleanup. Both forms continue past failures; the hook stays silent,
+while `prune` reports partial counts and errors and exits with status 2.
 
 A bare profile name (`/odd-flow B`) is not a command: ask whether the user meant `--profile B`.
 

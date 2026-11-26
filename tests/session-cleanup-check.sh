@@ -100,6 +100,24 @@ class SessionCleanupCheck(unittest.TestCase):
         self.output(self.hook(CLAUDE_PLUGIN_DATA=self.data))
         self.assertFalse(later.exists())
 
+    def test_unreadable_bindings_do_not_stop_record_cleanup(self):
+        self.bindings.parent.mkdir(parents=True)
+        if os.geteuid() == 0:
+            self.bindings.touch()
+        else:
+            self.bindings.mkdir(mode=0o000)
+        expired = [record(self.data / bucket / key("expired"))
+                   for bucket in ("prompt-sessions", "session-modes")]
+        try:
+            expected = self.output(self.hook())
+            self.assertEqual(self.output(self.hook(CLAUDE_PLUGIN_DATA=self.data)), expected)
+        finally:
+            if self.bindings.is_dir():
+                self.bindings.chmod(0o700)
+        self.assertTrue((self.data / stamp_name).is_file())
+        for path in expired:
+            self.assertFalse(path.exists(), path)
+
     def test_each_runtime_only_cleans_its_own_data(self):
         for runtime in ("claude", "codex", "antigravity"):
             with self.subTest(runtime=runtime):

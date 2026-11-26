@@ -803,7 +803,14 @@ def _open_state_dir(base, *parts):
         os.close(fd)
 
 
-def discover_plugin_data_dirs():
+def _record_state_error(errors, message, cause):
+    error = ProfileError(message)
+    if errors is None:
+        raise error from cause
+    errors.append(error)
+
+
+def discover_plugin_data_dirs(*, errors=None):
     """Yield real odd-flow plugin data directories from installed runtime layouts."""
     home = Path.home()
     claude_config = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -827,6 +834,10 @@ def discover_plugin_data_dirs():
                         info = os.lstat(entry, dir_fd=fd)
                     except FileNotFoundError:
                         continue
+                    except OSError as exc:
+                        detail = _state_path_error(exc, root / entry)
+                        _record_state_error(errors, f"{root}: cannot discover plugin data: {detail}", exc)
+                        continue
                     identity = info.st_dev, info.st_ino
                     if stat.S_ISDIR(info.st_mode) and identity not in found:
                         found.add(identity)
@@ -836,7 +847,7 @@ def discover_plugin_data_dirs():
         except OSError as exc:
             path = root / exc.filename if exc.filename else root
             detail = _state_path_error(exc, path)
-            raise ProfileError(f"{root}: cannot discover plugin data: {detail}") from exc
+            _record_state_error(errors, f"{root}: cannot discover plugin data: {detail}", exc)
 
 
 def _state_folders(data_dirs):
@@ -847,7 +858,7 @@ def _state_folders(data_dirs):
         yield "session_modes", data_dir.parent, (data_dir.name, "session-modes"), "mode-notice record"
 
 
-def _list_state_files(fd, folder, label, cutoff):
+def _list_state_files(fd, folder, label, cutoff, errors):
     try:
         entries = os.listdir(fd)
     except OSError as exc:
@@ -863,12 +874,13 @@ def _list_state_files(fd, folder, label, cutoff):
             continue
         except OSError as exc:
             detail = _state_path_error(exc, path)
-            raise ProfileError(f"{path}: cannot inspect {label}: {detail}") from exc
+            _record_state_error(errors, f"{path}: cannot inspect {label}: {detail}", exc)
+            continue
         if stat.S_ISREG(info.st_mode) and (cutoff is None or info.st_mtime < cutoff):
             yield path
 
 
-def _scan_session_state(data_dirs, cutoff, *, remove):
+def _scan_session_state(data_dirs, cutoff, *, remove, errors=None):
     result = {key: [] for key in ("session_bindings", "prompt_sessions", "session_modes")}
     bindings_found = False
     for key, base, parts, label in _state_folders(data_dirs):
@@ -879,11 +891,21 @@ def _scan_session_state(data_dirs, cutoff, *, remove):
                     continue
                 if key == "session_bindings":
                     bindings_found = True
-                for path in _list_state_files(fd, folder, label, cutoff):
-                    if not remove or remove_session_file(path, dir_fd=fd, label=label):
-                        result[key].append(path)
+                for path in _list_state_files(fd, folder, label, cutoff, errors):
+                    if remove:
+                        try:
+                            if not remove_session_file(path, dir_fd=fd, label=label):
+                                continue
+                        except ProfileError as exc:
+                            errors.append(exc)
+                            continue
+                    result[key].append(path)
         except OSError as exc:
-            raise ProfileError(f"{folder}: cannot read {label}s: {exc}") from exc
+            _record_state_error(errors, f"{folder}: cannot read {label}s: {exc}", exc)
+        except ProfileError as exc:
+            if errors is None:
+                raise
+            errors.append(exc)
     return result, bindings_found
 
 
@@ -892,9 +914,11 @@ def list_session_state(data_dirs, *, cutoff=None):
     return _scan_session_state(data_dirs, cutoff, remove=False)[0]
 
 
-def prune_session_state(data_dirs, cutoff):
-    """Remove state older than cutoff; return removed counts (None for missing bindings)."""
-    removed, bindings_found = _scan_session_state(data_dirs, cutoff, remove=True)
+def prune_session_state(data_dirs, cutoff, *, errors=None):
+    """Return removed counts, continuing past failures and collecting them if requested."""
+    if errors is None:
+        errors = []
+    removed, bindings_found = _scan_session_state(data_dirs, cutoff, remove=True, errors=errors)
     counts = {key: len(paths) for key, paths in removed.items()}
     if not bindings_found:
         counts["session_bindings"] = None
@@ -903,15 +927,20 @@ def prune_session_state(data_dirs, cutoff):
 
 def cmd_prune(args):
     cutoff = time.time() - args.days * 86400
-    counts = prune_session_state(discover_plugin_data_dirs(), cutoff)
+    errors = []
+    counts = prune_session_state(discover_plugin_data_dirs(errors=errors), cutoff, errors=errors)
     suffix = f"older than {args.days} days"
     bindings = counts["session_bindings"]
-    if bindings is None:
+    if bindings is None and not errors:
         print("no session bindings")
     else:
-        print(f"removed {bindings} session binding(s) {suffix}")
+        print(f"removed {bindings or 0} session binding(s) {suffix}")
     print(f"removed {counts['prompt_sessions']} prompt-hook record(s) {suffix}")
-    print(f"removed {counts['session_modes']} mode-notice record(s) {suffix}")
+    print(f"removed {counts['session_modes']} mode-notice record(s) {suffix}", flush=bool(errors))
+    if errors:
+        for error in errors:
+            print(f"odd-flow: {error}", file=sys.stderr)
+        return 2
 
 
 def main(argv=None):
@@ -961,11 +990,10 @@ def main(argv=None):
     prune.set_defaults(func=cmd_prune)
     args = parser.parse_args(argv)
     try:
-        args.func(args)
+        return args.func(args) or 0
     except ProfileError as exc:
         print(f"odd-flow: {exc}", file=sys.stderr)
         return 2
-    return 0
 
 
 if __name__ == "__main__":

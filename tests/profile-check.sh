@@ -203,6 +203,7 @@ ARGS="list"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
 expect "invalid json rejected" "invalid JSON" "$out" 2 $ec
 
 # --- unreadable state must fail explicitly, never degrade to none/organic ---
+prune_zero=$'removed 0 session binding(s) older than 30 days\nremoved 0 prompt-hook record(s) older than 30 days\nremoved 0 mode-notice record(s) older than 30 days'
 if [ "$(id -u)" -ne 0 ]; then
   U="$T/unreadable"; mkdir -p "$U/sessions"
   cp "$EX" "$U/profiles.json"; printf '{"profile":"minimal"}' > "$U/sessions/s1.json"
@@ -244,7 +245,7 @@ if [ "$(id -u)" -ne 0 ]; then
   PR="$T/prune"; mkdir -p "$PR/sessions"; touch -t 202001010000 "$PR/sessions/old.json"
   chmod 000 "$PR"
   ARGS="prune"; out=$(run ODD_FLOW_HOME="$PR"); ec=$?
-  expect "prune on unreadable home fails explicitly" "odd-flow: $PR/sessions: cannot read session bindings: [Errno 13] Permission denied: '$PR/sessions'" "$out" 2 $ec exact
+  expect "prune on unreadable home fails explicitly" "$prune_zero"$'\n'"odd-flow: $PR/sessions: cannot read session bindings: [Errno 13] Permission denied: '$PR/sessions'" "$out" 2 $ec exact
   chmod 700 "$PR"
   for mode in 000 500; do
     chmod "$mode" "$PR/sessions"
@@ -254,7 +255,7 @@ if [ "$(id -u)" -ne 0 ]; then
     else
       expected="odd-flow: $PR/sessions/old.json: cannot remove session binding: [Errno 13] Permission denied: '$PR/sessions/old.json'"
     fi
-    expect "prune on sessions dir $mode fails explicitly" "$expected" "$out" 2 $ec exact
+    expect "prune on sessions dir $mode fails explicitly" "$prune_zero"$'\n'"$expected" "$out" 2 $ec exact
     chmod 700 "$PR/sessions"
     [ -f "$PR/sessions/old.json" ] && { pass=$((pass+1)); echo "PASS prune $mode leaves old.json"; } || { fail=$((fail+1)); echo "FAIL prune $mode removed old.json"; }
   done
@@ -280,7 +281,7 @@ ARGS="prune"; out=$(run ODD_FLOW_HOME="$NF"); ec=$?
 expect "ODD_FLOW_HOME as file: prune fails" "odd-flow: $NF" "$out" 2 $ec
 SF="$T/sessions-as-file"; mkdir -p "$SF"; : > "$SF/sessions"
 ARGS="prune --days 30"; out=$(run ODD_FLOW_HOME="$SF"); ec=$?
-expect "sessions as file: prune keeps full path in errno" "odd-flow: $SF/sessions: cannot read session bindings: [Errno 20] Not a directory: '$SF/sessions'" "$out" 2 $ec exact
+expect "sessions as file: prune keeps full path in errno" "$prune_zero"$'\n'"odd-flow: $SF/sessions: cannot read session bindings: [Errno 20] Not a directory: '$SF/sessions'" "$out" 2 $ec exact
 
 if python3 -I - "$P" "$T" <<'PY'
 import hashlib
@@ -419,6 +420,41 @@ linked_record = file(plugin_parent / "data/odd-flow-market/prompt-sessions" / ol
 (linked_config / "plugins").symlink_to(plugin_parent, target_is_directory=True)
 assert prune(CLAUDE_CONFIG_DIR=str(linked_config))[1] == "removed 1 prompt-hook record(s) older than 30 days"
 assert not linked_record.exists()
+
+broken = claude_data / "odd-flow-broken" / "prompt-sessions"
+file(broken, expired_by_default, [])
+expired = (
+    file(bindings / "partial.json", expired_by_default, []),
+    file(broken.parent / "session-modes" / old_key, expired_by_default, []),
+    file(data_dirs[-1] / "prompt-sessions" / old_key, expired_by_default, []),
+)
+errors = [f"odd-flow: {broken}: cannot read prompt-hook records: [Errno 20] Not a directory: '{broken}'"]
+blocks = []
+if os.geteuid() != 0:
+    codex_root = codex / "plugins/data"
+    stuck = file(data_dirs[0] / "session-modes" / old_key, expired_by_default, [])
+    blocks = [(codex_root, 0o000), (stuck.parent, 0o500)]
+    errors.extend([
+        f"odd-flow: {codex_root}: cannot discover plugin data: [Errno 13] Permission denied: '{codex_root}'",
+        f"odd-flow: {stuck}: cannot remove mode-notice record: [Errno 13] Permission denied: '{stuck}'",
+    ])
+try:
+    for folder, mode in blocks:
+        folder.chmod(mode)
+    result = subprocess.run([sys.executable, "-I", script, "prune"], env=env,
+                            capture_output=True, text=True)
+finally:
+    for folder, _ in blocks:
+        folder.chmod(0o700)
+assert result.returncode == 2, result
+assert result.stdout.splitlines() == [
+    "removed 1 session binding(s) older than 30 days",
+    "removed 1 prompt-hook record(s) older than 30 days",
+    "removed 1 mode-notice record(s) older than 30 days",
+], result
+assert sorted(result.stderr.splitlines()) == sorted(errors), result
+assert not [path for path in expired if path.exists()]
+assert broken.is_file() and (not blocks or stuck.is_file())
 PY
 then pass=$((pass+1)); echo "PASS prune session state discovery, eligibility and removal"
 else fail=$((fail+1)); echo "FAIL prune session state discovery, eligibility or removal"
