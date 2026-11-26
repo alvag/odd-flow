@@ -42,6 +42,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 - Orca worker placement timeout errors name the split target and direction or the new tab's worktree, plus the intended title, so coordinators can identify and close late terminals.
 - Unparseable Orca placement replies and replies without a handle now include the same placement context as timeouts.
 - When Orca reports a split timeout with a pending leaf ID, worker placement waits once for that pane under the same lock instead of starting another split.
+- If that split retry fails, the placement error keeps the original leaf ID and Orca message so the late pane can be identified.
 - Uncertain Orca tab creation errors include the pre-create terminal handles so late tabs can be recovered without relying on titles.
 - Orca worker placement ignores saved terminal widths with timestamps in the future.
 - The Orca terminal dispatch guide explains how to create and reuse an orchestration Run before creating Tasks.
