@@ -56,5 +56,12 @@ if [ -n "$model" ]; then
   fi
 fi
 set -- "$@" -c sandbox_workspace_write.network_access=true
+set -- "$@" -c 'plugins."engram@engram".enabled=false'
+
+# Without a server table, this override creates an entry with no transport.
+config="${CODEX_HOME:-$HOME/.codex}/config.toml"
+if grep -qsE '^[[:blank:]]*\[[[:blank:]]*mcp_servers[[:blank:]]*\.[[:blank:]]*(engram|"engram")[[:blank:]]*\][[:blank:]]*(#.*)?$' "$config"; then
+  set -- "$@" -c mcp_servers.engram.enabled=false
+fi
 
 exec codex --no-daemon --sandbox workspace-write "$@"

@@ -41,8 +41,21 @@ want=$(printf '%s\n' --no-daemon --sandbox workspace-write \
   -c "shell_environment_policy.set.ORCA_PANE_KEY='tab-1:pane-1'" \
   -c "shell_environment_policy.set.ORCA_TERMINAL_HANDLE='term_1'" \
   -c check_for_update_on_startup=false -c disable_paste_burst=true \
-  -m gpt-6-luna -c model_reasoning_effort=medium -c sandbox_workspace_write.network_access=true)
+  -m gpt-6-luna -c model_reasoning_effort=medium -c sandbox_workspace_write.network_access=true \
+  -c 'plugins."engram@engram".enabled=false')
 expect "argv: pin once, existing order kept" "$want" "$out" 0 $ec exact
+
+mkdir -p "$T/empty-home" "$T/empty-codex"
+out=$(launch "${ORCA_ENV[@]}" HOME="$T/empty-home" CODEX_HOME="$T/empty-codex"); ec=$?
+expect "no Engram installed: Codex launches with the plugin override and no MCP override" "$want" "$out" 0 $ec exact
+
+mkdir -p "$T/configured-home/.codex" "$T/codex"
+printf '%s\n' '[mcp_servers.engram]' 'command = "engram"' >"$T/configured-home/.codex/config.toml"
+printf '%s\n' '[mcp_servers."engram"]' 'command = "engram"' >"$T/codex/config.toml"
+out=$(launch "${ORCA_ENV[@]}" HOME="$T/configured-home"); ec=$?
+expect "bare Engram table in default config: both overrides passed" "$want"$'\n-c\nmcp_servers.engram.enabled=false' "$out" 0 $ec exact
+out=$(launch "${ORCA_ENV[@]}" HOME="$T/empty-home" CODEX_HOME="$T/codex"); ec=$?
+expect "quoted Engram table in CODEX_HOME: both overrides passed" "$want"$'\n-c\nmcp_servers.engram.enabled=false' "$out" 0 $ec exact
 
 ARGS=""; out=$(launch "${ORCA_ENV[@]}"); ec=$?
 refute "no model: no -m flag" $'\n-m\n' "$out"
@@ -91,7 +104,9 @@ expect "codex role without model: launcher without arguments" "codex-worker.sh'\
 out=$(resolve verify --json); ec=$?
 expect "claude role: launch is worker-start" '"launch": "worker-start"' "$out" 0 $ec
 expect "claude role: no terminal command" '"terminal_command": null' "$out" 0 $ec
-expect "claude role: split command includes model and effort" "\"split_command\": \"claude --model 'claude-opus-5-5' --effort 'high'\"" "$out" 0 $ec
+argv=$(printf '%s\n' "$out" | python3 -I -c 'import json,shlex,sys; print("\n".join(shlex.split(json.load(sys.stdin)["split_command"])))')
+expect "claude role: split command preserves model and effort, then adds settings" \
+  $'claude\n--model\nclaude-opus-5-5\n--effort\nhigh\n--settings\n'"$ROOT/skills/odd-flow/scripts/claude-worker-settings.json" "$argv" 0 "$ec" exact
 
 out=$(resolve review --json); ec=$?
 expect "antigravity role: launch is worker-start" '"launch": "worker-start"' "$out" 0 $ec
