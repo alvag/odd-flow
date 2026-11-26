@@ -11,9 +11,11 @@ import runpy
 import shutil
 import stat
 import subprocess
+import unicodedata
 
 SCHEMA = "odd-flow.install-check/v1"
 VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
+OUTPUT_SPACE = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
 HOOKS_MIN_VERSION = (0, 4, 0)
 PLUGIN_LIST_TIMEOUT_SECS = 30
 MANIFEST_BY_RUNTIME = {
@@ -194,6 +196,11 @@ def compare_install(runtime, path, version, root, hashes):
         return unreadable(runtime, error, "cannot read shipped files")
 
 
+def sanitize_human_output(value):
+    value = "".join(char for char in value if unicodedata.category(char) != "Cf")
+    return OUTPUT_SPACE.sub(" ", value).strip()
+
+
 def check_orca(root):
     try:
         for entry in list_plugins("orca"):
@@ -208,7 +215,7 @@ def check_orca(root):
                              plugin_status=plugin_status)
                 error = entry.get("error")
                 if plugin_status != "running" and isinstance(error, str):
-                    error = re.sub(r"[\s\x00-\x1f\x7f-\x9f]+", " ", error).strip()
+                    error = OUTPUT_SPACE.sub(" ", error).strip()
                     if error:
                         row["plugin_error"] = error
                 return row
@@ -224,7 +231,7 @@ def count_session_state():
         return {category: len(paths) for category, paths in files.items()}
     except Exception:
         # State diagnostics must not prevent the install report or change its exit code.
-        return {"status": "unreadable"}
+        return {"status": "unreadable", "reason": "cannot scan session state directories"}
 
 
 def check(root):
@@ -268,9 +275,9 @@ def print_report(report):
         label = LABELS[row["runtime"]]
         line = f'{label}: {row["status"]}'
         if "reason" in row:
-            line += f' ({row["reason"]})'
+            line += f' ({sanitize_human_output(row["reason"])})'
         if "path" in row:
-            line += f' [{row["path"]}]'
+            line += f' [{sanitize_human_output(row["path"])}]'
         if "version" in row:
             component = label if row["runtime"] == "orca" else "odd-flow"
             line += f' ({component} {row["version"]}'
@@ -279,14 +286,18 @@ def print_report(report):
             if "plugin_status" in row:
                 line += f'; Orca status: {row["plugin_status"]}'
             if "plugin_error" in row:
-                line += f'; {row["plugin_error"]}'
+                error = sanitize_human_output(row["plugin_error"])
+                if len(error) > 200:
+                    error = error[:200] + "..."
+                if error:
+                    line += f"; {error}"
             line += ")"
         if row.get("files_differ"):
             prefix = ": " if row["status"] == "files differ" else ": files differ: "
-            line += prefix + ", ".join(row["files_differ"])
+            line += prefix + ", ".join(map(sanitize_human_output, row["files_differ"]))
         print(line)
     if "reason" in report:
-        print(f'Checkout: unreadable ({report["reason"]})')
+        print(f'Checkout: unreadable ({sanitize_human_output(report["reason"])})')
     for warning in report["warnings"]:
         source, message = warning.split(": ", 1)
         label, version = source.rsplit(" ", 1)
@@ -297,7 +308,7 @@ def print_report(report):
           "Orca reports its listed version, state, and any error for a non-running plugin.")
     state = report["session_state"]
     if state.get("status") == "unreadable":
-        print("Session state: unreadable")
+        print(f'Session state: unreadable ({sanitize_human_output(state["reason"])})')
     else:
         print(f'Session state: {state["session_bindings"]} session binding(s), '
               f'{state["prompt_sessions"]} prompt-hook record(s), '
