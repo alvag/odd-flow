@@ -3,30 +3,32 @@
 Use the ODD Flow panel to view and switch profiles and modes for agent sessions
 in Orca's focused workspace without sending an agent prompt.
 
+The ODD Flow Orca plugin requires odd-flow and does not work on its own.
+Install odd-flow for Claude Code, Codex, or Antigravity.
+
 The ODD Flow Orca plugin is versioned separately from odd-flow. See the
 [compatibility table](../docs/compatibility.md) for tested combinations.
 
-## Load the plugin
+## Install the plugin
 
-Use Orca 1.4.259 or newer and odd-flow 0.3.0 or newer. Make `python3` available
-to Orca. From this repository's root on the Orca host, load the checkout as a
-development folder:
+First install odd-flow 0.3.0 or newer for
+[Claude Code](../README.md#install-claude-code),
+[Codex](../README.md#install-codex), or
+[Antigravity](../README.md#install-antigravity). The Orca plugin cannot
+work without it. Use Orca 1.4.259 or newer and make `python3` available to Orca.
+
+From this repository's root on the Orca host, run:
 
 ```sh
-orca plugin dev load orca-plugin --json
+orca plugin install ./orca-plugin --json
 ```
 
 Review the access Orca reports. Only if you trust the plugin code and the
 Python script it will run, repeat the command with the fingerprint Orca returned:
 
 ```sh
-orca plugin dev load orca-plugin --json --approve <fingerprint>
+orca plugin install ./orca-plugin --json --approve <fingerprint>
 ```
-
-For a regular install, use `orca plugin install ./orca-plugin --json` and
-repeat that command with the returned fingerprint after reviewing the access.
-Orca also supports GitHub tree URLs that point to the plugin folder and catalog
-entries that set `source.path` to `orca-plugin`.
 
 The manifest requests `agent:read` for agent status events and
 `workspace:read` to list agents in the focused workspace and receive
@@ -34,11 +36,28 @@ workspace change events. `settings:own` allows the plugin to read and
 change its own settings; the plugin uses it to read the values below.
 It uses `trusted-worker` execution: Node, the Orca CLI, and the selected Python
 script run with your account's access on the Orca host. The status item and
-commands add no capability grants. In a live dev-folder run, changing only
-worker code put the plugin back into pending approval (`needsReconsent`) with
-a new fingerprint, despite Orca's approval text saying later code edits don't
-need re-approval. If that happens, review the access again and use the new
-fingerprint.
+commands add no capability grants.
+
+## Develop the plugin from a checkout
+
+When editing the plugin, use a development folder instead of a regular
+install so Orca can reload it as files change. From this repository's root
+on the Orca host, run:
+
+```sh
+orca plugin dev load orca-plugin --json
+```
+
+Review the access Orca reports. If you approve it, rerun with the returned
+fingerprint:
+
+```sh
+orca plugin dev load orca-plugin --json --approve <fingerprint>
+```
+
+Even a change to worker code alone can return the development plugin to
+pending approval (`needsReconsent`). If that happens, review the access again
+and use the new fingerprint.
 
 ## Worker dispatch prompts
 
@@ -87,11 +106,18 @@ user's approval before reloading or reinstalling the plugin.
 
 Both settings are optional.
 
-- **`profileScript`**: Leave blank to use the installed odd-flow. The plugin
-  checks the newest semver directory in the Claude cache, then the newest
-  in the Codex cache, then the Antigravity installation under
-  `~/.gemini/config/plugins/odd-flow`. The panel shows the path and source
-  it selected. To override that choice, set the absolute path to a trusted
+- **`profileScript`**: Leave blank to find `skills/odd-flow/scripts/profile.py`
+  in this order:
+  1. The newest semantic-version directory in the Claude Code cache
+     (`~/.claude/plugins/cache/odd-flow/odd-flow`).
+  2. The newest semantic-version directory in the Codex cache
+     (`~/.codex/plugins/cache/odd-flow/odd-flow`).
+  3. The Antigravity installation (`~/.gemini/config/plugins/odd-flow`).
+
+  The plugin picks the newest version within each cache, not across caches.
+  If that directory has no script, it checks the next location rather than
+  an older directory. The panel shows the selected path and source. To
+  override the choice, set the absolute path to a trusted
   `profile.py` that supports `list --json`, `show --json`, `use`,
   `session-mode`, and `clear`.
 - **`pluginKey`**: Set this to the installed key to use when opening the
@@ -191,9 +217,14 @@ sends a prompt, or launches an agent.
 
 ## Troubleshoot
 
+- If no installed script is found with `profileScript` blank, the panel
+  reports: `No installed profile.py was found. Set profileScript to its absolute path in Orca Settings.`
+  The status item normally shows `odd: script unavailable` with the same
+  message in its tooltip.
 - If the selected script does not accept `--json` for profile or session
   lookups, the panel and status tooltip report:
   `odd-flow 0.3.0 or newer is required (found <script path>). Update the odd-flow plugin, or set profileScript to a newer profile.py.`
+  The status item normally shows `odd: show failed`.
   See [Updating odd-flow](../README.md#updating) for the runtime update steps.
 - For a worker-check error, inspect the panel error or status tooltip.
   The worker looks for `orca` at an absolute file path in `ORCA_CLI_COMMAND`,

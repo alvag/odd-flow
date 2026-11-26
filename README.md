@@ -98,7 +98,7 @@ Not validated live or promised: `write_to_file`, `replace_file_content` and `mul
 
 ## Orca profiles panel
 
-The [ODD Flow Orca plugin](orca-plugin/README.md) shows and switches the odd-flow profile and mode of coordinator sessions in the focused workspace without sending a prompt. From this checkout, run `orca plugin dev load orca-plugin --json`, then follow the linked guide to review access, approve, and configure the plugin.
+The [ODD Flow Orca plugin](orca-plugin/README.md) shows and switches the odd-flow profile and mode of coordinator sessions in the focused workspace without sending a prompt. Follow the [regular installation instructions](orca-plugin/README.md#install-the-plugin) to install it from this checkout, review its access, and approve it.
 
 ## Updating
 
