@@ -125,7 +125,7 @@ export function featureOwners(input: {
   tasks: RawTask[]
   runs: RawRun[]
   openSessions: Iterable<string>
-  hiddenRunIds: ReadonlySet<string>
+  hidden: Pick<ReturnType<typeof hiddenDashboardWork>, 'runs' | 'activeTaskIds'>
   sessionBoundaries?: ReadonlyMap<string, number>
 }): FeatureOwnership {
   const open = new Set(input.openSessions)
@@ -135,19 +135,21 @@ export function featureOwners(input: {
   )
   const openTasks: { spec: string; session: string; createdAt: number | null; completedAt: number | null }[] = []
   for (const task of input.tasks) {
-    if (task.run_id && input.hiddenRunIds.has(task.run_id)) continue
+    if (task.run_id && input.hidden.runs.has(task.run_id)) continue
     if (typeof task.spec !== 'string' || !task.spec) continue
     const session = (task.created_by_terminal_handle && open.has(task.created_by_terminal_handle))
       ? task.created_by_terminal_handle
       : (task.run_id ? runCoordinator.get(task.run_id) : undefined)
     if (!session || !open.has(session)) continue
     const createdAt = parseOrcaTime(task.created_at)
-    if (beforeSession(createdAt, input.sessionBoundaries?.get(session))) continue
+    const completedAt = parseOrcaTime(task.completed_at)
+    if (completedAt !== null && !input.hidden.activeTaskIds.has(task.id)
+        && beforeSession(createdAt, input.sessionBoundaries?.get(session))) continue
     openTasks.push({
       spec: task.spec,
       session,
       createdAt,
-      completedAt: parseOrcaTime(task.completed_at)
+      completedAt
     })
   }
 
@@ -211,35 +213,35 @@ function newestFirst(a: number | null, b: number | null): number {
   return b - a
 }
 
-export function hiddenDashboardWork(runs: RawRun[], tasks: RawTask[], dispatches: RawDispatch[], now: number) {
+export function hiddenDashboardWork(
+  runs: RawRun[], tasks: RawTask[], dispatches: RawDispatch[], now: number, unsettledRunIds: ReadonlySet<string> = new Set()
+) {
   const cutoff = now - STALE_WORK_MS
   const activeTaskIds = new Set(dispatches.filter(({ state }) => isActiveDispatch(state)).map(({ taskId }) => taskId))
-  const activity = new Map(runs.map(({ id, created_at }) => [id, { latest: parseOrcaTime(created_at), open: false }]))
-  const standaloneTasks = new Set<string>()
+  const activity = new Map(runs.map(({ id, created_at }) =>
+    [id, { latest: parseOrcaTime(created_at), open: unsettledRunIds.has(id) }]))
   for (const task of tasks) {
-    const completedAt = parseOrcaTime(task.completed_at)
-    const active = activeTaskIds.has(task.id)
-    if (!task.run_id) {
-      if (!active && completedAt !== null && completedAt < cutoff) standaloneTasks.add(task.id)
-      continue
-    }
+    if (!task.run_id) continue
     const run = activity.get(task.run_id)
     if (!run) continue
-    run.open ||= active || completedAt === null
+    const completedAt = parseOrcaTime(task.completed_at)
+    run.open ||= completedAt === null
     for (const at of [parseOrcaTime(task.created_at), completedAt]) {
       if (newestFirst(at, run.latest) < 0) run.latest = at
     }
   }
   const hiddenRuns = new Set<string>()
+  const openRuns = new Set<string>()
   for (const [id, { latest, open }] of activity) {
-    if (!open && latest !== null && latest < cutoff) hiddenRuns.add(id)
+    if (open) openRuns.add(id)
+    else if (latest !== null && latest < cutoff) hiddenRuns.add(id)
   }
-  return { runs: hiddenRuns, standaloneTasks }
+  return { runs: hiddenRuns, openRuns, activeTaskIds }
 }
 
 export function workerRows(input: {
   dispatches: RawDispatch[]; tasks: RawTask[]; agents: Agent[]; coordinator: string; runs: RawRun[]
-  hidden: ReturnType<typeof hiddenDashboardWork>
+  hidden: Pick<ReturnType<typeof hiddenDashboardWork>, 'runs'>
   sessionBoundary?: number
 }) {
   const { dispatches, tasks, agents, coordinator, runs, hidden } = input
@@ -261,8 +263,8 @@ export function workerRows(input: {
     if (active && terminal) activeTerminals.add(terminal)
     if (!task || !(task.created_by_terminal_handle === coordinator || (task.run_id && runIds.has(task.run_id)))) continue
     if (dispatch.workspace) workspaceCandidates.add(dispatch.workspace)
-    if (task.run_id ? hidden.runs.has(task.run_id) : hidden.standaloneTasks.has(task.id)) continue
-    if (beforeSession(startedAt, input.sessionBoundary)) continue
+    if (task.run_id && hidden.runs.has(task.run_id)) continue
+    if (!active && beforeSession(startedAt, input.sessionBoundary)) continue
 
     const blocked = newestActive ? blockedTerminals.get(terminal ?? null) : undefined
     // Orca projects pending questions as input, not as a question category.
@@ -308,11 +310,12 @@ function resultSubject(result: string | null): string | null {
 }
 
 export function currentWork(
-  runs: RawRun[], tasks: RawTask[], coordinator: string, hiddenRunIds: ReadonlySet<string>, sessionBoundary?: number
+  runs: RawRun[], tasks: RawTask[], coordinator: string,
+  hidden: Pick<ReturnType<typeof hiddenDashboardWork>, 'runs' | 'openRuns'>, sessionBoundary?: number
 ): CurrentWork | null {
-  const run = runs.filter((item) => item.coordinator_handle === coordinator && !hiddenRunIds.has(item.id))
+  const run = runs.filter((item) => item.coordinator_handle === coordinator && !hidden.runs.has(item.id))
     .map((item) => ({ item, startedAt: parseOrcaTime(item.created_at) }))
-    .filter(({ startedAt }) => !beforeSession(startedAt, sessionBoundary))
+    .filter(({ item, startedAt }) => hidden.openRuns.has(item.id) || !beforeSession(startedAt, sessionBoundary))
     .sort((a, b) => newestFirst(a.startedAt, b.startedAt))[0]
   if (!run) return null
 

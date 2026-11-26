@@ -518,6 +518,7 @@ export function createWorker({
       const runs: RawRun[] = []
       const tasks: RawTask[] = []
       const dispatches: RawDispatch[] = []
+      const unsettledRunIds = new Set<string>()
       const failed = new Map<string, string>()
       let listError: string | undefined
       let command: string | null = null
@@ -574,6 +575,7 @@ export function createWorker({
             runCache.delete(id)
             return null
           }
+          if (!runTasks || runWorkers?.some(({ state }) => isActiveDispatch(state))) unsettledRunIds.add(id)
           const data = { tasks: runTasks ?? [], dispatches: runWorkers ?? [] }
           if (runTasks && runWorkers) runCache.set(id, data)
           else if (row.coordinator_handle && !failed.has(row.coordinator_handle)) {
@@ -605,7 +607,7 @@ export function createWorker({
       } catch (error) {
         listError = formatWorkerError(command, error)
       }
-      return { runs, tasks, dispatches, failed, listError }
+      return { runs, tasks, dispatches, unsettledRunIds, failed, listError }
     }
 
     async function scopedDispatches(
@@ -694,8 +696,8 @@ export function createWorker({
         }),
         dashboardRuns(new Set(rows.map(({ terminalId }) => terminalId)), deadline)
       ])
-      const { runs, tasks, dispatches, failed, listError } = sources
-      const hidden = hiddenDashboardWork(runs, tasks, dispatches, Date.now())
+      const { runs, tasks, dispatches, unsettledRunIds, failed, listError } = sources
+      const hidden = hiddenDashboardWork(runs, tasks, dispatches, Date.now(), unsettledRunIds)
       const openSessions = rows.map(({ terminalId }) => terminalId)
       const entries = await Promise.all(rows.map(async (row): Promise<[string, Dashboard]> => {
         const terminalId = row.terminalId
@@ -721,7 +723,7 @@ export function createWorker({
           let owners = ownershipByRoot.get(root)
           if (!owners) {
             owners = featureOwners({
-              docs: featureSource.value.docs, tasks, runs, openSessions, hiddenRunIds: hidden.runs, sessionBoundaries
+              docs: featureSource.value.docs, tasks, runs, openSessions, hidden, sessionBoundaries
             })
             ownershipByRoot.set(root, owners)
           }
@@ -731,7 +733,7 @@ export function createWorker({
         } else {
           dashboard.errors.feature = 'Could not read feature documents for this workspace.'
         }
-        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId, hidden.runs, sessionBoundary)
+        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId, hidden, sessionBoundary)
         return [terminalId, dashboard]
       }))
       return Object.fromEntries(entries)

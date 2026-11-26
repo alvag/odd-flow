@@ -1688,7 +1688,10 @@ const sessionWorkTime = (seconds: number) => new Date(sessionSighting + seconds 
 async function sessionDashboardFixture(
   t: TestContext,
   runSeconds: number,
-  tasks: { id: string; seconds: number; spec?: string }[] = []
+  tasks: {
+    id: string; seconds: number; spec?: string; finished?: boolean; attention?: string[]; dispatchState?: string | null
+  }[] = [],
+  failTasks = false
 ) {
   const root = await temp(t)
   let now = sessionSighting - 10_000
@@ -1707,13 +1710,19 @@ async function sessionDashboardFixture(
       if (argv[1] === 'run-list') return cliOk({ runs: [
         { id: 'run', objective: 'Dashboard work', coordinator_handle: 'codex', created_at: sessionWorkTime(runSeconds) }
       ] })
-      if (argv[1] === 'task-list') return cliOk({ tasks: tasks.map(({ id, seconds, spec }) => ({
-        id, task_title: id, status: 'dispatched', created_at: sessionWorkTime(seconds), completed_at: null,
-        created_by_terminal_handle: 'codex', run_id: 'run', result: null, spec
-      })) })
-      return cliOk({ workers: argv.includes('--run') ? tasks.map(({ id }) => ({
-        dispatchId: id, taskId: id, state: 'running'
-      })) : [] })
+      if (argv[1] === 'task-list') {
+        if (failTasks) throw new Error('Task list failed')
+        return cliOk({ tasks: tasks.map(({ id, seconds, spec, finished }) => ({
+          id, task_title: id, status: finished ? 'completed' : 'dispatched', created_at: sessionWorkTime(seconds),
+          completed_at: finished ? sessionWorkTime(seconds) : null,
+          created_by_terminal_handle: 'codex', run_id: 'run', result: null, spec
+        })) })
+      }
+      const workers = tasks.filter(({ dispatchState }) => dispatchState !== null)
+        .map(({ id, finished, attention, dispatchState }) => ({
+          dispatchId: id, taskId: id, state: dispatchState ?? (finished ? 'succeeded' : 'running'), attention
+        }))
+      return cliOk({ workers: argv.includes('--run') ? workers : [] })
     }
   }, {
     'agents.list': () => ({ agents: [agent('codex', sessionId)] }),
@@ -1742,6 +1751,13 @@ async function sessionDashboardFixture(
   }
 }
 
+test('keeps an old run visible when its task list fails and a worker is still running', async (t) => {
+  const session = await sessionDashboardFixture(t, -13 * 60 * 60, [{ id: 'running', seconds: -1 }], true)
+  const dashboard = await session.dashboard()
+  assert.match(dashboard?.errors.workers ?? '', /Could not load all Orca work/)
+  assert.equal(dashboard?.current?.objective, 'Dashboard work')
+})
+
 test('hides a run created before the old session was last seen by a status refresh', async (t) => {
   const session = await sessionDashboardFixture(t, -1)
   await session.switchSession()
@@ -1754,17 +1770,34 @@ test('keeps a run created in the same second as the last sighting', async (t) =>
   assert.equal((await session.dashboard())?.current?.objective, 'Dashboard work')
 })
 
+test('keeps a run created between the last sighting and blank session IDs', async (t) => {
+  const session = await sessionDashboardFixture(t, 5)
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.current?.objective, 'Dashboard work')
+})
+
 test('scopes worker dispatches by task creation, keeping work started before the switch was noticed', async (t) => {
   const session = await sessionDashboardFixture(t, -2, [
-    { id: 'previous', seconds: -1 }, { id: 'same-second', seconds: 0 }, { id: 'not-yet-seen', seconds: 1 }
+    { id: 'previous-finished', seconds: -2, finished: true },
+    { id: 'previous-active', seconds: -1, finished: true, dispatchState: 'running', attention: ['input'] },
+    { id: 'same-second', seconds: 0, finished: true }, { id: 'not-yet-seen', seconds: 1, finished: true }
   ])
   await session.switchSession()
-  assert.deepEqual((await session.dashboard())?.workers.map(({ dispatchId }) => dispatchId), ['not-yet-seen', 'same-second'])
+  const dashboard = await session.dashboard()
+  assert.deepEqual(dashboard?.workers.map(({ dispatchId }) => dispatchId), ['previous-active', 'not-yet-seen', 'same-second'])
+  assert.deepEqual(dashboard?.attention, [{ label: 'previous-active', since: Date.parse(sessionWorkTime(-1)) }])
+  assert.equal(dashboard?.current?.objective, 'Dashboard work')
+})
+
+test('keeps an earlier run with an unfinished task and no dispatch after a session change', async (t) => {
+  const session = await sessionDashboardFixture(t, -2, [{ id: 'open', seconds: -1, dispatchState: null }])
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.current?.objective, 'Dashboard work')
 })
 
 test('excludes previous-session task citations from feature ownership', async (t) => {
   const path = 'odd/tasks/previous.md'
-  const session = await sessionDashboardFixture(t, 0, [{ id: 'previous', seconds: -1, spec: path }])
+  const session = await sessionDashboardFixture(t, 0, [{ id: 'previous', seconds: -1, spec: path, finished: true }])
   const doc = await scriptAt(join(session.root, path))
   await writeFile(doc, '# Dashboard\n\nBranch: `feature/previous`\n\n## Tasks\n| ID | Work | Status |\n| --- | --- | --- |\n| 1 | Gather sources | in_progress |\n')
   assert.equal((await session.dashboard())?.feature?.path, path)
@@ -1772,8 +1805,16 @@ test('excludes previous-session task citations from feature ownership', async (t
   assert.equal((await session.dashboard())?.feature, null)
 })
 
+test('keeps feature ownership from unfinished work after a session change', async (t) => {
+  const path = 'odd/tasks/active.md'
+  const session = await sessionDashboardFixture(t, -2, [{ id: 'active', seconds: -1, spec: path }])
+  await writeFile(await scriptAt(join(session.root, path)), '# Dashboard\n\nBranch: `feature/active`\n\n## Tasks\n| ID | Work | Status |\n| --- | --- | --- |\n| 1 | Gather sources | in_progress |\n')
+  await session.switchSession()
+  assert.equal((await session.dashboard())?.feature?.path, path)
+})
+
 test('sets no session boundary on first sight of a terminal', async (t) => {
-  const session = await sessionDashboardFixture(t, -20, [{ id: 'existing', seconds: -20 }])
+  const session = await sessionDashboardFixture(t, -20, [{ id: 'existing', seconds: -20, finished: true }])
   const dashboard = await session.dashboard()
   assert.equal(dashboard?.current?.objective, 'Dashboard work')
   assert.deepEqual(dashboard?.workers.map(({ dispatchId }) => dispatchId), ['existing'])
