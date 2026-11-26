@@ -11,7 +11,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Added
 
-- ODD Flow Orca plugin 0.2.0: Install and update from GitHub through an Orca catalog without cloning (not yet verified live). Before switching from a folder install, run `orca plugin uninstall local.odd-flow-profiles --json`.
+- ODD Flow Orca plugin 0.2.0: Install and update from GitHub through an Orca catalog without cloning. The catalog install was verified live on Orca 1.4.278. Before switching from a folder install, run `orca plugin uninstall local.odd-flow-profiles --json`.
 - `orca-catalog.json` lists the ODD Flow Orca plugin and pins its 0.2.0 release to the commit containing the final plugin folder.
 - `bash tests/orca-catalog-check.sh` checks catalog release history offline, compares versions by SemVer precedence, and reports unreleased plugin changes or version bumps without failing. When Orca is available, it also validates the catalog and regenerates the newest entry for comparison.
 - `bash tests/orca-catalog-paths-check.sh` tests catalog notices and failures in temporary Git repositories, including a changed release hash when Orca is available.

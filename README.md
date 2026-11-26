@@ -121,7 +121,7 @@ Not validated live or promised: `write_to_file`, `replace_file_content` and `mul
 
 ## Orca profiles panel
 
-The optional [ODD Flow Orca plugin](orca-plugin/README.md) shows and switches the odd-flow profile and mode of coordinator sessions in the focused workspace without sending a prompt. The [GitHub catalog install](orca-plugin/README.md#install-from-the-github-catalog-not-yet-verified-live) needs no clone but is not yet verified live. The [clone and folder install](orca-plugin/README.md#install-from-a-folder-verified) is the verified route. Before switching from a folder install to the catalog, run `orca plugin uninstall local.odd-flow-profiles --json` to avoid keeping both copies.
+The optional [ODD Flow Orca plugin](orca-plugin/README.md) shows and switches the odd-flow profile and mode of coordinator sessions in the focused workspace without sending a prompt. The [GitHub catalog install](orca-plugin/README.md#install-from-the-github-catalog-not-yet-verified-live) needs no clone and was verified live on Orca 1.4.278. You can also [clone and install from a folder](orca-plugin/README.md#install-from-a-folder-verified). Before switching from a folder install to the catalog, run `orca plugin uninstall local.odd-flow-profiles --json` to avoid keeping both copies.
 
 ## Updating
 
