@@ -3,7 +3,7 @@ set -eu
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-for tool in orca npx npm; do
+for tool in orca npm node; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         printf 'SKIP Orca plugin typecheck: %s is not on PATH\n' "$tool"
         exit 0
@@ -15,7 +15,7 @@ orca plugin types orca-plugin
 
 prefix=$(mktemp -d)
 trap 'rm -rf -- "$prefix"' EXIT
-npm install --prefix "$prefix" --no-save --no-package-lock typescript@7.0.2 @types/node@26.6.10
+npm install --prefix "$prefix" --ignore-scripts --no-save --no-package-lock typescript@7.0.2 @types/node@26.6.10
 
 node - "$root/orca-plugin" "$prefix" <<'NODE'
 const { readFileSync, writeFileSync } = require('node:fs')
