@@ -37,8 +37,9 @@ Sources: GitHub issues alvag/odd-flow#21 and #22, quoted verbatim. The issue bod
 > - Expected surfaces: skills/odd-flow/references/delegation.md, skills/odd-flow/references/mode-full-delegation.md, skills/odd-flow/references/orca-dispatch.md (only the spot-check wording; another workstream may need its step 3), skills/odd-flow/references/odd-protocol.md, optionally the core blocks, tests/role-prompts-check.sh, tests/full-delegation-check.sh, tests/mode-check.sh if they pin the changed text, CHANGELOG.md (own bullets under [Unreleased] only), odd/tasks/<your feature doc>. Tell me before touching README.md.
 > - Commit messages may reference the issues ("Refs #21"); rules, code and comments must not mention issue numbers, specs or tasks. Do not push and do not touch the GitHub issues; I close them after the push.
 - S5 (Max, via the supervisor bot, 2026-11-26, verbatim): "A, adjusted: run the spec's Verification command, say it was missing from the report". Bot's reading, verbatim: "When the worker did not report that command, the coordinator runs that `## Verification` command itself (instead of re-running the closest reported one), and says in the close that the worker's report did not include it. Keep the sentence minimal; for example: \"If the worker did not report that command, run it yourself from the spec's `## Verification` and say in the close that the report left it out.\""
+- S8 (Max via bot, 2026-11-26, verbatim): "Fix the README row first, then merge and push; reinstall with install-hardening". Bot, verbatim: "You may now edit README.md, only the \"A writer returns\" row (your follow-up 1): align it with the new spot-check rule and its fallback, keeping the row short. If an existing docs check pins that row (tests/mode-check.sh or another), update the pin in the same commit. Commit it on docs/rules-wording, run bash tests/run.sh, and send a new merge_ready with the new HEAD and the observed results."
 - S6 (assumption): the #22 rule goes in `references/odd-protocol.md` §7 only; the core-block close line already says "residual risks workers reported", so the core blocks and their sha256 pin stay unchanged.
-- S7 (assumption): `README.md` row "A writer returns" is out of scope unless Max approves touching it; listed as a follow-up.
+- S7 (superseded by S8): `README.md` row "A writer returns" was out of scope until Max approved touching it.
 
 ## Tasks
 
@@ -46,6 +47,7 @@ Sources: GitHub issues alvag/odd-flow#21 and #22, quoted verbatim. The issue bod
 |---|---|---|---|---|---|
 | T1 | S2, S3, S4, S6 | odd-protocol §7: judged-missing items count as residual risks; pin in role-prompts-check; CHANGELOG bullet | orca:write (all changes go to a writer in full delegation) | done | RED/GREEN `bash tests/role-prompts-check.sh` (worker); parent spot check exit 0; commit below |
 | T2 | S1, S4, S5 | delegation.md spot-check sentence and fallback; align orca-dispatch (two places) and mode-full-delegation; pins; CHANGELOG bullet | orca:write (after T1: shares role-prompts-check.sh and CHANGELOG.md) | done | task_f82ffb79ccf8; correction task_e2781daadc4b |
+| T3 | S8 | README "A writer returns" row aligned with the spot-check rule and fallback; pin; CHANGELOG bullet names the README | orca:write | done | task_1855269d676e; RED/GREEN `bash tests/role-prompts-check.sh` (worker); parent spot check exit 0 |
 
 ## Log
 
@@ -56,3 +58,6 @@ Sources: GitHub issues alvag/odd-flow#21 and #22, quoted verbatim. The issue bod
 - L5 (2026-11-26): T2 worker_done (task_f82ffb79ccf8): diff matches the spec on its five surfaces. Parent spot check `bash tests/role-prompts-check.sh`: exit 0; `bash tests/full-delegation-check.sh`: exit 0; `bash tests/run.sh`: "Summary: 23 passed, 0 failed". Not committed yet.
 - L6 (Max via bot, 2026-11-26, verbatim): "A, adjusted: run the spec's Verification command, say it was missing from the report". S5 rewritten; T2 reopened. Its Codex terminal is closed, so the correction relaunches the writer with the original spec plus the correction (counts as T2's correction).
 - L7 (2026-11-26): T2 correction worker_done (task_e2781daadc4b): RED only on the new pin, GREEN after; worker's `bash tests/run.sh` failed only on the known sandbox S8/S12 checks. Parent spot check `bash tests/role-prompts-check.sh`: exit 0; parent `bash tests/run.sh`: "Summary: 23 passed, 0 failed". Committed with T2.
+- L8 (2026-11-26): merge_ready sent (msg_11edeef401e2). Bot status: "ODDFlow Bot ended its turn without answering your question". Not resent; waiting for Max's answer. Nothing merged or pushed.
+- L9 (Max via bot, 2026-11-26, verbatim): "Fix the README row first, then merge and push; reinstall with install-hardening". No existing test pins the README row (grep of tests/ for README); T3 adds one in tests/role-prompts-check.sh.
+- L10 (2026-11-26): T3 worker_done (task_1855269d676e): diff matches the spec on its three surfaces. Parent: `bash tests/role-prompts-check.sh` exit 0; `bash tests/mode-check.sh` "passed=41 failed=0"; `bash tests/run.sh` "Summary: 23 passed, 0 failed". Committed; new merge_ready sent.

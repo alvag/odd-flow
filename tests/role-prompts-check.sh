@@ -92,5 +92,6 @@ parent_inputs=$(sed -n '/^## What the parent passes$/,/^## Correction bounds$/p'
 printf '%s\n' "$parent_inputs" | grep -qE '^- For .*verify.*Base commit.*Candidate commit.*git commit-tree' || fail 'B1: parent pins both verifier commits'
 
 need "$root/README.md" 'The hook accepts only a valid, unused token for that role.'
+need "$root/README.md" 'Re-runs the reported command that proves the main acceptance criterion (spot check; the RED-to-GREEN test when the writer worked test-first). If the report left it out, runs it from the spec'"'"'s `## Verification` and says so in the close. Also checks the changed files against the edit surface.'
 
 exit "$failed"

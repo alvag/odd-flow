@@ -20,7 +20,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 ### Changed
 
 - Before accepting a worker result, the coordinator re-runs the reported command that proves the main acceptance criterion, or the RED-to-GREEN test when the writer worked test-first.
-- When a worker did not report the command that proves the main acceptance criterion, the coordinator runs it from the spec's `## Verification` section and says in the close that the report left it out. The Orca dispatch and full delegation references now name that command instead of any reported command.
+- When a worker did not report the command that proves the main acceptance criterion, the coordinator runs it from the spec's `## Verification` section and says in the close that the report left it out. The Orca dispatch and full delegation references and the README now name that command instead of any reported command.
 - The close includes residual risks workers reported.
 - The close counts the items a writer judged missing as residual risks, even when its `risks:` field also says `Risk: none`.
 - Writer reports are capped at about 2000 tokens and cite paths, commands, and observed result lines instead of including diffs, file dumps, or full command output. Long output stays in a listed scratch file.
