@@ -37,7 +37,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 ### Fixed
 
 - `/odd-flow check` sanitizes paths, file names, reasons, and Orca plugin errors in text output, stripping Unicode format characters and truncating plugin errors longer than 200 characters with `...`. Unreadable session state now includes a reason in text and JSON; other JSON output is unchanged.
-- `profile.py` reports an odd-flow error instead of a traceback when `prune` lacks directory descriptor support or `use` cannot write session state. `prune` reports an unreadable plugin data root once per root.
+- `profile.py` reports an odd-flow error instead of a traceback when `prune` lacks directory descriptor support or when `use` or `session-mode` cannot write session state. `prune` reports an unreadable plugin data root once per root.
 - SessionStart treats future-dated cleanup stamps as stale and limits automatic cleanup to 1 second. If it reaches the limit, it leaves the stamp unchanged so cleanup resumes at the next session start.
 - The Orca dispatch guide explains why Codex can ask for hook approval again after a reinstall: it hashes the whole plugin bundle, including `.git/`, not just the hooks.
 - Before reading worker token records, the first-prompt hook rejects a relative `ODD_FLOW_STATE_DIR` and requires a real `worker-tokens` directory (not a symlink), mode `0700`, owned by the running user.

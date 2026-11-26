@@ -116,6 +116,10 @@ if case == "sync":
     assert report.get("session_state") == {
         "session_bindings": 2, "prompt_sessions": 1, "session_modes": 3,
     }, report
+elif case == "unrelated-session-root":
+    assert report.get("session_state") == {
+        "session_bindings": 2, "prompt_sessions": 0, "session_modes": 3,
+    }, report
 elif case == "unreadable-session-state":
     assert report.get("session_state") == {
         "status": "unreadable", "reason": "cannot scan session state directories",
@@ -189,6 +193,16 @@ grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orc
 grep -F 'ignored' out
 grep -Fx 'Session state: 2 session binding(s), 1 prompt-hook record(s), 3 mode-notice record(s)' out
 diff -r "$scratch/before" "$HOME"
+
+if [ "$(id -u)" -ne 0 ]; then
+    unrelated_config="$HOME/unrelated-config"
+    unrelated_data="$unrelated_config/plugins/data"
+    mkdir -p "$unrelated_data/other-plugin"
+    chmod 400 "$unrelated_data"
+    CLAUDE_CONFIG_DIR="$unrelated_config" check unrelated-session-root 0 --json
+    chmod 700 "$unrelated_data"
+    assert_json unrelated-session-root
+fi
 
 printf 'not a directory\n' > "$codex_data/prompt-sessions"
 check unreadable-session-state 0 --json

@@ -248,7 +248,10 @@ def write_session(data):
     if not data:
         remove_session_file(path)
         return var
-    write_json_atomic(path, {**data, "key": var, "updated_at": int(time.time())})
+    try:
+        write_json_atomic(path, {**data, "key": var, "updated_at": int(time.time())})
+    except OSError as exc:
+        raise ProfileError(f"cannot write session binding: {exc}") from exc
     return var
 
 
@@ -399,10 +402,7 @@ def cmd_use(args):
         known = ", ".join(sorted(doc["profiles"])) or "none"
         raise ProfileError(f"profile '{args.name}' is not defined in {doc['path']} (known: {known})")
     # Binding a profile drops a session mode override, so the new profile's own mode applies.
-    try:
-        var = write_session({"profile": args.name})
-    except OSError as exc:
-        raise ProfileError(f"cannot write session binding: {exc}") from exc
+    var = write_session({"profile": args.name})
     note = " (bound to the Orca pane, not the conversation)" if var == "ORCA_PANE_KEY" else ""
     print(f"profile: {args.name} bound to this session via {var}{note}")
     print(mode_line(doc, args.name))
@@ -829,8 +829,7 @@ def discover_plugin_data_dirs(*, errors=None):
             with _open_state_dir(root) as fd:
                 if fd is None:
                     continue
-                # A readable root can still deny lookup of every entry.
-                os.lstat(".", dir_fd=fd)
+                reported_lookup_error = False
                 for entry in os.listdir(fd):
                     if not (entry == "odd-flow" if antigravity else entry.startswith("odd-flow-")):
                         continue
@@ -839,8 +838,10 @@ def discover_plugin_data_dirs(*, errors=None):
                     except FileNotFoundError:
                         continue
                     except OSError as exc:
-                        detail = _state_path_error(exc, root / entry)
-                        _record_state_error(errors, f"{root}: cannot discover plugin data: {detail}", exc)
+                        if not reported_lookup_error:
+                            detail = _state_path_error(exc, root)
+                            _record_state_error(errors, f"{root}: cannot discover plugin data: {detail}", exc)
+                            reported_lookup_error = True
                         continue
                     identity = info.st_dev, info.st_ino
                     if stat.S_ISDIR(info.st_mode) and identity not in found:

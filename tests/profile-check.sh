@@ -243,10 +243,27 @@ if [ "$(id -u)" -ne 0 ]; then
 
   chmod 500 "$U/sessions"
   ARGS="use minimal"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$U"); ec=$?
-  chmod 700 "$U/sessions"
   expect "use on read-only sessions dir fails explicitly" "odd-flow: cannot write session binding:" "$out" 2 $ec
+  ARGS="session-mode organic"; out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$U"); ec=$?
+  chmod 700 "$U/sessions"
+  expect "session-mode on read-only sessions dir fails explicitly" "odd-flow: cannot write session binding:" "$out" 2 $ec
+
+  mode_home="$T/mode-read-only-parent"
+  mkdir "$mode_home"
+  chmod 500 "$mode_home"
+  out=$(run CLAUDE_CODE_SESSION_ID=s1 ODD_FLOW_HOME="$mode_home"); ec=$?
+  chmod 700 "$mode_home"
+  expect "session-mode on read-only sessions parent fails explicitly" "odd-flow: cannot write session binding:" "$out" 2 $ec
 
   data="$HOME/.claude/plugins/data"
+  codex_data="$CODEX_HOME/plugins/data"
+  agy_data="$HOME/.gemini/antigravity-cli/plugin_data"
+  mkdir -p "$data/other-plugin" "$codex_data/other-plugin" "$agy_data/other-plugin"
+  chmod 400 "$data" "$codex_data" "$agy_data"
+  ARGS="prune"; out=$(run CLAUDE_CONFIG_DIR="$HOME/.claude"); ec=$?
+  chmod 700 "$data" "$codex_data" "$agy_data"
+  expect "prune ignores non-searchable data roots without matching entries" "$prune_zero" "$out" 0 $ec exact
+
   mkdir -p "$data/odd-flow-one" "$data/odd-flow-two"
   chmod 400 "$data"
   ARGS="prune"; out=$(run CLAUDE_CONFIG_DIR="$HOME/.claude"); ec=$?
