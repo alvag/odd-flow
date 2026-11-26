@@ -101,7 +101,9 @@ A launch that fails because of the agent or the model is not an Orca outage: rep
 ## Limits
 
 - `--effort` requires `--model`; neither combines with `--terminal`. A role with only `effort` is invalid.
-- `scripts/codex-worker.sh` pins `--sandbox workspace-write` and `-c sandbox_workspace_write.network_access=true`, even in untrusted folders or with a configured read-only sandbox. It overrides no other Codex config and leaves the config file untouched.
+- Claude split and tab launches pass the bundled `--settings` file, which disables only the Engram plugin, including its hooks and MCP server. The no-handle `worker-start --agent claude` path and the [project-folder launch without Git](#project-folders-without-git) (`ORCA agent launch ... <flags>`) do not pass `--settings`, so both still load Engram when installed.
+- `scripts/codex-worker.sh` pins `--sandbox workspace-write` and `-c sandbox_workspace_write.network_access=true`, even in untrusted folders or with a configured read-only sandbox. It disables the Engram plugin and asks Codex whether the effective config defines an `engram` MCP server. It disables that server only if Codex finds it and leaves the config untouched.
+- Antigravity has no per-session switch to disable Engram. Subagent writers run in the parent's session and inherit its plugin hooks. The Engram Claude plugin's `SubagentStop` hook reads `stdout`, which Claude Code does not send, so it posts nothing today.
 - OpenCode takes no effort; agents outside Claude, Codex, Cursor, Antigravity, Grok, Muse, OMP and Pi use their own configured model.
 - Workers in `--worktree current` share your tree: give parallel writers disjoint surfaces or use `--worktree new-child`.
 - Never equalize pane heights from the skill: Orca has no command for it. Use Orca's “Equalize pane sizes” by hand.

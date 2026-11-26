@@ -38,6 +38,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Fixed
 
+- Disable Engram for Claude split and tab workers and for Codex workers, without changing user settings or requiring Engram to be installed.
 - The ODD Flow Orca panel hides finished runs after 12 hours without activity. It keeps runs with open tasks, active dispatches, or tasks it could not load.
 - When a terminal changes sessions, the ODD Flow Orca panel uses an in-memory cutoff to hide earlier finished runs and dispatches and exclude earlier finished tasks from feature document ownership. Active workers and their attention items remain visible.
 - The ODD Flow Orca plugin acknowledges agent and workspace events without waiting for the status refresh, so event bursts no longer pile up behind it.
