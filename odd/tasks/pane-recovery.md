@@ -35,7 +35,7 @@ Workstream brief (Max via supervisor, verbatim excerpts):
 | T3 | S3, S9 | Change the retry limit as Max decides (question to supervisor first) | orca:write (after T2 and Max's decision; shares pane.py) | done | a11cbf5; Q1 B (L2); RED pane-check 72/1 (trace 30/30/30/30), GREEN 73/0; parent spot check 73/0; live slow-PTY recovery unverified | |
 | T4 | S4, S6, S10, S15 | Create recovery fallback when the baseline is unavailable; tests for baseline rejections (truncated list, non-list terminals, row without handle, list timeout); CHANGELOG bullet | orca:write (after T1 and T2; shares pane.py, pane-check.sh) | done | 130cadb; RED pane-check 72/1 (missing limit), GREEN 73/0; parent spot check pane-check 73/0; live late create unverified | |
 | T5 | S7, S12, S15 | Step-3 recovery rules tested beyond the test-local matcher; own-handle exclusion tested for split | orca:write (after T4; shares pane-check.sh; orca-dispatch.md step 3 only after asking) | done | 7087433; exception to RED (rule already holds): new case fails with the matcher's split exclusion disabled (73/1), passes restored (74/0); parent spot check 74/0 | |
-| T6 | S11 | Independent verify of T1-T5 | orca:verify (Verification trigger: item 4) | pending | |
+| T6 | S11 | Independent verify of T1-T5 | orca:verify (Verification trigger: item 4) | done | passed, no blockers; S1-S15 met, S8 live items unverified; suite 74/0 (base 64/0); 46-scenario differential, 16 mutations all killed; measured lock hold 108.3 s (worst 110 s); report /tmp/odd-verify.21BPFN/report.md | |
 
 ## Log
 
@@ -53,3 +53,6 @@ Workstream brief (Max via supervisor, verbatim excerpts):
 - 2026-11-26: T3 first report: split and retry 40 s (ORCA_SPLIT_TIMEOUT_SECS), others 30 s; RED 72/1, GREEN 73/0. Writer: title runs after unlock, so the lock hold is layout list 30 + split 40 + retry 40 = 110 s worst case (the Q1 estimate of 140 s counted the title). Correction sent (ctx_a0f7ed09e059): it had rewritten an existing CHANGELOG bullet from 855426d; restore it and add its own bullet.
 - 2026-11-26: T3 done (a11cbf5) after one CHANGELOG correction. T5 write launched next.
 - 2026-11-26: T5 done (7087433). T6 verify launched on fda7253..HEAD.
+- 2026-11-26: T6 started with worker-start (its own terminal) without running pane.py placement first; deviation from dispatch step 3, no effect on the verify.
+- 2026-11-26: supervisor (msg_2a29ced9c2a5): main moved to 6daba16 (rules-wording merged; orca-dispatch.md step 3 unchanged). Rebase onto main before merge_ready, after T6 returns so the verify's live tree matches its candidate; only CHANGELOG.md may conflict (keep both sides).
+- 2026-11-26: T6 verify passed (msg_bc3633a36065). Advisories: 40 s client limit still races a host reply just after 40 s (slow-PTY recovery probable, not guaranteed); lock hold ~110 s with flock LOCK_EX without timeout (accepted L2); OSError during the retry lacks the hint and placement context (pre-existing); no test pins a retry reply without a handle or a retry client timeout (verifier gave two ready tests). Next: rebase onto main 6daba16, T7 adds the two regression tests, then T8 review (resilience, reliability).
