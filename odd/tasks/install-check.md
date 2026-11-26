@@ -32,13 +32,14 @@ Profile: `claude-gpt`.
 | T2 | S1-S15 | independent verify of T1 | orca:verify (brief asks for an independent verify: reads several homes) | done | task_77a5b9cb289a: 1 blocker (B1), S1-S6, S8-S13, S15 met |
 | T3 | S7, S14, S16-S18 | correction: B1 extras inside shipped paths, Orca error string, CLI timeout, Claude installPath | orca:write (verifier code blocker; relaunch of the T1 writer, counts as its correction) | done | task_c54893c9b1f9, base e52af68; RED/GREEN `bash tests/install-check.sh` (worker); spot check exit 0 (parent) |
 | T5 | S8, S16 | correction: B2 reason text, Orca error control characters, footer wording | orca:write (Max approved one more round, L8) | done | task_36312bf14696, base 0c5c752; RED/GREEN `bash tests/install-check.sh` (worker); spot check exit 0 (parent) |
-| T6 | S8, S16 | recheck limited to T5 | orca:verify | pending | |
+| T6 | S8, S16 | recheck limited to T5 | orca:verify | done | task_067388b38648: items 1-3 met, S8/S9 hold, no blockers; `bash tests/run.sh` 22 passed |
 | T4 | S7, S14, S16-S18 | recheck limited to T3 | orca:verify | done | task_2b134e5d5971: B1 fixed, S7, S8, S9, S14, S16-S18 met; new blocker B2; `bash tests/run.sh` 22 passed |
 
 ## Log
 
 - L1 (user, 2026-11-25): "Goal (Max approved, idea from gentle-shell fa13f2540, a read-only `setup --check [--json]`): a read-only odd-flow command that reports whether each install matches the checkout it was installed from, and why not." Full brief: the workstream message from the supervisor (install-check), quoted in S1-S12.
 - L2 (2026-11-25): surfaces and location (S13-S14) sent to the bot as status before T1 launches.
+- L10 (2026-11-25): T6 recheck on ce629fc: B2 reason, Orca error control characters and footer met; S8 and S9 hold; `bash tests/install-check.sh` exit 0, `bash tests/run.sh` 22 passed, 0 failed. No blockers. Advisories left as follow-ups: U+202E and other non-whitespace format characters pass the Orca error sanitizer; Claude paths and files_differ names are printed raw in human output; plugin_error has no length cap. Unverified: S18 against a real GitHub-marketplace Claude install, S17 against a real CLI hang. Next: merge_ready to the bot.
 - L9 (2026-11-25): T5 done. Parent spot check `bash tests/install-check.sh` exit 0; live footer now reads "Orca reports its listed version, state, and any error for a non-running plugin." Next: T6 recheck.
 - L8 (Max via bot, 2026-11-25): "1 one-more-fix". After the scoped recheck passes, commit and send merge_ready.
 - L7 (2026-11-25): the bot ended its turn without answering msg_983649184e05 ("do it yourself or tell your owner"). An unanswered question is not consent: no further correction round and no merge_ready until Max decides. Question stays open; not resent.
