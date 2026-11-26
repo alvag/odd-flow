@@ -1,0 +1,67 @@
+{
+  "catalogVersion": 2,
+  "name": "ODD Flow",
+  "owner": "alvag",
+  "plugins": [
+    {
+      "id": "alvag.odd-flow-profiles",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/alvag/odd-flow.git",
+        "ref": "main",
+        "path": "orca-plugin"
+      },
+      "description": "View and switch the odd-flow profile and mode for agent sessions in the focused workspace.",
+      "releases": [
+        {
+          "version": "0.2.0",
+          "commit": "8dc993e848ed2459010925719812ea2c5fc39ca8",
+          "contentHash": "e0436342d0141036e29dcb1d1ff64dfd124e5b85a9f7374f45788fb837cc3bc7",
+          "execution": "trusted-worker",
+          "minimumOrca": "1.4.259",
+          "name": "ODD Flow",
+          "contributes": [
+            {
+              "kind": "panels",
+              "name": "ODD Flow"
+            },
+            {
+              "kind": "commands",
+              "name": "ODD Flow: Open panel"
+            },
+            {
+              "kind": "commands",
+              "name": "ODD Flow: Toggle mode"
+            },
+            {
+              "kind": "events",
+              "name": "agent.status.changed"
+            },
+            {
+              "kind": "events",
+              "name": "workspace.changed"
+            },
+            {
+              "kind": "hooks",
+              "name": "agent.prompt.before"
+            },
+            {
+              "kind": "keybindings",
+              "name": "Mod+Alt+Shift+O",
+              "detail": "odd-flow.openProfiles"
+            },
+            {
+              "kind": "statusBarItems",
+              "name": "odd"
+            }
+          ],
+          "capabilities": [
+            "agent:read",
+            "workspace:read",
+            "settings:own"
+          ]
+        }
+      ]
+    }
+  ]
+}

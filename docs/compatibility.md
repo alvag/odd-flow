@@ -29,6 +29,19 @@ identifies the plugin code at its catalog release commit.
 The `0.1.0-draft` value in [SKILL.md](../skills/odd-flow/SKILL.md) is skill
 metadata, not an odd-flow or ODD Flow Orca plugin release version.
 
+## Publishing an ODD Flow Orca plugin release
+
+1. Bump the version in `orca-plugin/orca-plugin.json` and commit the final
+   `orca-plugin/` folder.
+2. Check out that commit in a clean clone. Run
+   `orca plugin release-entry <clone>/orca-plugin --json`.
+3. Copy the output's `entry` object to the front of `releases` in
+   `orca-catalog.json`, keeping previous releases after it, and commit the
+   catalog. The plugin commit must remain an ancestor of the catalog on `main`.
+
+`bash tests/orca-catalog-check.sh` fails whenever the committed `orca-plugin/`
+folder changes without a new release entry.
+
 ## Without optional components
 
 - **Without Orca:** Delegated roles run as native subagents of the current

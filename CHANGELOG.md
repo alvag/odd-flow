@@ -12,6 +12,8 @@ separately; see the [compatibility table](docs/compatibility.md).
 ### Added
 
 - ODD Flow Orca plugin 0.2.0: Install and update from GitHub through an Orca catalog without cloning (not yet verified live). Before switching from a folder install, run `orca plugin uninstall local.odd-flow-profiles --json`.
+- `orca-catalog.json` lists the ODD Flow Orca plugin and pins its 0.2.0 release to the commit containing the final plugin folder.
+- `bash tests/orca-catalog-check.sh` checks catalog release history offline and rejects a stale release when the committed plugin folder changes. When Orca is available, it also validates the catalog and regenerates the newest entry for comparison.
 - `/odd-flow check [--json]` reports which installs match the checkout, including missing, changed, or extra shipped files and older hooks installed alongside the ODD Flow Orca plugin. It includes Orca's error for a non-running plugin when available and marks CLI calls that exceed 30 seconds as unreadable. It does not reinstall anything.
 - Run `bash tests/orca-plugin-typecheck.sh` to typecheck the ODD Flow Orca plugin with TypeScript 7.0.2 and `@types/node` 26.6.10 installed in a temporary prefix with `--ignore-scripts`. The prompt-hook test imports `test` from `node:test` so it typechecks cleanly. The check skips if `orca`, `npm`, or `node` is missing and is not part of `tests/run.sh`.
 - Test coverage confirms that the first-prompt hook rejects a `worker-tokens` directory owned by another user.
