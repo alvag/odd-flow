@@ -18,7 +18,16 @@ refute() { # name, unexpected substring, actual
 }
 
 mkdir -p "$T/bin"
-printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done\n' >"$T/bin/codex"
+cat >"$T/bin/codex" <<'SH'
+#!/bin/sh
+if [ "$#" -eq 3 ] && [ "$1 $2 $3" = "mcp get engram" ]; then
+  config_home=${CODEX_HOME:-$HOME/.codex}
+  # A fixture supplies Codex's expected answer; the fake does not parse TOML.
+  [ -f "$config_home/config.toml" ] && [ "$(cat "$config_home/mcp-get-exit")" = 0 ]
+  exit "$?"
+fi
+printf '%s\n' "$@"
+SH
 chmod +x "$T/bin/codex"
 ORCA_ENV=(ORCA_USER_DATA_PATH="/Users/u/Library/Application Support/orca" ORCA_WORKSPACE_ID="ws-1::/repo"
   ORCA_WORKTREE_ID="ws-1::/repo" ORCA_PANE_KEY="tab-1:pane-1" ORCA_TERMINAL_HANDLE="term_1")
@@ -52,12 +61,29 @@ expect "no Engram installed: Codex launches with the plugin override and no MCP 
 mkdir -p "$T/configured-home/.codex" "$T/codex"
 printf '%s\n' '[mcp_servers.engram]' 'command = "engram"' >"$T/configured-home/.codex/config.toml"
 printf '%s\n' '[mcp_servers."engram"]' 'command = "engram"' >"$T/codex/config.toml"
+printf '0\n' >"$T/configured-home/.codex/mcp-get-exit"
+printf '0\n' >"$T/codex/mcp-get-exit"
 out=$(launch "${ORCA_ENV[@]}" HOME="$T/configured-home"); ec=$?
 expect "bare Engram table in default config: both overrides passed" "$want"$'\n-c\nmcp_servers.engram.enabled=false' "$out" 0 $ec exact
 out=$(launch "${ORCA_ENV[@]}" HOME="$T/empty-home" CODEX_HOME="$T/codex"); ec=$?
 expect "quoted Engram table in CODEX_HOME: both overrides passed" "$want"$'\n-c\nmcp_servers.engram.enabled=false' "$out" 0 $ec exact
 quoted_keys=$(printf '%s\n' "$out" | awk '/^-c$/ { getline; key = substr($0, 1, index($0, "=") - 1); if (index(key, "\"") || index(key, "\047")) print key }')
 expect "no -c key path contains a quote" "" "$quoted_keys" 0 "$ec" exact
+
+expect_mcp_lookup() { # name, lookup exit, config content (including line endings)
+  local out ec argv="$want"
+  printf '%s' "$3" >"$T/codex/config.toml"
+  printf '%s\n' "$2" >"$T/codex/mcp-get-exit"
+  if [[ "$2" == 0 ]]; then argv+=$'\n-c\nmcp_servers.engram.enabled=false'; fi
+  out=$(launch "${ORCA_ENV[@]}" HOME="$T/empty-home" CODEX_HOME="$T/codex"); ec=$?
+  expect "$1" "$argv" "$out" 0 "$ec" exact
+}
+expect_mcp_lookup "single-quoted Engram table: both overrides passed" 0 $'[mcp_servers.\'engram\']\ncommand = "engram"\n'
+expect_mcp_lookup "inline Engram table: both overrides passed" 0 $'[mcp_servers]\nengram = { command = "engram" }\n'
+expect_mcp_lookup "root dotted Engram key: both overrides passed" 0 $'mcp_servers.engram.command = "engram"\n'
+expect_mcp_lookup "nested dotted Engram key: both overrides passed" 0 $'[mcp_servers]\nengram.command = "engram"\n'
+expect_mcp_lookup "Engram table with CRLF: both overrides passed" 0 $'[mcp_servers.engram]\r\ncommand = "engram"\r\n'
+expect_mcp_lookup "Engram header in a multiline string: no MCP override" 1 $'developer_instructions = """\n[mcp_servers.engram]\n"""\n'
 
 ARGS=""; out=$(launch "${ORCA_ENV[@]}"); ec=$?
 refute "no model: no -m flag" $'\n-m\n' "$out"

@@ -58,9 +58,7 @@ fi
 set -- "$@" -c sandbox_workspace_write.network_access=true
 set -- "$@" -c plugins.engram@engram.enabled=false
 
-# Without a server table, this override creates an entry with no transport.
-config="${CODEX_HOME:-$HOME/.codex}/config.toml"
-if grep -qsE '^[[:blank:]]*\[[[:blank:]]*mcp_servers[[:blank:]]*\.[[:blank:]]*(engram|"engram")[[:blank:]]*\][[:blank:]]*(#.*)?$' "$config"; then
+if codex mcp get engram >/dev/null 2>&1; then
   set -- "$@" -c mcp_servers.engram.enabled=false
 fi
 
