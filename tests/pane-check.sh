@@ -23,18 +23,10 @@ printf '%s\n' \
   'if [ "$2" = list ]; then printf "%s\n" "${ORCA_HANG:+hung }list entered" >>"$ORCA_LOG.lists"; fi' \
   'if [ "$2" = "${ORCA_HANG:-}" ]; then' \
   '  if [ "$2" = list ]; then exec sleep 5; fi' \
-  '  case "$2" in' \
-  '    split|create) printf "%s\n" "$2" >"$ORCA_LOG.pending" ;;' \
-  '  esac' \
   '  sleep 5' \
   'fi' \
   'case "$1 $2" in' \
-  '  "terminal list")' \
-  '    case "$(cat "$ORCA_LOG.pending" 2>/dev/null)" in' \
-  '      split) echo "{\"ok\":true,\"result\":{\"terminals\":[{\"handle\":\"term_late_split\",\"title\":null,\"command\":\"claude\"}]}}"; exit 0 ;;' \
-  '      create) echo "{\"ok\":true,\"result\":{\"terminals\":[{\"handle\":\"term_late_tab\",\"title\":\"T1 verify: example\",\"command\":\"claude\"}]}}"; exit 0 ;;' \
-  '    esac' \
-  '    cat "$ORCA_LAYOUT" ;;' \
+  '  "terminal list") cat "$ORCA_LAYOUT" ;;' \
   '  "terminal create")' \
   '    case "${ORCA_FAIL_CREATE:-}" in' \
   '      1) echo "{\"ok\":false,\"error\":{\"message\":\"create refused\"}}"; exit 1 ;;' \
@@ -116,10 +108,10 @@ printf '%s\n' \
   'sys.argv = [script, *args]' \
   'sys.exit(pane.main())' >"$T/sample.py"
 
-leaf() { printf '{"type":"terminal","handle":"%s"}' "$1"; }
+leaf() { printf '{"type":"terminal","handle":"%s","title":"%s"}' "$1" "${2:-}"; }
 split() { printf '{"type":"pane-split","direction":"%s","first":%s,"second":%s}' "$1" "$2" "$3"; }
 layout() {
-  printf '{"ok":true,"result":{"visualLayouts":[{"root":{"type":"group","tabs":[]}},{"root":{"type":"split","first":{"type":"group","tabs":[]},"second":{"type":"group","tabs":[{"panes":%s}]}}}]}}\n' "$1" >"$T/layout"
+  printf '{"ok":true,"result":{"visualLayouts":[{"root":{"type":"group","tabs":[]}},{"root":{"type":"split","first":{"type":"group","tabs":[]},"second":{"type":"group","tabs":[{"title":"Parent","panes":%s}%s]}}}]}}\n' "$1" "${2:+,$2}" >"$T/layout"
 }
 open_pane() {
   local command=(python3 -I "$P") format=(--json)
@@ -131,7 +123,6 @@ open_pane() {
   fi
   : >"$T/argv"
   : >"$T/argv.samples"
-  : >"$T/argv.pending"
   env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" \
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
@@ -155,6 +146,37 @@ tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\
 right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\nclaude\n--json'
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
 width_record="$T/odd-flow-pane-term_parent.cols"
+
+expect_late() { # name, expected handle
+  local timeout_error="$out" out ec
+  out=$(ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" "$T/orca" terminal list --worktree current --include-visual-layouts --json |
+    python3 -I -c '
+import json, re, sys
+
+error = sys.argv[1]
+split = re.search(r"Split target: (\S+); direction: (\w+);", error)
+create = re.search(r"Worktree: current; title: \"([^\"]+)\"\.", error)
+matches = []
+
+def walk(node):
+    if node["type"] in ("split", "pane-split"):
+        first, second = node["first"], node["second"]
+        if split and node["type"] == "pane-split" and (first.get("handle"), node["direction"]) == split.groups():
+            matches.append(second["handle"])
+        walk(first)
+        walk(second)
+    for tab in node.get("tabs", []):
+        if create and tab.get("title") == create[1]:
+            matches.append(tab["panes"]["handle"])
+        walk(tab["panes"])
+
+for layout in json.load(sys.stdin)["result"]["visualLayouts"]:
+    walk(layout["root"])
+handle, = matches
+print(handle)
+' "$timeout_error"); ec=$?
+  expect "$1" 0 "$ec" "$2"
+}
 
 layout "$p"
 rm -f "$width_record"
@@ -240,18 +262,29 @@ fi
 expect "create timeout does not wait for a child holding the output pipe" 1 "$ec" \
   'Orca terminal create: timed out (limit: 1s). A terminal may have opened. Check terminal list and close it.' \
   "$list_call$tab_call"$'\n\nend argv'
-out="$out"$'\n'"$(ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" "$T/orca" terminal list --json)"
 expect "create timeout identifies the late tab by worktree and title" 1 "$ec" \
-  'Worktree: current; title: "T1 verify: example".'$'\n''{"ok":true,"result":{"terminals":[{"handle":"term_late_tab","title":"T1 verify: example","command":"claude"}]}}'
+  'Worktree: current; title: "T1 verify: example".'
+layout "$(leaf term_parent 'T1 verify: example')" \
+  '{"title":"T1 verify: example","panes":'"$(leaf term_late_tab 'Claude Code')"'}'
+expect_late "create timeout matches the late tab title, not a running title" term_late_tab
+
+layout "$p"
+out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "split-right timeout names the parent and vertical direction" 1 "$ec" \
+  'Split target: term_parent; direction: vertical; intended title: "T1 verify: example".' \
+  "$list_call$right_call"$'\n\nend argv'
+layout "$(split vertical "$p" "$(leaf term_late_right)")"
+expect_late "split-right timeout matches the late pane in the right column" term_late_right
 
 layout "$(split vertical "$p" "$r1")"
 out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "split timeout warns that a pane may have opened" 1 "$ec" \
   'Orca terminal split: timed out (limit: 1s). A pane may have opened. Check terminal list and close it.' \
   "$list_call"$'\nterminal\nsplit\n--terminal\nterm_r1\n--direction\nhorizontal\n--command\nclaude\n--json\n\nend argv'
-out="$out"$'\n'"$(ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" "$T/orca" terminal list --json)"
-expect "split timeout identifies the late untitled pane by split target and direction" 1 "$ec" \
-  'Split target: term_r1; direction: horizontal; intended title: "T1 verify: example".'$'\n''{"ok":true,"result":{"terminals":[{"handle":"term_late_split","title":null,"command":"claude"}]}}'
+expect "split-below timeout names the right pane and horizontal direction" 1 "$ec" \
+  'Split target: term_r1; direction: horizontal; intended title: "T1 verify: example".'
+layout "$(split vertical "$p" "$(split horizontal "$r1" "$(leaf term_late_below)")")"
+expect_late "split-below timeout matches the late pane below the target" term_late_below
 layout "$p"
 
 out=$(hang=set-pane-title orca_timeout=1 open_pane --role verify --cols 160); ec=$?
