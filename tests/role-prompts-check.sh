@@ -66,6 +66,8 @@ need "$roles/write.md" 'Do not compress or split code to look small'
 need "$roles/write.md" 'Do not comment on self-explanatory code or narrate the change'
 need "$roles/write.md" 'before, this did X; now it does Y'
 need "$roles/write.md" 'read your diff and remove what has no reason'
+need "$roles/write.md" 'Return exactly in this format, at most ~2000 tokens:'
+need "$roles/write.md" 'Do not include diffs, file dumps or full command output; name the path, the command and the observed result line, and put long output in a scratch file whose path you list under `scratch_paths`.'
 need "$roles/write.md" '- <addition beyond the smallest change>: <evidence from the "Name the evidence" rule>'
 
 need "$root/skills/odd-flow/references/odd-protocol.md" 'GREEN with the minimum change'
