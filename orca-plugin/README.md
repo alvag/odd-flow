@@ -17,6 +17,75 @@ First install odd-flow 0.3.0 or newer for
 [Antigravity](../README.md#install-antigravity). The Orca plugin cannot
 work without it. Use Orca 1.4.259 or newer and make `python3` available to Orca.
 
+### Install from the GitHub catalog (not yet verified live)
+
+No clone is needed. If you already installed from a folder, uninstall that
+copy before installing from the catalog:
+
+```sh
+orca plugin uninstall local.odd-flow-profiles --json
+```
+
+Folder installs use `local.odd-flow-profiles`; catalog installs use
+`alvag.odd-flow-profiles`. Orca keeps both because the keys differ. With both
+copies enabled, the panel cannot detect which key to use and asks for the
+`pluginKey` setting. The status bar item and shortcut are also duplicated.
+
+1. Add the catalog:
+
+   ```sh
+   orca plugin catalog add alvag/odd-flow --json
+   ```
+
+   Orca exits with code 3 (`approval_required`) and returns a fingerprint
+   for that URL and branch (`main`). Approving lets Orca install and
+   auto-update plugins from the catalog. Only if you trust it, rerun with
+   the returned fingerprint:
+
+   ```sh
+   orca plugin catalog add alvag/odd-flow --json --approve <fingerprint>
+   ```
+
+2. Install the plugin:
+
+   ```sh
+   orca plugin install alvag.odd-flow-profiles --json
+   ```
+
+   Review the requested access below. If you approve it, rerun with the
+   fingerprint from this install request, not the catalog fingerprint:
+
+   ```sh
+   orca plugin install alvag.odd-flow-profiles --json --approve <fingerprint>
+   ```
+
+By default, Orca automatically installs new plugin code from the catalog,
+including new worker code and `agent.prompt.before` hook code, without asking
+as long as the release comes from the same repository and requests no new
+access. Orca treats new or broader capabilities, a higher execution level,
+and new or expanded non-data contributions as new access: panels, commands,
+events, hooks, keyboard shortcuts, VM recipes, custom editors, settings,
+status bar items, and MCP servers. For non-official catalogs, Orca waits at
+least 12 hours after it first sees a release before installing it automatically.
+If a release requests new access, Orca waits for approval and leaves the
+running version untouched.
+
+To opt out, open Orca **Settings → Plugins → Plugin settings** and turn off
+**Update plugins automatically**. This sets Orca's plugin update policy to
+`manual`. The UI path was checked in Orca's shipped code, not verified live.
+A CLI command to change this policy was not verified. To check for and apply
+an update manually:
+
+```sh
+orca plugin update alvag.odd-flow-profiles --json
+```
+
+To remove the plugin, run `orca plugin uninstall alvag.odd-flow-profiles --json`.
+To stop updates from the catalog without uninstalling the plugin, run
+`orca plugin catalog rm <id> --json` with the catalog ID.
+
+### Install from a folder (verified)
+
 To install from GitHub, clone the repository on the Orca host and enter it:
 
 ```sh
@@ -52,6 +121,8 @@ orca plugin install https://github.com/alvag/odd-flow/tree/main/orca-plugin --js
 It exited with code 1 and error code `plugin_not_found`:
 
 > https://github.com/alvag/odd-flow has no tag or branch named main/orca-plugin.
+
+### Requested access
 
 The manifest requests `agent:read` for agent status events and
 `workspace:read` to list agents in the focused workspace and receive
