@@ -96,6 +96,11 @@ With none present, `use` fails; pass `ODD_PROFILE` at launch instead.
 bindings and the plugin data directories for Claude Code, Codex, and Antigravity.
 Resuming a pruned session uses the default profile and mode unless another override applies.
 
+SessionStart also removes records and bindings older than 30 days. It checks
+only session bindings and the current runtime's plugin data directory, at most
+once every 24 hours per data directory. Without a plugin data directory, it skips
+automatic cleanup. Cleanup failures do not change the hook's output.
+
 A bare profile name (`/odd-flow B`) is not a command: ask whether the user meant `--profile B`.
 
 In Claude Code the plugin skill is invoked as `/odd-flow:odd-flow <command>`. In a headless session (2026-11-23) a plain `/odd-flow <command>` was not expanded as a skill call and reached the model as text; interactive sessions are unchecked. When such text arrives, treat it as the matching command.

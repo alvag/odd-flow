@@ -37,7 +37,7 @@ Source: GitHub issue alvag/odd-flow#15, "Clean up accumulated per-session state 
 | ID | Specs | Work | Route | Status | Evidence |
 |---|---|---|---|---|---|
 | T1 | S2, S4, S5, S7-S9 | `profile.py`: shared expired-state helper (bindings + prompt-hook + mode-notice records, discovered data dirs); `prune --days N` covers all; `references/profiles.md`; `tests/profile-check.sh`; CHANGELOG | orca:write (unit; shared helper first, T2/T3 reuse it) | done | RED profile-check 71/1 → GREEN 72/0 (writer); parent spot check `bash tests/profile-check.sh` 72/0; alias differential matches base; symlinked `session-modes` not followed; correction 1 (ctx_77c8d67690e4) |
-| T2 | S1, S4, S5, S7, S9-S10 | SessionStart hook: once-per-day cleanup with stamp, reusing the T1 helper; hook test for the stamp and for recent records; docs; CHANGELOG | orca:write (depends on T1) | pending | |
+| T2 | S1, S4, S5, S7, S9-S10 | SessionStart hook: once-per-day cleanup with stamp, reusing the T1 helper; hook test for the stamp and for recent records; docs; CHANGELOG | orca:write (depends on T1) | done | task_41b03be36fb6; writer RED 5 failing → GREEN 4 tests; parent spot check `bash tests/session-cleanup-check.sh` OK (4 tests), `codex-runtime-check.sh` ok |
 | T3 | S3, S6-S9 | `install_check.py`: read-only counts in text and JSON (added fields only, exit codes kept); `tests/install-check.sh`; docs; CHANGELOG | orca:write (depends on T1; after T2 for CHANGELOG) | pending | |
 | T4 | S1-S10 | Independent verification of T1-T3 (Risk item 1: deletes stored files) | orca:verify (Verification trigger) | pending | |
 | T5 | S1-S10 | Review and refute after verification | orca:review, orca:refute (Review trigger) | pending | |
