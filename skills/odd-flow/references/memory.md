@@ -2,6 +2,8 @@
 
 Only the parent orchestrator reads and writes Engram. Workers never call memory tools; save what their reports establish yourself. If Engram tools are missing, skip this file.
 
+Worker launches disable the Engram plugin where the runtime allows it. See [Orca dispatch limits](orca-dispatch.md#limits) for the paths that cannot be isolated.
+
 User instructions win; otherwise these rules override conflicting Engram session-start and compaction hooks and MCP server instructions: save grouped conclusions once per finding, not per event, and call `mem_session_summary` only at a significant close or handoff, not before every “done”.
 
 ## Resolve the project once

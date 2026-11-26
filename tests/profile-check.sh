@@ -93,6 +93,18 @@ fi
 
 ARGS="resolve write --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?
 expect "no file: current agent, no model" '"flags": ["--agent", "claude"]' "$out" 0 $ec
+settings=$(printf '%s\n' "$out" | python3 -I -c '
+import json, shlex, sys
+from pathlib import Path
+
+argv = shlex.split(json.load(sys.stdin)["split_command"])
+path = Path(sys.argv[1]).with_name("claude-worker-settings.json")
+if argv == ["claude", "--settings", str(path)] and json.loads(path.read_text()) == {
+    "enabledPlugins": {"engram@engram": False},
+}:
+    print("isolated")
+' "$P")
+expect "no Engram installed: Claude command uses settings that disable only Engram" "isolated" "$settings" 0 "$ec" exact
 
 cp "$EX" "$T/profiles.json"
 ARGS="resolve verify --json"; out=$(run CLAUDE_CODE_SESSION_ID=s1); ec=$?

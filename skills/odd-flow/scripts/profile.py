@@ -38,6 +38,7 @@ CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 ORCA_HANDLE_RE = re.compile(r"[A-Za-z0-9_:.-]{1,200}")
 RECORD_NAME_RE = re.compile(r"[0-9a-f]{64}")
 CODEX_LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-worker.sh")
+CLAUDE_WORKER_SETTINGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude-worker-settings.json")
 
 # First present variable wins. The agent column is the Orca agent id of the
 # runtime that sets the variable; the pane key identifies no agent.
@@ -361,6 +362,8 @@ def resolve_role(doc, role, *, selection=None):
             split_command += f" --model {shell_quote(entry['model'])}"
             if entry.get("effort"):
                 split_command += f" --effort {shell_quote(entry['effort'])}"
+        if agent == "claude":
+            split_command += f" --settings {shell_quote(CLAUDE_WORKER_SETTINGS)}"
     parts = [agent, entry.get("model") or "agent default model"]
     if entry.get("effort"):
         parts.append(f"effort {entry['effort']}")

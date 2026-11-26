@@ -178,8 +178,9 @@ calls() {
 p=$(leaf term_parent); r1=$(leaf term_r1); r2=$(leaf term_r2); r3=$(leaf term_r3)
 list_call=$'\nargv:\nterminal\nlist\n--include-visual-layouts\n--json'
 baseline_call=$'\nterminal\nlist\n--worktree\ncurrent\n--limit\n1000\n--json'
-tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\n--command\nclaude\n--json'
-right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\nclaude\n--json'
+claude_command="claude --settings '${ROOT//\'/\'\\\'\'}/skills/odd-flow/scripts/claude-worker-settings.json'"
+tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\n--command\n'"$claude_command"$'\n--json'
+right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\n'"$claude_command"$'\n--json'
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
 width_record="$T/odd-flow-pane-term_parent.cols"
 
@@ -370,7 +371,7 @@ layout "$(split vertical "$p" "$r1")"
 out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "split timeout warns that a pane may have opened" 1 "$ec" \
   'Orca terminal split: timed out (limit: 1s). A pane may have opened. Check terminal list and close it.' \
-  "$list_call"$'\nterminal\nsplit\n--terminal\nterm_r1\n--direction\nhorizontal\n--command\nclaude\n--json\n\nend argv'
+  "$list_call"$'\nterminal\nsplit\n--terminal\nterm_r1\n--direction\nhorizontal\n--command\n'"$claude_command"$'\n--json\n\nend argv'
 expect "split-below timeout names the right pane and horizontal direction" 1 "$ec" \
   'Split target: term_r1; direction: horizontal; intended title: "T1 verify: example".'
 layout "$(split vertical "$p" "$(split horizontal "$r1" "$(leaf term_late_below)")")"
@@ -386,7 +387,7 @@ expect "Orca split timeout retries identical placement under the lock and return
 
 out=$(fail_split=timeout-repeat trace_timeout=1 open_pane --role explore --cols 160); ec=$?
 explore_command="agy --model 'gemini-4' --effort 'low'"
-fallback_calls="$list_call${right_call/claude/$explore_command}${retry_call/claude/$explore_command}$baseline_call${tab_call/claude/$explore_command}"$'\n\nend argv'
+fallback_calls="$list_call${right_call/"$claude_command"/$explore_command}${retry_call/"$claude_command"/$explore_command}$baseline_call${tab_call/"$claude_command"/$explore_command}"$'\n\nend argv'
 expect "a second pending split timeout creates a tab under the pane lock and reports the orphan" 0 "$ec" \
   $'Baseline list lock held: True\nOrca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n''{"placement": "tab", "handle": "term_tab", "parent": "term_parent", "target": null, "cols": 160, "min_cols": 160, "reason": "split timed out after one retry", "title_error": null, "orphan_leaf": "'"$orphan_leaf"'", "role": "explore", "agent": "antigravity", "model": "gemini-4", "effort": "low"}' \
   "$fallback_calls"
@@ -527,7 +528,7 @@ expect "tab without a handle reports the resolved review role and null defaults"
 
 out=$(fail_split=1 open_pane --role verify --cols 200); ec=$?
 expect "ordinary split refusal is visible and does not retry" 1 "$ec" "split refused" \
-  "$list_call"$'\nterminal\nsplit\n--terminal\nterm_r2\n--direction\nhorizontal\n--command\nclaude\n--json\n\nend argv'
+  "$list_call"$'\nterminal\nsplit\n--terminal\nterm_r2\n--direction\nhorizontal\n--command\n'"$claude_command"$'\n--json\n\nend argv'
 
 out=$(parent="" open_pane --role verify --cols 200); ec=$?
 expect "outside Orca: refuse" 2 "$ec" "workers fall back to subagents or inline"

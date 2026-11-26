@@ -56,5 +56,10 @@ if [ -n "$model" ]; then
   fi
 fi
 set -- "$@" -c sandbox_workspace_write.network_access=true
+set -- "$@" -c plugins.engram@engram.enabled=false
+
+if codex mcp get engram >/dev/null 2>&1; then
+  set -- "$@" -c mcp_servers.engram.enabled=false
+fi
 
 exec codex --no-daemon --sandbox workspace-write "$@"

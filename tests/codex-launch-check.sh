@@ -18,7 +18,16 @@ refute() { # name, unexpected substring, actual
 }
 
 mkdir -p "$T/bin"
-printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done\n' >"$T/bin/codex"
+cat >"$T/bin/codex" <<'SH'
+#!/bin/sh
+if [ "$#" -eq 3 ] && [ "$1 $2 $3" = "mcp get engram" ]; then
+  config_home=${CODEX_HOME:-$HOME/.codex}
+  # A fixture supplies Codex's expected answer; the fake does not parse TOML.
+  [ -f "$config_home/config.toml" ] && [ "$(cat "$config_home/mcp-get-exit")" = 0 ]
+  exit "$?"
+fi
+printf '%s\n' "$@"
+SH
 chmod +x "$T/bin/codex"
 ORCA_ENV=(ORCA_USER_DATA_PATH="/Users/u/Library/Application Support/orca" ORCA_WORKSPACE_ID="ws-1::/repo"
   ORCA_WORKTREE_ID="ws-1::/repo" ORCA_PANE_KEY="tab-1:pane-1" ORCA_TERMINAL_HANDLE="term_1")
@@ -41,8 +50,40 @@ want=$(printf '%s\n' --no-daemon --sandbox workspace-write \
   -c "shell_environment_policy.set.ORCA_PANE_KEY='tab-1:pane-1'" \
   -c "shell_environment_policy.set.ORCA_TERMINAL_HANDLE='term_1'" \
   -c check_for_update_on_startup=false -c disable_paste_burst=true \
-  -m gpt-6-luna -c model_reasoning_effort=medium -c sandbox_workspace_write.network_access=true)
+  -m gpt-6-luna -c model_reasoning_effort=medium -c sandbox_workspace_write.network_access=true \
+  -c plugins.engram@engram.enabled=false)
 expect "argv: pin once, existing order kept" "$want" "$out" 0 $ec exact
+
+mkdir -p "$T/empty-home" "$T/empty-codex"
+out=$(launch "${ORCA_ENV[@]}" HOME="$T/empty-home" CODEX_HOME="$T/empty-codex"); ec=$?
+expect "no Engram installed: Codex launches with the plugin override and no MCP override" "$want" "$out" 0 $ec exact
+
+mkdir -p "$T/configured-home/.codex" "$T/codex"
+printf '%s\n' '[mcp_servers.engram]' 'command = "engram"' >"$T/configured-home/.codex/config.toml"
+printf '%s\n' '[mcp_servers."engram"]' 'command = "engram"' >"$T/codex/config.toml"
+printf '0\n' >"$T/configured-home/.codex/mcp-get-exit"
+printf '0\n' >"$T/codex/mcp-get-exit"
+out=$(launch "${ORCA_ENV[@]}" HOME="$T/configured-home"); ec=$?
+expect "bare Engram table in default config: both overrides passed" "$want"$'\n-c\nmcp_servers.engram.enabled=false' "$out" 0 $ec exact
+out=$(launch "${ORCA_ENV[@]}" HOME="$T/empty-home" CODEX_HOME="$T/codex"); ec=$?
+expect "quoted Engram table in CODEX_HOME: both overrides passed" "$want"$'\n-c\nmcp_servers.engram.enabled=false' "$out" 0 $ec exact
+quoted_keys=$(printf '%s\n' "$out" | awk '/^-c$/ { getline; key = substr($0, 1, index($0, "=") - 1); if (index(key, "\"") || index(key, "\047")) print key }')
+expect "no -c key path contains a quote" "" "$quoted_keys" 0 "$ec" exact
+
+expect_mcp_lookup() { # name, lookup exit, config content (including line endings)
+  local out ec argv="$want"
+  printf '%s' "$3" >"$T/codex/config.toml"
+  printf '%s\n' "$2" >"$T/codex/mcp-get-exit"
+  if [[ "$2" == 0 ]]; then argv+=$'\n-c\nmcp_servers.engram.enabled=false'; fi
+  out=$(launch "${ORCA_ENV[@]}" HOME="$T/empty-home" CODEX_HOME="$T/codex"); ec=$?
+  expect "$1" "$argv" "$out" 0 "$ec" exact
+}
+expect_mcp_lookup "single-quoted Engram table: both overrides passed" 0 $'[mcp_servers.\'engram\']\ncommand = "engram"\n'
+expect_mcp_lookup "inline Engram table: both overrides passed" 0 $'[mcp_servers]\nengram = { command = "engram" }\n'
+expect_mcp_lookup "root dotted Engram key: both overrides passed" 0 $'mcp_servers.engram.command = "engram"\n'
+expect_mcp_lookup "nested dotted Engram key: both overrides passed" 0 $'[mcp_servers]\nengram.command = "engram"\n'
+expect_mcp_lookup "Engram table with CRLF: both overrides passed" 0 $'[mcp_servers.engram]\r\ncommand = "engram"\r\n'
+expect_mcp_lookup "Engram header in a multiline string: no MCP override" 1 $'developer_instructions = """\n[mcp_servers.engram]\n"""\n'
 
 ARGS=""; out=$(launch "${ORCA_ENV[@]}"); ec=$?
 refute "no model: no -m flag" $'\n-m\n' "$out"
@@ -91,7 +132,9 @@ expect "codex role without model: launcher without arguments" "codex-worker.sh'\
 out=$(resolve verify --json); ec=$?
 expect "claude role: launch is worker-start" '"launch": "worker-start"' "$out" 0 $ec
 expect "claude role: no terminal command" '"terminal_command": null' "$out" 0 $ec
-expect "claude role: split command includes model and effort" "\"split_command\": \"claude --model 'claude-opus-5-5' --effort 'high'\"" "$out" 0 $ec
+argv=$(printf '%s\n' "$out" | python3 -I -c 'import json,shlex,sys; print("\n".join(shlex.split(json.load(sys.stdin)["split_command"])))')
+expect "claude role: split command preserves model and effort, then adds settings" \
+  $'claude\n--model\nclaude-opus-5-5\n--effort\nhigh\n--settings\n'"$ROOT/skills/odd-flow/scripts/claude-worker-settings.json" "$argv" 0 "$ec" exact
 
 out=$(resolve review --json); ec=$?
 expect "antigravity role: launch is worker-start" '"launch": "worker-start"' "$out" 0 $ec
