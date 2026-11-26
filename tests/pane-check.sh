@@ -38,6 +38,12 @@ printf '%s\n' \
   '    case "${ORCA_FAIL_SPLIT:-}" in' \
   '      garbage) echo "not json"; exit 0 ;;' \
   '      nohandle) echo "{\"ok\":true,\"result\":{}}"; exit 0 ;;' \
+  '      timeout|timeout-repeat)' \
+  '        leaf=11111111-2222-4333-8444-555555555555' \
+  '        if [ "${9:-}" != --retry-split ] || [ "${10:-}" != "$leaf" ] || [ "$ORCA_FAIL_SPLIT" = timeout-repeat ]; then' \
+  '          printf "{\"id\":\"request\",\"ok\":false,\"error\":{\"code\":\"runtime_error\",\"message\":\"Timed out waiting for split pane handle: pane %s in tab tab-example may still open and run its command.\",\"data\":{\"splitId\":\"%s\",\"tabId\":\"tab-example\",\"splitMayStillComplete\":true,\"nextSteps\":[\"Do not split again. With an orca CLI that has --retry-split, re-run the same command with --retry-split %s to wait for this pane and get its handle.\",\"Before splitting again, check \`orca terminal list --json\` for a pane with this leafId: its command may already be running.\"]}},\"_meta\":{\"runtimeId\":\"runtime-example\"}}\n" "$leaf" "$leaf" "$leaf"' \
+  '          exit 1' \
+  '        fi ;;' \
   '    esac' \
   '    if [ "${ORCA_FAIL_SPLIT:-}" = 1 ]; then' \
   '      echo "{\"ok\":false,\"error\":{\"message\":\"split refused\"}}"; exit 1' \
@@ -64,6 +70,8 @@ printf '%s\n' \
   'if os.environ.get("ORCA_TRACE_TIMEOUT"):' \
   '    run = pane.subprocess.run' \
   '    def trace_timeout(argv, **kwargs):' \
+  '        if "--retry-split" in argv:' \
+  '            print("Split retry lock held:", lock_held(), file=sys.stderr)' \
   '        print("Orca subprocess timeout: {}s".format(kwargs.get("timeout")), file=sys.stderr)' \
   '        return run(argv, **kwargs)' \
   '    pane.subprocess.run = trace_timeout' \
@@ -239,11 +247,13 @@ expect "tab create refusal is visible" 1 "$ec" 'Orca terminal create: create ref
 
 out=$(fail_create=garbage open_pane --role verify --cols 118); ec=$?
 expect "non-JSON tab create reply warns that a terminal may have opened" 1 "$ec" \
-  'A terminal may have opened. Check terminal list and close it.' "$list_call$tab_call"$'\n\nend argv'
+  'A terminal may have opened. Check terminal list and close it. Worktree: current; title: "T1 verify: example".' \
+  "$list_call$tab_call"$'\n\nend argv'
 
 out=$(fail_create=nohandle open_pane --role verify --cols 118); ec=$?
 expect "tab create reply without a handle warns that a terminal may have opened" 1 "$ec" \
-  'missing terminal handle. A terminal may have opened' "$list_call$tab_call"$'\n\nend argv'
+  'missing terminal handle. A terminal may have opened. Check terminal list and close it. Worktree: current; title: "T1 verify: example".' \
+  "$list_call$tab_call"$'\n\nend argv'
 
 out=$(trace_timeout=1 open_pane --role verify --cols 118); ec=$?
 expect "Orca subprocesses use the shipped 30-second timeout" 0 "$ec" \
@@ -286,6 +296,17 @@ expect "split-below timeout names the right pane and horizontal direction" 1 "$e
 layout "$(split vertical "$p" "$(split horizontal "$r1" "$(leaf term_late_below)")")"
 expect_late "split-below timeout matches the late pane below the target" term_late_below
 layout "$p"
+
+retry_call="${right_call%$'\n--json'}"$'\n--retry-split\n11111111-2222-4333-8444-555555555555\n--json'
+out=$(fail_split=timeout trace_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "Orca split timeout retries identical placement under the lock and returns the late handle" 0 "$ec" \
+  $'Split retry lock held: True\nOrca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n{"placement": "split-right", "handle": "term_new"' \
+  "$list_call$right_call$retry_call$title_call"$'\n\nend argv'
+
+out=$(fail_split=timeout-repeat open_pane --role verify --cols 160); ec=$?
+expect "a second Orca split timeout reports placement context without another retry" 1 "$ec" \
+  'may still open and run its command. A pane may have opened. Check terminal list and close it. Split target: term_parent; direction: vertical; intended title: "T1 verify: example".' \
+  "$list_call$right_call$retry_call"$'\n\nend argv'
 
 out=$(hang=set-pane-title orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "title timeout preserves the opened pane and reports a title error" 0 "$ec" \
@@ -366,7 +387,8 @@ expect "tab without a handle reports the resolved review role and null defaults"
   '"role": "review", "agent": "pi", "model": null, "effort": null'
 
 out=$(fail_split=1 open_pane --role verify --cols 200); ec=$?
-expect "split failure is visible" 1 "$ec" "split refused"
+expect "ordinary split refusal is visible and does not retry" 1 "$ec" "split refused" \
+  "$list_call"$'\nterminal\nsplit\n--terminal\nterm_r2\n--direction\nhorizontal\n--command\nclaude\n--json\n\nend argv'
 
 out=$(parent="" open_pane --role verify --cols 200); ec=$?
 expect "outside Orca: refuse" 2 "$ec" "workers fall back to subagents or inline"
@@ -375,16 +397,11 @@ layout "$(split vertical "$p" "$(split horizontal "$(split vertical "$r1" "$r2")
 out=$(open_pane --role verify --cols 80); ec=$?
 expect "vertical split in the column keeps half height" 0 "$ec" '"target": "term_r2"'
 
-hint='A pane may have opened. Check terminal list and close it.'
-hint_ec=1
 for reply in garbage nohandle; do
   out=$(fail_split=$reply open_pane --role verify --cols 200); ec=$?
-  if [[ "$ec" != 1 || "$out" != 'odd-flow: Orca terminal split:'*"$hint" ]]; then
-    hint_ec=0
-    break
-  fi
+  expect "uncertain split reply ($reply) warns of a possible open pane and names its placement" 1 "$ec" \
+    'A pane may have opened. Check terminal list and close it. Split target: term_r2; direction: horizontal; intended title: "T1 verify: example".'
 done
-expect "uncertain split reply reports possible open pane" 1 "$hint_ec" "$hint"
 
 printf '{"ok":true,"result":{"visualLayouts":[{"root":{"type":"group","tabs":null}}]}}\n' >"$T/layout"
 out=$(open_pane --role verify --cols 200); ec=$?
