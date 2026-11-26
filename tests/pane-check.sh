@@ -52,12 +52,14 @@ printf '%s\n' \
   '        echo "{\"ok\":false,\"error\":{\"message\":\"Split timed out with an invalid leaf ID\",\"data\":{\"splitId\":\"not-a-uuid\",\"splitMayStillComplete\":true}}}"; exit 1 ;;' \
   '      timeout-missing-id)' \
   '        echo "{\"ok\":false,\"error\":{\"message\":\"Split timed out without a leaf ID\",\"data\":{\"splitMayStillComplete\":true}}}"; exit 1 ;;' \
-  '      timeout|timeout-repeat|timeout-refused)' \
+  '      timeout|timeout-repeat|timeout-refused|timeout-nohandle|timeout-hang)' \
   '        leaf=11111111-2222-4333-8444-555555555555' \
   '        if [ "${9:-}" != --retry-split ] || [ "${10:-}" != "$leaf" ] || [ "$ORCA_FAIL_SPLIT" = timeout-repeat ]; then' \
   '          printf "{\"id\":\"request\",\"ok\":false,\"error\":{\"code\":\"runtime_error\",\"message\":\"Timed out waiting for split pane handle: pane %s in tab tab-example may still open and run its command.\",\"data\":{\"splitId\":\"%s\",\"tabId\":\"tab-example\",\"splitMayStillComplete\":true,\"nextSteps\":[\"Do not split again. With an orca CLI that has --retry-split, re-run the same command with --retry-split %s to wait for this pane and get its handle.\",\"Before splitting again, check \`orca terminal list --json\` for a pane with this leafId: its command may already be running.\"]}},\"_meta\":{\"runtimeId\":\"runtime-example\"}}\n" "$leaf" "$leaf" "$leaf"' \
   '          exit 1' \
   '        fi' \
+  '        if [ "$ORCA_FAIL_SPLIT" = timeout-nohandle ]; then echo "{\"ok\":true,\"result\":{}}"; exit 0; fi' \
+  '        if [ "$ORCA_FAIL_SPLIT" = timeout-hang ]; then exec sleep 5; fi' \
   '        if [ "$ORCA_FAIL_SPLIT" = timeout-refused ]; then' \
   '          echo "{\"ok\":false,\"error\":{\"message\":\"split retry refused\"}}"; exit 1' \
   '        fi ;;' \
@@ -397,6 +399,16 @@ expect "non-pending retry error retains its message and placement context withou
   "$list_call$right_call$retry_call"$'\n\nend argv'
 expect "failed retry reports the original split leaf ID and Orca message" 1 "$ec" \
   'Original split reply for leaf 11111111-2222-4333-8444-555555555555: Timed out waiting for split pane handle: pane 11111111-2222-4333-8444-555555555555 in tab tab-example may still open and run its command.'
+
+out=$(fail_split=timeout-nohandle open_pane --role verify --cols 160); ec=$?
+expect "retry reply without a handle keeps the original split reply" 1 "$ec" \
+  'Orca terminal split: missing split handle. A pane may have opened. Check terminal list and close it. Split target: term_parent; direction: vertical; intended title: "T1 verify: example". Original split reply for leaf 11111111-2222-4333-8444-555555555555: Timed out waiting for split pane handle' \
+  "$list_call$right_call$retry_call"$'\n\nend argv'
+
+out=$(fail_split=timeout-hang orca_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "retry client timeout keeps the original split reply" 1 "$ec" \
+  'Orca terminal split: timed out (limit: 1s). A pane may have opened. Check terminal list and close it. Split target: term_parent; direction: vertical; intended title: "T1 verify: example". Original split reply for leaf 11111111-2222-4333-8444-555555555555: Timed out waiting for split pane handle' \
+  "$list_call$right_call$retry_call"$'\n\nend argv'
 
 out=$(hang=set-pane-title orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "title timeout preserves the opened pane and reports a title error" 0 "$ec" \
