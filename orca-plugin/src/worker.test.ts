@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
-import { setTimeout as delay } from 'node:timers/promises'
+import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 import type { HostMethods } from 'orca/host'
 import { assert, hostError, mockHost, mountWorker, type MockHostOptions } from 'orca/testing'
@@ -786,7 +786,7 @@ async function controlsFixture(
     runExecutable?: main.WorkerOptions['runExecutable']
     commandSignal?: AbortSignal
     log?: (line: string) => void
-    updateStatus?: () => never
+    updateStatus?: () => HostMethods['statusBar.update']['result']
   } = {}
 ) {
   const host = mockHost({
@@ -833,20 +833,27 @@ async function controlsFixture(
   }
 }
 
-test('status bar follows the focused coordinator count on agent and workspace events', async () => {
+test('status bar follows the focused coordinator count on agent and workspace events', { timeout: 5000 }, async () => {
   let rows = [dispatched, agent('pi'), agent('codex', null)]
-  const fixture = await controlsFixture(() => rows)
+  let markUpdated: () => void
+  const fixture = await controlsFixture(() => rows, {
+    updateStatus: () => { markUpdated(); return { ok: true } }
+  })
+  async function expectUpdate(emit: () => Promise<void>) {
+    const updated = new Promise<void>((resolve) => { markUpdated = resolve })
+    await Promise.all([emit(), updated])
+  }
   try {
-    await fixture.worker.emit('workspace.changed', workspaceEvent)
+    await expectUpdate(() => fixture.worker.emit('workspace.changed', workspaceEvent))
     assert.equal(fixture.status()?.visible, false)
     rows = [agent('codex'), dispatched]
-    await fixture.worker.emit('agent.status.changed', agentEvent)
+    await expectUpdate(() => fixture.worker.emit('agent.status.changed', agentEvent))
     assert.deepEqual(fixture.status(), {
       id: 'odd-flow-status', visible: true, text: 'odd: test · organic', tone: 'neutral',
       tooltip: 'Profile source: file default\nMode source: default'
     })
     rows = [agent('codex'), agent('antigravity'), dispatched]
-    await fixture.worker.emit('workspace.changed', workspaceEvent)
+    await expectUpdate(() => fixture.worker.emit('workspace.changed', workspaceEvent))
     assert.equal(fixture.status()?.visible, true)
     assert.equal(fixture.status()?.tone, 'neutral')
     assert.equal(fixture.status()?.text, 'odd: 2 sessions')
@@ -909,7 +916,7 @@ test('status refresh reads only Show and warns about an outdated script for one 
   }
 })
 
-test('coalesces overlapping event and timer refreshes into one trailing read', async () => {
+test('acknowledges overlapping events before the refresh completes and coalesces them into one trailing read', async () => {
   let reads = 0
   let active = 0
   let maxActive = 0
@@ -934,18 +941,49 @@ test('coalesces overlapping event and timer refreshes into one trailing read', a
     assert.ok(first, 'the worker registered a fallback timer')
     await startedRead
     rows = [agent('codex'), agent('antigravity')]
-    const followups = [
+    const events = Promise.all([
       fixture.worker.emit('agent.status.changed', agentEvent),
-      fixture.worker.emit('workspace.changed', workspaceEvent),
-      fixture.tick()
-    ]
+      fixture.worker.emit('workspace.changed', workspaceEvent)
+    ])
+    const timer = fixture.tick()
+    const acknowledged = await Promise.race([events.then(() => true), nextTurn(false)])
     release()
-    await Promise.all([first, ...followups])
+    await Promise.all([first, events, timer])
+    assert.equal(acknowledged, true, 'both event handlers must settle while the read is blocked')
     assert.equal(reads, 2)
     assert.equal(maxActive, 1)
     assert.equal(fixture.status()?.text, 'odd: 2 sessions')
   } finally {
     release()
+    await fixture.worker.deactivate()
+  }
+})
+
+test('logs a background refresh rejection without rejecting the event or leaking error details', async () => {
+  const failure = Object.defineProperty(new Error('Host read failed.'), 'stderr', {
+    get: () => { throw new Error('Private refresh failure details.') }
+  })
+  const fixture = await controlsFixture(() => { throw failure })
+  try {
+    const rejection = await fixture.worker.emit('agent.status.changed', agentEvent).catch((error) => error)
+    await nextTurn()
+    assert.deepEqual(fixture.worker.logs, ['Could not refresh odd-flow status.'])
+    assert.equal(rejection, undefined)
+  } finally {
+    await fixture.worker.deactivate()
+  }
+})
+
+test('handles a non-Error throw from a fire-and-forget timer refresh', async () => {
+  const failure = Object.defineProperty({}, 'stderr', {
+    get: () => { throw 'Private refresh failure details.' }
+  })
+  const fixture = await controlsFixture(() => { throw failure })
+  try {
+    void fixture.tick()
+    await nextTurn()
+    assert.deepEqual(fixture.worker.logs, ['Could not refresh odd-flow status.'])
+  } finally {
     await fixture.worker.deactivate()
   }
 })
