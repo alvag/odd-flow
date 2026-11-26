@@ -56,8 +56,8 @@ printf '%s\n' \
 chmod +x "$T/orca"
 printf '%s\n' '{"default":"test","profiles":{"test":{"verify":{"agent":"claude"},"write":{"agent":"antigravity"},"explore":{"agent":"antigravity","model":"gemini-4","effort":"low"},"review":{"agent":"pi"}}}}' >"$T/profiles.json"
 
-# Test-only seam: replace the TTY sampler and clock, but run the real CLI and
-# pane lock against the same fake Orca as the fixed-width cases.
+# Test-only seam: replace the TTY sampler and clock and optionally trace the
+# subprocess timeout while running the real CLI and pane lock against fake Orca.
 printf '%s\n' \
   'import fcntl, os, sys, time' \
   'from pathlib import Path' \
@@ -68,6 +68,12 @@ printf '%s\n' \
   'import pane' \
   'if orca_timeout:' \
   '    pane.ORCA_TIMEOUT_SECS = int(orca_timeout)' \
+  'if os.environ.get("ORCA_TRACE_TIMEOUT"):' \
+  '    run = pane.subprocess.run' \
+  '    def trace_timeout(argv, **kwargs):' \
+  '        print("Orca subprocess timeout: {}s".format(kwargs.get("timeout")), file=sys.stderr)' \
+  '        return run(argv, **kwargs)' \
+  '    pane.subprocess.run = trace_timeout' \
   'samples = iter(widths.split())' \
   'now = 0' \
   'def sleep(seconds):' \
@@ -116,7 +122,7 @@ layout() {
 }
 open_pane() {
   local command=(python3 -I "$P") format=(--json)
-  if [[ -n "${widths+x}${orca_timeout+x}" ]]; then
+  if [[ -n "${widths+x}${orca_timeout+x}${trace_timeout+x}" ]]; then
     command=(python3 -I "$T/sample.py" "$P" "${widths-}" "${orca_timeout-}" "${record_age-}")
   fi
   if [[ -n "${text_output+x}" ]]; then
@@ -129,7 +135,7 @@ open_pane() {
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
-    ORCA_HANG="${hang-}" \
+    ORCA_HANG="${hang-}" ORCA_TRACE_TIMEOUT="${trace_timeout-}" \
     "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
 }
 calls() {
@@ -215,6 +221,10 @@ expect "non-JSON tab create reply warns that a terminal may have opened" 1 "$ec"
 out=$(fail_create=nohandle open_pane --role verify --cols 118); ec=$?
 expect "tab create reply without a handle warns that a terminal may have opened" 1 "$ec" \
   'missing terminal handle. A terminal may have opened' "$list_call$tab_call"$'\n\nend argv'
+
+out=$(trace_timeout=1 open_pane --role verify --cols 118); ec=$?
+expect "Orca subprocesses use the shipped 30-second timeout" 0 "$ec" \
+  $'Orca subprocess timeout: 30s\nOrca subprocess timeout: 30s\n' "$list_call$tab_call"
 
 out=$(hang=list orca_timeout=1 open_pane --role verify --cols 160); ec=$?
 expect "list timeout stops placement" 1 "$ec" \
