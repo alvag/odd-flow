@@ -424,7 +424,20 @@ export function createWorker({
       return cleanEnv
     }
 
-    const getAgents = (signal: AbortSignal) => orca.host.call('agents.list', undefined, { signal })
+    const terminalSessions = new Map<string, { sessionId: string; lastSeen: number; boundary?: number }>()
+    const getAgents = async (signal: AbortSignal) => {
+      const { agents } = await orca.host.call('agents.list', undefined, { signal })
+      const now = Date.now()
+      const sessionBoundaries = new Map<string, number>()
+      for (const { terminalId, sessionId } of agents) {
+        if (!terminalId || !sessionId?.trim()) continue
+        const previous = terminalSessions.get(terminalId)
+        const boundary = previous?.sessionId === sessionId ? previous.boundary : previous?.lastSeen
+        terminalSessions.set(terminalId, { sessionId, lastSeen: now, boundary })
+        if (boundary !== undefined) sessionBoundaries.set(terminalId, boundary)
+      }
+      return { agents, sessionBoundaries }
+    }
     const getScript = async () => resolveScript(home, await orca.settings.get('profileScript'))
     const cachedDispatchIds = new Set<string>()
     const cachedTerminals = new Set<string>()
@@ -658,7 +671,9 @@ export function createWorker({
       return { summary, featureSource }
     }
 
-    async function dashboardsFor(snapshot: State, signal: AbortSignal): Promise<Record<string, Dashboard>> {
+    async function dashboardsFor(
+      snapshot: State, sessionBoundaries: ReadonlyMap<string, number>, signal: AbortSignal
+    ): Promise<Record<string, Dashboard>> {
       const rows = coordinators(snapshot).filter((row): row is typeof row & { terminalId: string } => !!row.terminalId)
       if (!rows.length) return {}
       const deadline = AbortSignal.any([signal, AbortSignal.timeout(DASHBOARD_TIMEOUT_MS)])
@@ -684,8 +699,9 @@ export function createWorker({
       const openSessions = rows.map(({ terminalId }) => terminalId)
       const entries = await Promise.all(rows.map(async (row): Promise<[string, Dashboard]> => {
         const terminalId = row.terminalId
+        const sessionBoundary = sessionBoundaries.get(terminalId)
         const { workers, workspaceCandidates } = workerRows({
-          dispatches, tasks, agents: snapshot.agents, coordinator: terminalId, runs, hidden
+          dispatches, tasks, agents: snapshot.agents, coordinator: terminalId, runs, hidden, sessionBoundary
         })
         const dashboard: Dashboard = {
           terminalId, workers, attention: attentionItems(row, workers), feature: null, current: null, git: null, errors: {}
@@ -704,7 +720,9 @@ export function createWorker({
         if (featureSource.status === 'fulfilled') {
           let owners = ownershipByRoot.get(root)
           if (!owners) {
-            owners = featureOwners({ docs: featureSource.value.docs, tasks, runs, openSessions, hiddenRunIds: hidden.runs })
+            owners = featureOwners({
+              docs: featureSource.value.docs, tasks, runs, openSessions, hiddenRunIds: hidden.runs, sessionBoundaries
+            })
             ownershipByRoot.set(root, owners)
           }
           dashboard.feature = selectFeatureDoc(featureSource.value.docs, featureSource.value.branch, {
@@ -713,7 +731,7 @@ export function createWorker({
         } else {
           dashboard.errors.feature = 'Could not read feature documents for this workspace.'
         }
-        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId, hidden.runs)
+        if (!dashboard.feature) dashboard.current = currentWork(runs, tasks, terminalId, hidden.runs, sessionBoundary)
         return [terminalId, dashboard]
       }))
       return Object.fromEntries(entries)
@@ -738,7 +756,9 @@ export function createWorker({
           ))
         ])
         const snapshot: State = { script, profiles, agents, ...(workerCheckError ? { workerCheckError } : {}) }
-        if (includeDashboards && !workerCheckError) snapshot.dashboards = await dashboardsFor(snapshot, signal)
+        if (includeDashboards && !workerCheckError) {
+          snapshot.dashboards = await dashboardsFor(snapshot, listed.sessionBoundaries, signal)
+        }
         return { snapshot, activeDispatches: typeof dispatches === 'string' ? undefined : dispatches.activeDispatches }
       } catch (cause) {
         const error = message(cause)

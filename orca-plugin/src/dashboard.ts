@@ -47,6 +47,10 @@ export function parseOrcaTime(value: unknown): number | null {
   return Number.isFinite(at) ? at : null
 }
 
+function beforeSession(createdAt: number | null, boundary: number | undefined): boolean {
+  return createdAt !== null && boundary !== undefined && Math.floor(createdAt / 1000) < Math.floor(boundary / 1000)
+}
+
 const taskStatuses = ['pending', 'in_progress', 'done', 'blocked', 'dropped'] as const
 const STALE_WORK_MS = 12 * 60 * 60 * 1000
 const activeDispatchStates = new Set(['ready', 'dispatched', 'running'])
@@ -122,6 +126,7 @@ export function featureOwners(input: {
   runs: RawRun[]
   openSessions: Iterable<string>
   hiddenRunIds: ReadonlySet<string>
+  sessionBoundaries?: ReadonlyMap<string, number>
 }): FeatureOwnership {
   const open = new Set(input.openSessions)
   const runCoordinator = new Map(
@@ -136,10 +141,12 @@ export function featureOwners(input: {
       ? task.created_by_terminal_handle
       : (task.run_id ? runCoordinator.get(task.run_id) : undefined)
     if (!session || !open.has(session)) continue
+    const createdAt = parseOrcaTime(task.created_at)
+    if (beforeSession(createdAt, input.sessionBoundaries?.get(session))) continue
     openTasks.push({
       spec: task.spec,
       session,
-      createdAt: parseOrcaTime(task.created_at),
+      createdAt,
       completedAt: parseOrcaTime(task.completed_at)
     })
   }
@@ -233,6 +240,7 @@ export function hiddenDashboardWork(runs: RawRun[], tasks: RawTask[], dispatches
 export function workerRows(input: {
   dispatches: RawDispatch[]; tasks: RawTask[]; agents: Agent[]; coordinator: string; runs: RawRun[]
   hidden: ReturnType<typeof hiddenDashboardWork>
+  sessionBoundary?: number
 }) {
   const { dispatches, tasks, agents, coordinator, runs, hidden } = input
   const runIds = new Set(runs.filter((run) => run.coordinator_handle === coordinator).map((run) => run.id))
@@ -254,6 +262,7 @@ export function workerRows(input: {
     if (!task || !(task.created_by_terminal_handle === coordinator || (task.run_id && runIds.has(task.run_id)))) continue
     if (dispatch.workspace) workspaceCandidates.add(dispatch.workspace)
     if (task.run_id ? hidden.runs.has(task.run_id) : hidden.standaloneTasks.has(task.id)) continue
+    if (beforeSession(startedAt, input.sessionBoundary)) continue
 
     const blocked = newestActive ? blockedTerminals.get(terminal ?? null) : undefined
     // Orca projects pending questions as input, not as a question category.
@@ -299,10 +308,11 @@ function resultSubject(result: string | null): string | null {
 }
 
 export function currentWork(
-  runs: RawRun[], tasks: RawTask[], coordinator: string, hiddenRunIds: ReadonlySet<string>
+  runs: RawRun[], tasks: RawTask[], coordinator: string, hiddenRunIds: ReadonlySet<string>, sessionBoundary?: number
 ): CurrentWork | null {
   const run = runs.filter((item) => item.coordinator_handle === coordinator && !hiddenRunIds.has(item.id))
     .map((item) => ({ item, startedAt: parseOrcaTime(item.created_at) }))
+    .filter(({ startedAt }) => !beforeSession(startedAt, sessionBoundary))
     .sort((a, b) => newestFirst(a.startedAt, b.startedAt))[0]
   if (!run) return null
 

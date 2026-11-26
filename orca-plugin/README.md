@@ -180,6 +180,13 @@ newest visible Orca run for that coordinator, its tasks, and the latest result.
 A run is hidden when all its tasks have a completion timestamp, none has an
 active dispatch, and the newest of the run's creation time and its tasks'
 creation and completion times is more than 12 hours old.
+When Orca reports a different session ID on the same terminal, the panel uses
+the last sighting of the old ID as the cutoff. **Current work** hides runs
+created before that second; **Workers** hides dispatches for tasks created
+before it, and those tasks no longer claim feature documents. Work created in
+the same second stays eligible. The plugin keeps the cutoff only in memory:
+after a plugin restart it forgets the cutoff, but the 12-hour rule still applies.
+
 **Current work** also shows a Git summary;
 when there is no feature document or run, only the Git summary appears. If the
 workspace path is unavailable, the panel shows a note rather than guessing.
