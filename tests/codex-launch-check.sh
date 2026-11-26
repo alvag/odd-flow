@@ -42,7 +42,7 @@ want=$(printf '%s\n' --no-daemon --sandbox workspace-write \
   -c "shell_environment_policy.set.ORCA_TERMINAL_HANDLE='term_1'" \
   -c check_for_update_on_startup=false -c disable_paste_burst=true \
   -m gpt-6-luna -c model_reasoning_effort=medium -c sandbox_workspace_write.network_access=true \
-  -c 'plugins."engram@engram".enabled=false')
+  -c plugins.engram@engram.enabled=false)
 expect "argv: pin once, existing order kept" "$want" "$out" 0 $ec exact
 
 mkdir -p "$T/empty-home" "$T/empty-codex"
@@ -56,6 +56,8 @@ out=$(launch "${ORCA_ENV[@]}" HOME="$T/configured-home"); ec=$?
 expect "bare Engram table in default config: both overrides passed" "$want"$'\n-c\nmcp_servers.engram.enabled=false' "$out" 0 $ec exact
 out=$(launch "${ORCA_ENV[@]}" HOME="$T/empty-home" CODEX_HOME="$T/codex"); ec=$?
 expect "quoted Engram table in CODEX_HOME: both overrides passed" "$want"$'\n-c\nmcp_servers.engram.enabled=false' "$out" 0 $ec exact
+quoted_keys=$(printf '%s\n' "$out" | awk '/^-c$/ { getline; key = substr($0, 1, index($0, "=") - 1); if (index(key, "\"") || index(key, "\047")) print key }')
+expect "no -c key path contains a quote" "" "$quoted_keys" 0 "$ec" exact
 
 ARGS=""; out=$(launch "${ORCA_ENV[@]}"); ec=$?
 refute "no model: no -m flag" $'\n-m\n' "$out"

@@ -56,7 +56,7 @@ if [ -n "$model" ]; then
   fi
 fi
 set -- "$@" -c sandbox_workspace_write.network_access=true
-set -- "$@" -c 'plugins."engram@engram".enabled=false'
+set -- "$@" -c plugins.engram@engram.enabled=false
 
 # Without a server table, this override creates an entry with no transport.
 config="${CODEX_HOME:-$HOME/.codex}/config.toml"
