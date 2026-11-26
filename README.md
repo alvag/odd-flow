@@ -127,6 +127,8 @@ The [ODD Flow Orca plugin](orca-plugin/README.md) shows and switches the odd-flo
 
 Run `/odd-flow check [--json]` for a read-only install report, or run `python3 -I skills/odd-flow/scripts/install_check.py [--json]` from the checkout you want to compare against. The report lists missing, changed, or extra shipped files and any error reported when the ODD Flow Orca plugin is not running. Neither command reinstalls anything.
 
+The report also counts session bindings, prompt-hook records, and mode-notice records of any age without deleting them. JSON includes these counts in `session_state` as `session_bindings`, `prompt_sessions`, and `session_modes`. If the state cannot be read, the report says so (`{"status": "unreadable"}` in `session_state`); this does not affect the exit code.
+
 The tokened worker marker requires odd-flow 0.4.0 or newer hooks. Update the ODD Flow Orca plugin and the odd-flow hooks for Claude Code, Codex, and Antigravity together. With mixed versions, the hooks do not recognize the marker and identify workers by the Orca preamble or first-line `# Role:` rule instead. An older hook leaves the token record to expire and be pruned. The plugin still works with odd-flow 0.3.0 hooks because those fallback rules remain in place.
 
 Claude Code enables auto-update per marketplace. It defaults to on for official marketplaces and off for third-party GitHub marketplaces like `alvag/odd-flow`. To enable it, run `/plugin`, open **Marketplaces**, select **odd-flow**, and turn on auto-update. See [Install and manage plugins](https://code.claude.com/docs/en/plugins/install.md).

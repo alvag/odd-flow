@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import stat
 import subprocess
@@ -216,6 +217,16 @@ def check_orca(root):
         return unreadable("orca", error, "cannot read Orca plugin state")
 
 
+def count_session_state():
+    try:
+        helpers = runpy.run_path(Path(__file__).with_name("profile.py"))
+        files = helpers["list_session_state"](helpers["discover_plugin_data_dirs"]())
+        return {category: len(paths) for category, paths in files.items()}
+    except Exception:
+        # State diagnostics must not prevent the install report or change its exit code.
+        return {"status": "unreadable"}
+
+
 def check(root):
     report = {"schema": SCHEMA, "installs": [], "warnings": []}
     rows = report["installs"]
@@ -248,6 +259,7 @@ def check(root):
                 )
     if hashes is None:
         report["reason"] = "cannot read checkout files"
+    report["session_state"] = count_session_state()
     return report
 
 
@@ -283,6 +295,13 @@ def print_report(report):
           "and runtime manifests. Other files (including .git, untracked extras outside "
           "shipped paths, Python bytecode, and .DS_Store) are ignored. "
           "Orca reports its listed version, state, and any error for a non-running plugin.")
+    state = report["session_state"]
+    if state.get("status") == "unreadable":
+        print("Session state: unreadable")
+    else:
+        print(f'Session state: {state["session_bindings"]} session binding(s), '
+              f'{state["prompt_sessions"]} prompt-hook record(s), '
+              f'{state["session_modes"]} mode-notice record(s)')
 
 
 def main():
