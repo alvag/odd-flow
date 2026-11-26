@@ -19,6 +19,11 @@ expect() { # name, expected exit, actual exit, expected output, [expected argv]
 printf '%s\n' \
   '#!/bin/sh' \
   'printf "%s\n" "$@" >>"$ORCA_LOG"' \
+  'if [ "$2" = list ]; then printf "%s\n" "${ORCA_HANG:+hung }list entered" >>"$ORCA_LOG.lists"; fi' \
+  'if [ "$2" = "${ORCA_HANG:-}" ]; then' \
+  '  if [ "$2" = list ]; then exec sleep 5; fi' \
+  '  sleep 5' \
+  'fi' \
   'case "$1 $2" in' \
   '  "terminal list") cat "$ORCA_LAYOUT" ;;' \
   '  "terminal create")' \
@@ -50,29 +55,49 @@ printf '%s\n' \
   'from pathlib import Path' \
   'from types import SimpleNamespace' \
   'sys.dont_write_bytecode = True' \
-  'script, widths, *args = sys.argv[1:]' \
+  'script, widths, orca_timeout, record_age, *args = sys.argv[1:]' \
   'sys.path.insert(0, str(Path(script).parent))' \
   'import pane' \
+  'if orca_timeout:' \
+  '    pane.ORCA_TIMEOUT_SECS = int(orca_timeout)' \
   'samples = iter(widths.split())' \
   'now = 0' \
   'def sleep(seconds):' \
   '    global now' \
   '    now += seconds' \
-  'def sample():' \
+  'def lock_held():' \
   '    lock = Path(os.environ["TMPDIR"]) / "odd-flow-pane-term_parent.lock"' \
-  '    locked = False' \
   '    if lock.exists():' \
   '        with lock.open() as fd:' \
   '            try:' \
   '                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)' \
   '            except BlockingIOError:' \
-  '                locked = True' \
+  '                return True' \
+  '    return False' \
+  'def sample():' \
   '    with open(os.environ["ORCA_LOG"] + ".samples", "a") as log:' \
-  '        print(round(now * 1000), locked, file=log)' \
+  '        print(round(now * 1000), lock_held(), file=log)' \
   '    width = next(samples)' \
   '    return None if width == "unknown" else int(width)' \
+  'if os.environ.get("ORCA_HANG") == "list":' \
+  '    terminal = pane.terminal' \
+  '    def trace_hung_list(*args):' \
+  '        events = os.environ["ORCA_LOG"] + ".lists"' \
+  '        with open(events, "a") as log:' \
+  '            print("lock held:", lock_held(), file=log)' \
+  '        try:' \
+  '            return terminal(*args)' \
+  '        finally:' \
+  '            with open(events, "a") as log:' \
+  '                print("hung list finished", file=log)' \
+  '    pane.terminal = trace_hung_list' \
+  'wall_time = time.time' \
+  'if record_age:' \
+  '    wall_time = lambda: 1_700_000_000' \
+  '    mtime = wall_time() - float(record_age)' \
+  '    os.utime(Path(os.environ["TMPDIR"]) / "odd-flow-pane-term_parent.cols", (mtime, mtime))' \
   'pane.parent_cols = sample' \
-  'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep, time=time.time)' \
+  'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep, time=wall_time)' \
   'sys.argv = [script, *args]' \
   'sys.exit(pane.main())' >"$T/sample.py"
 
@@ -83,8 +108,8 @@ layout() {
 }
 open_pane() {
   local command=(python3 -I "$P") format=(--json)
-  if [[ -n "${widths+x}" ]]; then
-    command=(python3 -I "$T/sample.py" "$P" "$widths")
+  if [[ -n "${widths+x}${orca_timeout+x}" ]]; then
+    command=(python3 -I "$T/sample.py" "$P" "${widths-}" "${orca_timeout-}" "${record_age-}")
   fi
   if [[ -n "${text_output+x}" ]]; then
     format=()
@@ -95,6 +120,7 @@ open_pane() {
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
+    ORCA_HANG="${hang-}" \
     "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
 }
 calls() {
@@ -150,6 +176,18 @@ touch -t 200001010000 "$width_record" || exit 1
 out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
 expect "an expired wide record is ignored" 0 "$ec" '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
 
+out=$(record_age=-1 widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "a future-dated wide record is ignored" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
+
+out=$(record_age=600 widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "a record exactly 10 minutes old is reused" 0 "$ec" \
+  '"placement": "split-right", "handle": "term_new"' "$list_call$right_call$title_call"
+
+out=$(record_age=600.001 widths='110' settle_ms=0 open_pane --role verify); ec=$?
+expect "a record just over 10 minutes old is ignored" 0 "$ec" \
+  '"placement": "tab", "handle": "term_tab"' "$list_call$tab_call"
+
 layout "$(split horizontal "$p" "$r1")"
 printf '219\n' >"$width_record"
 out=$(widths='110' settle_ms=0 open_pane --role verify); ec=$?
@@ -168,6 +206,30 @@ expect "non-JSON tab create reply warns that a terminal may have opened" 1 "$ec"
 out=$(fail_create=nohandle open_pane --role verify --cols 118); ec=$?
 expect "tab create reply without a handle warns that a terminal may have opened" 1 "$ec" \
   'missing terminal handle. A terminal may have opened' "$list_call$tab_call"$'\n\nend argv'
+
+out=$(hang=list orca_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "list timeout stops placement" 1 "$ec" \
+  'odd-flow: Orca terminal list: timed out (limit: 1s)' "$list_call"$'\n\nend argv'
+
+started=$SECONDS
+out=$(hang=create orca_timeout=1 open_pane --role verify --cols 118); ec=$?
+if (( SECONDS - started >= 4 )); then
+  out="Exceeded the 4-second bound: $out"
+  ec=99
+fi
+expect "create timeout does not wait for a child holding the output pipe" 1 "$ec" \
+  'Orca terminal create: timed out (limit: 1s). A terminal may have opened. Check terminal list and close it.' \
+  "$list_call$tab_call"$'\n\nend argv'
+
+out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "split timeout warns that a pane may have opened" 1 "$ec" \
+  'Orca terminal split: timed out (limit: 1s). A pane may have opened. Check terminal list and close it.' \
+  "$list_call$right_call"$'\n\nend argv'
+
+out=$(hang=set-pane-title orca_timeout=1 open_pane --role verify --cols 160); ec=$?
+expect "title timeout preserves the opened pane and reports a title error" 0 "$ec" \
+  '"title_error": "Orca terminal set-pane-title: timed out (limit: 1s)"' \
+  "$list_call$right_call$title_call"$'\n\nend argv'
 
 out=$(widths='81 165' settle_ms=100 open_pane --role verify); ec=$?
 expect "width settles under lock: split right using the new width" 0 "$ec" \
@@ -296,6 +358,38 @@ rm -f "$width_record"
 out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
 [[ ! -e "$width_record" ]] || ec=1
 expect "a split below records no width" 0 "$ec" '"placement": "split-below", "handle": "term_new"'
+
+# Two launches for the same parent: the second waits on the pane lock and runs once the first times out.
+layout "$p"
+started=$SECONDS
+: >"$T/argv"; : >"$T/argv.samples"
+: >"$T/argv.lists"
+env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
+  ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG=list \
+  python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json \
+  >"$T/first.out" 2>&1 &
+first=$!
+for ((i = 0; i < 100; i++)); do
+  grep -qx 'hung list entered' "$T/argv.lists" && break
+  sleep 0.01
+done
+second_ec=99
+second_out='hung list did not start in time'
+if (( i < 100 )); then
+  echo 'second launch' >>"$T/argv.lists"
+  second_out=$(env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
+    ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG= \
+    python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json 2>&1)
+  second_ec=$?
+fi
+wait "$first"; first_ec=$?
+events=$(cat "$T/argv.lists")
+out="first=$first_ec $(cat "$T/first.out") second=$second_ec $second_out"$'\n'"$events"
+ec=0
+if (( first_ec != 1 || second_ec != 0 || SECONDS - started >= 4 )); then ec=1; fi
+[[ "$events" == $'lock held: True\nhung list entered\nsecond launch\nhung list finished\nlist entered' ]] || ec=1
+expect "a hung list releases the pane lock to a parallel launch" 0 "$ec" \
+  'first=1 odd-flow: Orca terminal list: timed out (limit: 1s) second=0 {"placement": "split-right", "handle": "term_new"'
 
 echo "scratch: $T"
 echo "passed=$pass failed=$fail"

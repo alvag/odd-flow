@@ -20,24 +20,25 @@ from profile import ProfileError, load_profiles, orca_line, orca_terminal, resol
 
 SPLIT_HINT = "A pane may have opened. Check terminal list and close it."
 CREATE_HINT = "A terminal may have opened. Check terminal list and close it."
+ORCA_TIMEOUT_SECS = 30
 
 
 def terminal(*args):
-    proc = subprocess.run(
-        [os.environ.get("ORCA_CLI_COMMAND", "orca"), "terminal", *args, "--json"],
-        capture_output=True, text=True,
-    )
+    hint = {"split": f". {SPLIT_HINT}", "create": f". {CREATE_HINT}"}.get(args[0], "")
+    try:
+        proc = subprocess.run(
+            [os.environ.get("ORCA_CLI_COMMAND", "orca"), "terminal", *args, "--json"],
+            capture_output=True, text=True, timeout=ORCA_TIMEOUT_SECS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"Orca terminal {args[0]}: timed out (limit: {exc.timeout}s){hint}") from exc
     try:
         data = json.loads(proc.stdout)
         if not isinstance(data, dict):
             raise ValueError("expected an object")
     except ValueError as exc:
         detail = proc.stderr.strip() or proc.stdout.strip() or str(exc)
-        if args[0] == "split":
-            detail = f"{detail}. {SPLIT_HINT}"
-        elif args[0] == "create":
-            detail = f"{detail}. {CREATE_HINT}"
-        raise RuntimeError(f"Orca terminal {args[0]}: {detail}") from exc
+        raise RuntimeError(f"Orca terminal {args[0]}: {detail}{hint}") from exc
     if proc.returncode or data.get("ok") is False:
         detail = data.get("error") or proc.stderr.strip() or proc.stdout.strip()
         if isinstance(detail, dict):
@@ -149,7 +150,8 @@ def recorded_width(path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as record:
-            if time.time() - os.fstat(record.fileno()).st_mtime > 10 * 60:
+            age = time.time() - os.fstat(record.fileno()).st_mtime
+            if not 0 <= age <= 10 * 60:
                 return None
             return int(record.read(16))
     except (OSError, ValueError):
