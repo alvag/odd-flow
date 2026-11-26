@@ -74,16 +74,24 @@ need "$root/skills/odd-flow/references/odd-protocol.md" 'GREEN with the minimum 
 need "$root/skills/odd-flow/references/odd-protocol.md" 'A reported bug is reproduced before it is fixed or declared working'
 need "$root/skills/odd-flow/references/commit.md" 'every testable change it carries has observed local proof'
 
-need "$delegation" 'Spot check: re-run one command a worker reported before accepting its result: the command that proves the main acceptance criterion, or the RED-to-GREEN test when the writer worked test-first.'
+need "$delegation" 'Spot check: before accepting a worker result, re-run the reported command that proves the main acceptance criterion (the RED-to-GREEN test when the writer worked test-first).'
+need "$delegation" 'If the worker did not report that command, run it yourself from the spec'"'"'s `## Verification` and say in the close that the report left it out.'
+orca_dispatch="$root/skills/odd-flow/references/orca-dispatch.md"
+full_delegation="$root/skills/odd-flow/references/mode-full-delegation.md"
+[ "$(grep -cF -- 'spot-check the reported command that proves the main acceptance criterion (`delegation.md`, Correction bounds),' "$orca_dispatch")" = 2 ] || fail 'orca-dispatch.md: expected two targeted spot checks'
+need "$full_delegation" 're-run the reported command that proves the main acceptance criterion as a spot check'
+grep -qF -e 'one reported command' -e 're-run one command' "$delegation" "$orca_dispatch" "$full_delegation" && fail 'spot-check references must not ask for any reported command'
 for block in core-block.md core-block-full-delegation.md; do
     need "$root/skills/odd-flow/assets/$block" 'Close every request with the verified outcome, every failed, skipped or pending check, residual risks workers reported, and the next step. Never report a check as passed without observed output.'
 done
 need "$root/skills/odd-flow/references/odd-protocol.md" 'Report verified outcome, every failed, skipped or pending check, residual risks workers reported (the writer'"'"'s `risks:` and the verifier'"'"'s `advisories` and `unverified` items), and the next step.'
+need "$root/skills/odd-flow/references/odd-protocol.md" 'Items the writer judged missing count as residual risks, even when its `risks:` field also says `Risk: none`.'
 need "$root/skills/odd-flow/SKILL.md" 'Close every request with: verified outcome; every failed, skipped or pending check; residual risks workers reported; next step; `Risk: item N (reason)` or `Risk: none` for code changes; and the profile and roles used when workers ran.'
 
 parent_inputs=$(sed -n '/^## What the parent passes$/,/^## Correction bounds$/p' "$delegation")
 printf '%s\n' "$parent_inputs" | grep -qE '^- For .*verify.*Base commit.*Candidate commit.*git commit-tree' || fail 'B1: parent pins both verifier commits'
 
 need "$root/README.md" 'The hook accepts only a valid, unused token for that role.'
+need "$root/README.md" 'Re-runs the reported command that proves the main acceptance criterion (spot check; the RED-to-GREEN test when the writer worked test-first). If the report left it out, runs it from the spec'"'"'s `## Verification` and says so in the close. Also checks the changed files against the edit surface.'
 
 exit "$failed"

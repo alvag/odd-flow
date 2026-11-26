@@ -45,7 +45,7 @@ The Codex guard does not cover shell writes, including patches executed through 
 - Pass the user's request verbatim, or `Spec: odd/tasks/<feature>.md, T<n>, S<a>-S<b>`, as `delegation.md` (What the parent passes) says.
 - The writer runs the checks under `## Verification` and reports `<command>: <observed result>`, observing RED before it writes when a test applies.
 - For folders without Git, follow `orca-dispatch.md` (Project folders without Git) and `delegation.md` (Shadow snapshots).
-- After it returns: re-run one reported command as a spot check and check the surface as `delegation.md` says. Its Verification trigger still adds one independent `verify` when the Risk line names a high-risk item.
+- After it returns: re-run the reported command that proves the main acceptance criterion as a spot check and check the surface as `delegation.md` says. Its Verification trigger still adds one independent `verify` when the Risk line names a high-risk item.
 
 ## Without Orca
 
