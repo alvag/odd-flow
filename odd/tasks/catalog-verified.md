@@ -21,7 +21,7 @@ Profile: `claude-gpt` (full-delegation).
 
 | ID | Specs | Work | Route | Status | Evidence |
 |---|---|---|---|---|---|
-| T1 | S1-S10 | README.md, docs/compatibility.md, CHANGELOG.md wording and live-result row | orca:write (full delegation: every workspace write goes to a writer) | done | task `task_1f657a447daa`, dispatch `ctx_6fea3caf2eea`; parent spot check L2; commit in L3 |
+| T1 | S1-S10 | README.md, docs/compatibility.md, CHANGELOG.md wording and live-result row | orca:write (full delegation: every workspace write goes to a writer) | done | task `task_1f657a447daa`, dispatch `ctx_6fea3caf2eea`; parent spot check L2; commit `aff3aeb` |
 
 ## Log
 
@@ -47,3 +47,4 @@ Notes:
 - Commit messages may reference the issue ("Refs #8"). Do not push and do not touch the GitHub issue; I close it after the push.
 - No plugin, catalog or install actions of any kind."
 - L2 (parent, 2026-11-26): T1 writer reported `worker_done` (README.md, docs/compatibility.md, CHANGELOG.md; within surface). Parent spot check: `bash tests/run.sh` → "Summary: 25 passed, 0 failed" (exit 0); `bash tests/orca-catalog-check.sh` → exit 0, no output, no NOTE; `bash tests/orca-plugin-docs-check.sh` → exit 0; `git grep -n -i "not yet verified live" -- README.md docs/compatibility.md CHANGELOG.md` → no match. Self-review of the diff against S6 and S8 (no independent verify): every claim matches the evidence; release commit `6e12f88` matches `orca-catalog.json`; README keeps the anchor (S9), the migration step and the folder install.
+- L3 (parent, 2026-11-26): T1 committed as `aff3aeb` on `docs/catalog-verified`. Next: merge_ready to the supervisor bot; no push.
