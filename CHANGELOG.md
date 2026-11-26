@@ -22,6 +22,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 - Before accepting a worker result, the coordinator re-runs the reported command that proves the main acceptance criterion, or the RED-to-GREEN test when the writer worked test-first.
 - The close includes residual risks workers reported.
 - Writer reports are capped at about 2000 tokens and cite paths, commands, and observed result lines instead of including diffs, file dumps, or full command output. Long output stays in a listed scratch file.
+- `profile.py prune --days N` removes expired prompt-hook and mode-notice records from Claude Code, Codex, and Antigravity plugin data directories as well as expired session bindings. The default remains 30 days.
 - ODD Flow Orca plugin: The guide explains the odd-flow dependency and script lookup, shows how to clone from GitHub and install from the checkout, records why the direct folder URL fails in Orca 1.4.277, and keeps development loading in a separate section.
 - The Orca dispatch guide explains how dependent specs reference upstream results, how to relay Antigravity's workspace trust prompt to the user, and when to use `--body-file` for messages containing backticks.
 - The first-prompt hook accepts only a valid, unused token for the marker's role, issued no more than 15 minutes ago and no more than 60 seconds in the future. The hook removes the record on first use and leaves wrong-role or expired records for pruning.

@@ -12,10 +12,13 @@ beside `profiles` because a profile's keys are roles only.
 """
 
 import argparse
+from contextlib import contextmanager
 import difflib
 import json
 import os
+from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -33,6 +36,7 @@ WORKFLOW_FIELDS = ("orchestratorMode",)
 CLAUDE_MODELS = ("claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5")
 CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 ORCA_HANDLE_RE = re.compile(r"[A-Za-z0-9_:.-]{1,200}")
+RECORD_NAME_RE = re.compile(r"[0-9a-f]{64}")
 CODEX_LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-worker.sh")
 
 # First present variable wins. The agent column is the Orca agent id of the
@@ -116,14 +120,14 @@ def write_json_atomic(path, data):
         raise
 
 
-def remove_session_file(path):
-    """Remove a session binding file; False when it does not exist, ProfileError when it cannot be removed."""
+def remove_session_file(path, *, dir_fd=None, label="session binding"):
+    """Remove a state file; return False if missing, raise ProfileError on failure."""
     try:
-        os.unlink(path)
+        os.unlink(os.path.basename(path) if dir_fd is not None else path, dir_fd=dir_fd)
     except FileNotFoundError:
         return False
     except OSError as exc:
-        raise ProfileError(f"{path}: cannot remove session binding: {exc}") from exc
+        raise ProfileError(f"{path}: cannot remove {label}: {exc}") from exc
     return True
 
 
@@ -761,31 +765,138 @@ def cmd_set_mode(args):
         print(f"profile '{args.name}' mode: {args.mode}")
 
 
-def cmd_prune(args):
-    folder = os.path.join(home_dir(), "sessions")
+@contextmanager
+def _open_state_dir(base, *parts):
+    """Follow the configured base, but not symlinks inside odd-flow state."""
+    flags = os.O_RDONLY | os.O_DIRECTORY
     try:
-        entries = os.listdir(folder)
+        fd = os.open(base, flags)
     except FileNotFoundError:
-        print("no session bindings")
+        yield None
         return
-    except OSError as exc:
-        raise ProfileError(f"{folder}: cannot read session bindings: {exc}") from exc
-    cutoff = time.time() - args.days * 86400
-    removed = 0
-    for entry in entries:
-        path = os.path.join(folder, entry)
-        if not entry.endswith(".json"):
-            continue
+    try:
+        for part in parts:
+            try:
+                child = None if stat.S_ISLNK(os.lstat(part, dir_fd=fd).st_mode) else os.open(
+                    part, flags | os.O_NOFOLLOW, dir_fd=fd
+                )
+            except FileNotFoundError:
+                child = None
+            if child is None:
+                yield None
+                return
+            os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def discover_plugin_data_dirs():
+    """Yield real odd-flow plugin data directories from installed runtime layouts."""
+    home = Path.home()
+    claude_config = os.environ.get("CLAUDE_CONFIG_DIR")
+    codex_config = Path(os.environ.get("CODEX_HOME") or home / ".codex")
+    roots = [home / ".claude", codex_config]
+    if claude_config:
+        roots.insert(0, Path(claude_config))
+    roots = [(root / "plugins/data", False) for root in roots]
+    roots.append((home / ".gemini/antigravity-cli/plugin_data", True))
+    found = set()
+    for root, antigravity in roots:
+        root = root.absolute()
         try:
-            if not os.path.isfile(path) or os.path.getmtime(path) >= cutoff:
-                continue
+            with _open_state_dir(root) as fd:
+                if fd is None:
+                    continue
+                for entry in os.listdir(fd):
+                    if not (entry == "odd-flow" if antigravity else entry.startswith("odd-flow-")):
+                        continue
+                    try:
+                        info = os.lstat(entry, dir_fd=fd)
+                    except FileNotFoundError:
+                        continue
+                    identity = info.st_dev, info.st_ino
+                    if stat.S_ISDIR(info.st_mode) and identity not in found:
+                        found.add(identity)
+                        yield root / entry
+        except NotADirectoryError:
+            continue
+        except OSError as exc:
+            raise ProfileError(f"{root}: cannot discover plugin data: {exc}") from exc
+
+
+def _state_folders(data_dirs):
+    yield "session_bindings", Path(home_dir()), ("sessions",), "session binding"
+    for data_dir in data_dirs:
+        data_dir = Path(data_dir)
+        yield "prompt_sessions", data_dir.parent, (data_dir.name, "prompt-sessions"), "prompt-hook record"
+        yield "session_modes", data_dir.parent, (data_dir.name, "session-modes"), "mode-notice record"
+
+
+def _list_state_files(fd, folder, label, cutoff):
+    try:
+        entries = os.listdir(fd)
+    except OSError as exc:
+        raise ProfileError(f"{folder}: cannot read {label}s: {exc}") from exc
+    for entry in entries:
+        if not (entry.endswith(".json") if label == "session binding" else RECORD_NAME_RE.fullmatch(entry)):
+            continue
+        path = folder / entry
+        try:
+            info = os.lstat(entry, dir_fd=fd)
         except FileNotFoundError:
             continue
         except OSError as exc:
-            raise ProfileError(f"{path}: cannot inspect session binding: {exc}") from exc
-        if remove_session_file(path):
-            removed += 1
-    print(f"removed {removed} session binding(s) older than {args.days} days")
+            raise ProfileError(f"{path}: cannot inspect {label}: {exc}") from exc
+        if stat.S_ISREG(info.st_mode) and (cutoff is None or info.st_mtime < cutoff):
+            yield path
+
+
+def _scan_session_state(data_dirs, cutoff, *, remove):
+    result = {key: [] for key in ("session_bindings", "prompt_sessions", "session_modes")}
+    bindings_found = False
+    for key, base, parts, label in _state_folders(data_dirs):
+        folder = base.joinpath(*parts)
+        try:
+            with _open_state_dir(base, *parts) as fd:
+                if fd is None:
+                    continue
+                if key == "session_bindings":
+                    bindings_found = True
+                for path in _list_state_files(fd, folder, label, cutoff):
+                    if not remove or remove_session_file(path, dir_fd=fd, label=label):
+                        result[key].append(path)
+        except OSError as exc:
+            raise ProfileError(f"{folder}: cannot read {label}s: {exc}") from exc
+    return result, bindings_found
+
+
+def list_session_state(data_dirs, *, cutoff=None):
+    """List regular state files per category without removing them; cutoff is an mtime."""
+    return _scan_session_state(data_dirs, cutoff, remove=False)[0]
+
+
+def prune_session_state(data_dirs, cutoff):
+    """Remove state older than cutoff; return removed counts (None for missing bindings)."""
+    removed, bindings_found = _scan_session_state(data_dirs, cutoff, remove=True)
+    counts = {key: len(paths) for key, paths in removed.items()}
+    if not bindings_found:
+        counts["session_bindings"] = None
+    return counts
+
+
+def cmd_prune(args):
+    cutoff = time.time() - args.days * 86400
+    counts = prune_session_state(discover_plugin_data_dirs(), cutoff)
+    suffix = f"older than {args.days} days"
+    bindings = counts["session_bindings"]
+    if bindings is None:
+        print("no session bindings")
+    else:
+        print(f"removed {bindings} session binding(s) {suffix}")
+    print(f"removed {counts['prompt_sessions']} prompt-hook record(s) {suffix}")
+    print(f"removed {counts['session_modes']} mode-notice record(s) {suffix}")
 
 
 def main(argv=None):
@@ -830,7 +941,7 @@ def main(argv=None):
     session_mode = sub.add_parser("session-mode", help="set the orchestrator mode for this session only")
     session_mode.add_argument("mode", choices=MODES)
     session_mode.set_defaults(func=cmd_session_mode)
-    prune = sub.add_parser("prune", help="remove old session bindings")
+    prune = sub.add_parser("prune", help="remove old session bindings and hook records")
     prune.add_argument("--days", type=int, default=30)
     prune.set_defaults(func=cmd_prune)
     args = parser.parse_args(argv)
