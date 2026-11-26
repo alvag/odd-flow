@@ -358,6 +358,8 @@ expect_late "split-right timeout matches the late pane in the right column" term
 layout "$(split vertical "$(split vertical "$p" "$(leaf term_foreign)")" "$(leaf term_late_right)")"
 expect_late "split recovery reports multiple matches instead of selecting a foreign sibling" \
   'Multiple matches: term_foreign, term_late_right'
+layout "$(split vertical "$(split vertical "$p" "$r3")" "$(leaf term_foreign)")"
+expect_late "split recovery excludes an earlier placement to find the foreign sibling" term_foreign term_r3
 
 layout "$(split vertical "$p" "$r1")"
 out=$(hang=split orca_timeout=1 open_pane --role verify --cols 160); ec=$?
