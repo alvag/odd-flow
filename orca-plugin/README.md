@@ -17,18 +17,41 @@ First install odd-flow 0.3.0 or newer for
 [Antigravity](../README.md#install-antigravity). The Orca plugin cannot
 work without it. Use Orca 1.4.259 or newer and make `python3` available to Orca.
 
-From this repository's root on the Orca host, run:
+To install from GitHub, clone the repository on the Orca host and enter it:
+
+```sh
+git clone https://github.com/alvag/odd-flow.git
+cd odd-flow
+```
+
+From the root of that clone or an existing checkout, run:
 
 ```sh
 orca plugin install ./orca-plugin --json
 ```
 
 Review the access Orca reports. Only if you trust the plugin code and the
-Python script it will run, repeat the command with the fingerprint Orca returned:
+Python script it will run, repeat the command below, replacing
+`<fingerprint>` with the fingerprint Orca returned:
 
 ```sh
 orca plugin install ./orca-plugin --json --approve <fingerprint>
 ```
+
+A regular folder install uses the plugin key `local.odd-flow-profiles`.
+On 2026-11-26, `orca plugin list --json` showed that key with `isDev` set to
+`false` and source kind `local-path`.
+
+Installing directly from a GitHub URL to the `orca-plugin/` folder
+does not work in Orca 1.4.277. The observed command was:
+
+```sh
+orca plugin install https://github.com/alvag/odd-flow/tree/main/orca-plugin --json
+```
+
+It exited with code 1 and error code `plugin_not_found`:
+
+> https://github.com/alvag/odd-flow has no tag or branch named main/orca-plugin.
 
 The manifest requests `agent:read` for agent status events and
 `workspace:read` to list agents in the focused workspace and receive

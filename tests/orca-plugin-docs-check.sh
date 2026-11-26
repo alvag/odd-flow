@@ -36,6 +36,7 @@ require_text "$readme" 'An agent launched with `ODD_PROFILE` or `ODD_ORCHESTRATO
 require_text "$readme" 'those values after a reset, even though the panel shows the file default.'
 require_text "$readme" 'The ODD Flow Orca plugin requires odd-flow and does not work on its own.'
 require_text "$readme" 'orca plugin install ./orca-plugin --json --approve <fingerprint>'
+require_text "$readme" 'does not work in Orca 1.4.277.'
 require_text "$readme" "Orca may ask for approval again when the plugin's code changes."
 require_text "$readme" 'the default `onError`, `"pass"`'
 require_text "$readme" 'The tokened marker requires odd-flow 0.4.0 or newer hooks.'
