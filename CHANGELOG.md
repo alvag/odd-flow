@@ -6,6 +6,12 @@ This file tracks notable changes to odd-flow. It follows
 
 ## [Unreleased]
 
+### Added
+
+- Run `bash tests/orca-plugin-typecheck.sh` to typecheck the ODD Flow Orca plugin with TypeScript 7.0.2 and `@types/node` 26.6.10 installed in a temporary prefix. The prompt-hook test imports `test` from `node:test` so it typechecks cleanly. The check skips if `orca`, `npx`, or `npm` is missing and is not part of `tests/run.sh`.
+- Test coverage confirms that the first-prompt hook rejects a `worker-tokens` directory owned by another user.
+- A docs check keeps the README explicit that the first-prompt hook accepts only a valid, unused token for the marker's role.
+
 ### Changed
 
 - The first-prompt hook accepts only a valid, unused token for the marker's role, issued no more than 15 minutes ago and no more than 60 seconds in the future. The hook removes the record on first use and leaves wrong-role or expired records for pruning.
@@ -18,6 +24,7 @@ This file tracks notable changes to odd-flow. It follows
 - Orca terminal calls during worker placement time out after 30 seconds so a hung call does not hold the pane lock indefinitely.
 - Orca worker placement ignores saved terminal widths with timestamps in the future.
 - The Orca terminal dispatch guide explains how to create and reuse an orchestration Run before creating Tasks.
+- The Codex plugin check (`tests/codex-plugin-check.sh`) passes when the checkout is reached through a symlinked path, such as a temporary worktree under `/var` on macOS.
 
 ## [0.4.0] - 2026-11-25
 
