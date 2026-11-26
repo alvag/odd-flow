@@ -270,6 +270,25 @@ for session, pair, state_dir, mode in (
         print(f"FAIL S12 {session}: decision={decision}, record exists={record.is_file()}")
 tokens.chmod(0o700)
 
+session = "foreign-owned-worker-tokens"
+token = "0e" * 16
+record = issue(token)
+result = subprocess.run(
+    [sys.executable, "-I", "-c", "import os, runpy, sys; from unittest.mock import patch\n"
+     "with patch.object(os, 'getuid', return_value=os.getuid() + 1):\n"
+     "    runpy.run_path(sys.argv[1], run_name='__main__')", str(root / "scripts/prompt-submit.py")],
+    cwd=scratch, env=env, capture_output=True, text=True, timeout=12,
+    input=json.dumps({"session_id": session, "prompt": f"odd-flow-worker: write {token}"}),
+)
+check(f"S12 {session} prompt stays silent", result)
+check(f"S12 {session} guard decision", edit("code", session=session, **full), "deny")
+decision = session_decision(session)
+if decision == "parent" and record.is_file():
+    print(f"PASS S12 {session} records parent and keeps the token record")
+else:
+    failed += 1
+    print(f"FAIL S12 {session}: decision={decision}, record exists={record.is_file()}")
+
 check("S4 absent plugin data preserves prompt output",
       prompt("no-data", "# Role: write", CLAUDE_PLUGIN_DATA=None))
 check("S4 absent plugin data does not mark",

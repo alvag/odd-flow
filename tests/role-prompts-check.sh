@@ -75,4 +75,6 @@ need "$root/skills/odd-flow/references/commit.md" 'every testable change it carr
 parent_inputs=$(sed -n '/^## What the parent passes$/,/^## Correction bounds$/p' "$delegation")
 printf '%s\n' "$parent_inputs" | grep -qE '^- For .*verify.*Base commit.*Candidate commit.*git commit-tree' || fail 'B1: parent pins both verifier commits'
 
+need "$root/README.md" 'The hook accepts only a valid, unused token for that role.'
+
 exit "$failed"

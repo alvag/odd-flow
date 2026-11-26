@@ -65,7 +65,7 @@ class CodexPluginCheck(unittest.TestCase):
         entry, = market["plugins"]
         self.assertEqual(entry["name"], manifest["name"])
         self.assertEqual(entry["source"]["source"], "local")
-        self.assertEqual((root / entry["source"]["path"]).resolve(), root)
+        self.assertEqual((root / entry["source"]["path"]).resolve(), root.resolve())
 
     def test_only_codex_hook_events_and_commands(self):
         config = json.loads((root / "hooks/codex-hooks.json").read_text())["hooks"]
