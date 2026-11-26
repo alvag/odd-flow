@@ -2,6 +2,29 @@
 
 Claude Code and Codex plugin for Organic Driven Development (ODD): Engram memory discipline and Orca role workers with per-role agent, model and effort profiles. Each profile runs the orchestrator in one of two peer modes: `organic` (inline by default, delegation for a named reason) or `full-delegation` (bounded writers make workspace changes, in Git or not, except for the [parent's closed write list](skills/odd-flow/references/mode-full-delegation.md#who-writes)). In both modes, the parent writes a user-named file outside the workspace only after the user confirms the exact diff. Outside an Orca terminal, delegated roles run as subagents; in organic mode, inline when no subagent can run.
 
+## Organic and full delegation compared
+
+Compare what the coordinator does in each mode.
+
+| Moment | Organic: the coordinator... | Full delegation: the coordinator... |
+|---|---|---|
+| Authorize and understand | Keeps investigation, review and planning requests read-only until a change is asked; reads in one batch of up to 3 calls (~10k tokens), and beyond that, or past ~5 sequential lookups, launches `explore`. | Same; also leaves reading that prepares a writer to that writer's spec. |
+| Classify (small or large) | Small: works inline, no feature document. Large: creates the feature document before the first write or writer launch. | Size decides tracking and risk only: a small task still goes to a writer (no feature document); a large task gets the document before the first writer. |
+| Write code | Writes it itself by default. | Never; every change goes to a bounded writer with allowed edit surfaces, or the blocker is reported. |
+| When a writer launches | Only on a trigger: 2+ independent units with disjoint edit surfaces, each several minutes of work (several files or ~100+ changed lines), launched together; or `context.py` reports that the context reached its threshold (the lower of 150k tokens and 15% of the window). Never for size, file count, a large task alone or price. | Always: one writer per unit of behavior, never while a unit it depends on still runs; independent units with disjoint surfaces together, units sharing a file one at a time. |
+| What it may write | Any workspace file; outside the workspace only after the user names the file and confirms the exact diff. | Only scratch outside the workspace, `odd/tasks/*.md`, Engram, Git operations, and files written by `profile.py` or `init.py` after the user confirms; outside the workspace, the same named-file rule. In Claude Code, Codex and Antigravity, the parent edit guard denies its other direct workspace edits (not shell writes). |
+| A writer returns | Re-runs one reported command (spot check) and checks the changed files against the edit surface. | Same. |
+| The user names another agent | Launches the role that matches the request ("have Codex check this"). | Same. |
+| Independent verification (`verify`) | When the change's Risk line names a high-risk item. | Same. |
+| Review (`review`, `refute`) | When the user asks (ordinary or dual), or verification passed on a high-risk change. | Same. |
+| Review corrections | Inline or with one writer. | Always one writer, with the corrected findings as its spec and the candidate's paths as its surface. |
+| A worker exhausts its bound | Names the cause; fixes inline when small and understood, otherwise relaunches once with the diagnosis and a new hypothesis. A repeated cause blocks the unit. | Launches one new writer with the diagnosis, the new evidence and a changed hypothesis or scope; never edits. A repeated cause blocks the unit. |
+| Without Orca | Subagents; with no subagent, runs each role inline, one unit at a time. | Subagents; with no subagent, reports the blocker for each pending writer unit and stops it. |
+| Verify or review with no worker possible | Runs it itself and says in the close it was not independent. | Same (they only read). |
+| Commits, tracking, close | Commits large-task units (a small task only when asked), keeps the feature document and its Engram mirror, closes with outcome, failed or pending checks and next step. Routes: `inline`, `orca:<role>`, `subagent:<role>`. | Same; routes: `orca:<role>`, `subagent:<role>`, `blocked`. |
+
+The modes differ only in who writes and what follows from it; exploring, verifying, reviewing, the spot check and the close follow the same rules.
+
 ## Contents
 
 | Path | Purpose |

@@ -15,6 +15,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 - Run `bash tests/orca-plugin-typecheck.sh` to typecheck the ODD Flow Orca plugin with TypeScript 7.0.2 and `@types/node` 26.6.10 installed in a temporary prefix with `--ignore-scripts`. The prompt-hook test imports `test` from `node:test` so it typechecks cleanly. The check skips if `orca`, `npm`, or `node` is missing and is not part of `tests/run.sh`.
 - Test coverage confirms that the first-prompt hook rejects a `worker-tokens` directory owned by another user.
 - A docs check keeps the README explicit that the first-prompt hook accepts only a valid, unused token for the marker's role.
+- The README compares organic and full delegation side by side. Four mode-check pins tie key rows to their source rules.
 
 ### Changed
 

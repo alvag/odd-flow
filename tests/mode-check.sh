@@ -140,5 +140,41 @@ expect "default keeps the workflow map" '"B": { "orchestratorMode": "full-delega
 ARGS="show"; out=$(run CLAUDE_CODE_SESSION_ID=s5); ec=$?
 expect "the new default's mode applies" "mode: full-delegation (profile B)" "$out" 0 $ec
 
+readme="${P%/skills/odd-flow/scripts/profile.py}/README.md"
+organic="${P%/scripts/profile.py}/references/mode-organic.md"
+full_delegation="${P%/scripts/profile.py}/references/mode-full-delegation.md"
+
+if grep -qF -- '| Write code | Writes it itself by default. | Never; every change goes to a bounded writer' "$readme" &&
+   grep -qF -- 'Work inline by default.' "$organic" &&
+   grep -qF -- 'never edit a file yourself' "$full_delegation"; then
+  pass=$((pass+1)); echo "PASS mode comparison: write code"
+else
+  fail=$((fail+1)); echo "FAIL mode comparison: write code"
+fi
+
+if grep -qF -- 'the lower of 150k tokens and 15% of the window' "$readme" &&
+   grep -qF -- 'min(150000, max(1, floor(0.15 × window)))' "$organic"; then
+  pass=$((pass+1)); echo "PASS mode comparison: writer context threshold"
+else
+  fail=$((fail+1)); echo "FAIL mode comparison: writer context threshold"
+fi
+
+if grep -qF -- "| Review corrections | Inline or with one writer. | Always one writer, with the corrected findings as its spec and the candidate's paths as its surface. |" "$readme" &&
+   grep -qF -- 'Write it inline or with one `write` worker.' "$organic" &&
+   grep -qF -- "with the corrected findings as its spec and the candidate's paths as its surface" "$full_delegation"; then
+  pass=$((pass+1)); echo "PASS mode comparison: review corrections"
+else
+  fail=$((fail+1)); echo "FAIL mode comparison: review corrections"
+fi
+
+if grep -qF -- 'runs each role inline, one unit at a time' "$readme" &&
+   grep -qF -- 'reports the blocker for each pending writer unit and stops it' "$readme" &&
+   grep -qF -- 'the parent runs the role itself, one unit at a time' "$organic" &&
+   grep -qF -- 'report the blocker for each pending unit and stop it' "$full_delegation"; then
+  pass=$((pass+1)); echo "PASS mode comparison: without Orca"
+else
+  fail=$((fail+1)); echo "FAIL mode comparison: without Orca"
+fi
+
 echo "passed=$pass failed=$fail scratch=$T"
 [ "$fail" -eq 0 ]
