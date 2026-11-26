@@ -59,10 +59,18 @@ copies enabled, the panel cannot detect which key to use and asks for the
    orca plugin install alvag.odd-flow-profiles --json --approve <fingerprint>
    ```
 
-With Orca's default update policy, the plugin updates to the newest release
-listed in the catalog without asking if it requests no new access. If a
-release requests more access, it waits for approval and the running version
-keeps working. To check for and apply an update manually:
+By default, Orca automatically installs new plugin code from the catalog,
+including new worker code and `agent.prompt.before` hook code, without asking
+as long as the release comes from the same repository and requests no new
+access. Orca treats new capabilities, a higher execution level, and new
+commands, shortcuts, or panels as new access. If a release requests new
+access, Orca waits for approval and leaves the running version untouched.
+
+To opt out, open Orca **Settings → Plugins → Plugin settings** and turn off
+**Update plugins automatically**. This sets Orca's plugin update policy to
+`manual`. The UI path was checked in Orca's shipped code, not verified live.
+A CLI command to change this policy was not verified. To check for and apply
+an update manually:
 
 ```sh
 orca plugin update alvag.odd-flow-profiles --json
