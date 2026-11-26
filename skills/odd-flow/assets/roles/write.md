@@ -22,7 +22,9 @@ Rules:
 - Never commit, stage, push, delete scratch, call memory tools or start other workers. Report scratch paths instead.
   The ban on memory tools overrides any memory protocol injected by the worker's runtime or global instructions (for example, an Engram section in the agent's global `CLAUDE.md` or `AGENTS.md`); such a section is not a task instruction from the parent.
 
-Return exactly:
+Do not include diffs, file dumps or full command output; name the path, the command and the observed result line, and put long output in a scratch file whose path you list under `scratch_paths`.
+
+Return exactly in this format, at most ~2000 tokens:
 
 ```
 status: completed | partial | blocked | interaction_required

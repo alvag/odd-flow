@@ -13,7 +13,7 @@ Compare what the coordinator does in each mode.
 | Write code | Writes it itself by default. | Never; every change goes to a bounded writer with allowed edit surfaces, or the blocker is reported. |
 | When a writer launches | Only on a trigger: 2+ independent units with disjoint edit surfaces, each several minutes of work (several files or ~100+ changed lines), launched together; or `context.py` reports that the context reached its threshold (the lower of 150k tokens and 15% of the window). Never for size, file count, a large task alone or price. | Always: one writer per unit of behavior, never while a unit it depends on still runs; independent units with disjoint surfaces together, units sharing a file one at a time. |
 | What it may write | Any workspace file; outside the workspace only after the user names the file and confirms the exact diff. | Only scratch outside the workspace, `odd/tasks/*.md`, Engram, Git operations, and files written by `profile.py` or `init.py` after the user confirms; outside the workspace, the same named-file rule. In Claude Code, Codex and Antigravity, the parent edit guard denies its other direct workspace edits (not shell writes). |
-| A writer returns | Re-runs one reported command (spot check) and checks the changed files against the edit surface. | Same. |
+| A writer returns | Re-runs one reported command (spot check): the command that proves the main acceptance criterion, or the RED-to-GREEN test when the writer worked test-first. Also checks the changed files against the edit surface. | Same. |
 | The user names another agent | Launches the role that matches the request ("have Codex check this"). | Same. |
 | Independent verification (`verify`) | When the change's Risk line names a high-risk item. | Same. |
 | Review (`review`, `refute`) | When the user asks (ordinary or dual), or verification passed on a high-risk change. | Same. |
@@ -21,7 +21,7 @@ Compare what the coordinator does in each mode.
 | A worker exhausts its bound | Names the cause; fixes inline when small and understood, otherwise relaunches once with the diagnosis and a new hypothesis. A repeated cause blocks the unit. | Launches one new writer with the diagnosis, the new evidence and a changed hypothesis or scope; never edits. A repeated cause blocks the unit. |
 | Without Orca | Subagents; with no subagent, runs each role inline, one unit at a time. | Subagents; with no subagent, reports the blocker for each pending writer unit and stops it. |
 | Verify or review with no worker possible | Runs it itself and says in the close it was not independent. | Same (they only read). |
-| Commits, tracking, close | Commits large-task units (a small task only when asked), keeps the feature document and its Engram mirror, closes with outcome, failed or pending checks and next step. Routes: `inline`, `orca:<role>`, `subagent:<role>`. | Same; routes: `orca:<role>`, `subagent:<role>`, `blocked`. |
+| Commits, tracking, close | Commits large-task units (a small task only when asked), keeps the feature document and its Engram mirror, closes with outcome, failed or pending checks, residual risks workers reported, and next step. Routes: `inline`, `orca:<role>`, `subagent:<role>`. | Same; routes: `orca:<role>`, `subagent:<role>`, `blocked`. |
 
 The modes differ only in who writes and what follows from it; exploring, verifying, reviewing, the spot check and the close follow the same rules.
 

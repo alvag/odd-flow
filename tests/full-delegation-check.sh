@@ -20,7 +20,7 @@ hook() { # script, payload, env...
 ctx() { python3 -I -c 'import json,sys; d=sys.stdin.read(); print(json.loads(d)["hookSpecificOutput"]["additionalContext"] if d.strip() else "")'; }
 
 # --- organic keeps its expected core block and routing ---
-[[ "$(shasum -a 256 "$S/assets/core-block.md" | cut -d' ' -f1)" == "87dc54741214da85ba82cefe1179473ce833eb2f47b833c46ab66fd7bbbe9934" ]] \
+[[ "$(shasum -a 256 "$S/assets/core-block.md" | cut -d' ' -f1)" == "d7a080f49575286a009f1a217791e9781cabd4f5b9b2bbe14203fa1fcc60df6e" ]] \
   && ok "organic core block matches expected bytes" || ko "organic core block matches expected bytes"
 
 out=$(hook session-start.py '{"source":"startup","session_id":"s1"}' ODD_PROFILE=B | ctx)
