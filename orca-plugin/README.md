@@ -17,7 +17,7 @@ First install odd-flow 0.3.0 or newer for
 [Antigravity](../README.md#install-antigravity). The Orca plugin cannot
 work without it. Use Orca 1.4.259 or newer and make `python3` available to Orca.
 
-### Install from the GitHub catalog (not yet verified live)
+### Install from the GitHub catalog
 
 No clone is needed. If you already installed from a folder, uninstall that
 copy before installing from the catalog:
@@ -58,6 +58,15 @@ copies enabled, the panel cannot detect which key to use and asks for the
    ```sh
    orca plugin install alvag.odd-flow-profiles --json --approve <fingerprint>
    ```
+
+The catalog install was verified live on Orca 1.4.278 with plugin 0.2.0.
+After approval, Orca added the catalog and installed the release using the
+catalog's content hash. The plugin ran with no restarts or log errors, and
+the panel showed the session, profile, and mode. A manual update check
+reported that the plugin was up to date. The tester then uninstalled the
+plugin, removed the catalog, and returned to the folder install.
+The live check did not exercise an auto-update to a newer release or the
+Settings toggle for manual updates.
 
 By default, Orca automatically installs new plugin code from the catalog,
 including new worker code and `agent.prompt.before` hook code, without asking
