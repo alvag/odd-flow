@@ -49,23 +49,184 @@ def record_session_mode(marker, mode):
         marker.write_text(mode, encoding="ascii")
 
 
+def evaluate_windows_dacl_sddl(sddl, user_sid):
+    if not isinstance(sddl, str) or not isinstance(user_sid, str) or not user_sid:
+        return False
+    d_index = sddl.find("D:")
+    s_index = sddl.find("S:")
+    if d_index == -1 or (s_index != -1 and s_index < d_index):
+        return False
+
+    after_d = sddl[d_index + 2:]
+    if after_d == "NO_ACCESS_CONTROL" or after_d.startswith("NO_ACCESS_CONTROL" + "S:"):
+        return False
+
+    flags_match = re.match(r"^([A-Za-z]*)", after_d)
+    flags = flags_match.group(1) if flags_match else ""
+    if not re.fullmatch(r"(?:P|AI|AR)*", flags, re.IGNORECASE):
+        return False
+
+    allowed_sids = {"SY", "S-1-5-18", "BA", "S-1-5-32-544", user_sid.upper()}
+    pos = len(flags)
+    while pos < len(after_d):
+        if after_d.startswith("S:", pos):
+            break
+        if after_d[pos] != "(":
+            return False
+
+        depth = 0
+        end = pos
+        while end < len(after_d):
+            if after_d[end] == "(":
+                depth += 1
+            elif after_d[end] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            end += 1
+        if depth != 0 or end >= len(after_d):
+            return False
+
+        parts = after_d[pos + 1:end].split(";")
+        pos = end + 1
+        if len(parts) < 6:
+            return False
+
+        ace_type = parts[0].upper()
+        if ace_type == "D":
+            if len(parts) != 6:
+                return False
+            continue
+        if ace_type != "A":
+            return False
+        if len(parts) != 6 or not parts[5]:
+            return False
+        if parts[5].upper() not in allowed_sids:
+            return False
+
+    return True
+
+
+def windows_owner_matches(sddl, user_sid):
+    if not isinstance(sddl, str) or not isinstance(user_sid, str) or not user_sid:
+        return False
+    match = re.match(r"O:([^:]+?)(?=[GDS]:|$)", sddl)
+    return match is not None and match.group(1).upper() == user_sid.upper()
+
+
+def _windows_token_dir_trusted(tokens_dir):
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        kernel32.GetCurrentProcess.argtypes = []
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        kernel32.LocalFree.restype = ctypes.c_void_p
+
+        advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+        ]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        advapi32.GetNamedSecurityInfoW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        advapi32.GetNamedSecurityInfoW.restype = wintypes.DWORD
+        advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.argtypes = [
+            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
+            ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.ULONG),
+        ]
+        advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW.restype = wintypes.BOOL
+
+        class _SidAndAttributes(ctypes.Structure):
+            _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wintypes.DWORD)]
+
+        class _TokenUser(ctypes.Structure):
+            _fields_ = [("User", _SidAndAttributes)]
+
+        token_handle = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token_handle)):
+            return False
+        try:
+            size = wintypes.DWORD()
+            advapi32.GetTokenInformation(token_handle, 1, None, 0, ctypes.byref(size))
+            if not size.value:
+                return False
+            buf = (ctypes.c_ubyte * size.value)()
+            if not advapi32.GetTokenInformation(token_handle, 1, buf, size.value, ctypes.byref(size)):
+                return False
+            token_user = ctypes.cast(buf, ctypes.POINTER(_TokenUser)).contents
+            sid_ptr = ctypes.c_void_p()
+            if not advapi32.ConvertSidToStringSidW(token_user.User.Sid, ctypes.byref(sid_ptr)):
+                return False
+            try:
+                user_sid = ctypes.wstring_at(sid_ptr.value)
+            finally:
+                kernel32.LocalFree(sid_ptr)
+        finally:
+            kernel32.CloseHandle(token_handle)
+
+        sd_ptr = ctypes.c_void_p()
+        sec_info = 0x00000001 | 0x00000004
+        if advapi32.GetNamedSecurityInfoW(
+            str(tokens_dir), 1, sec_info, None, None, None, None, ctypes.byref(sd_ptr),
+        ) != 0:
+            return False
+        try:
+            sddl_ptr = ctypes.c_void_p()
+            if not advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                sd_ptr, 1, sec_info, ctypes.byref(sddl_ptr), None,
+            ):
+                return False
+            try:
+                sddl = ctypes.wstring_at(sddl_ptr.value)
+            finally:
+                kernel32.LocalFree(sddl_ptr)
+        finally:
+            kernel32.LocalFree(sd_ptr)
+
+        return windows_owner_matches(sddl, user_sid) and evaluate_windows_dacl_sddl(sddl, user_sid)
+    except Exception:
+        return False
+
+
 def consume_worker_token(line):
     match = WORKER_MARKER.fullmatch(line)
     if match is None:
         return False
     role, token = match.groups()
     try:
-        getuid = getattr(os, "getuid", None)
-        if getuid is None:
-            return False
         state_dir = os.environ.get("ODD_FLOW_STATE_DIR")
         if state_dir and not Path(state_dir).is_absolute():
             return False
         tokens_dir = Path(state_dir or Path.home() / ".odd-flow") / "worker-tokens"
-        directory = tokens_dir.lstat()
-        if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != getuid()
-                or stat.S_IMODE(directory.st_mode) != 0o700):
-            return False
+        if os.name == "nt":
+            directory = tokens_dir.lstat()
+            reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+            if (not stat.S_ISDIR(directory.st_mode)
+                    or (getattr(directory, "st_file_attributes", 0) & reparse_point)
+                    or not _windows_token_dir_trusted(tokens_dir)):
+                return False
+        else:
+            getuid = getattr(os, "getuid", None)
+            if getuid is None:
+                return False
+            directory = tokens_dir.lstat()
+            if (not stat.S_ISDIR(directory.st_mode) or directory.st_uid != getuid()
+                    or stat.S_IMODE(directory.st_mode) != 0o700):
+                return False
         key = hashlib.sha256(token.encode("ascii")).hexdigest()
         record = tokens_dir / key
         if not stat.S_ISREG(record.lstat().st_mode):
