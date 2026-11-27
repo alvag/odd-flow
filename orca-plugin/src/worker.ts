@@ -90,7 +90,7 @@ const exec: ExecutableRunner = (executable, argv, env, signal, timeout = TIMEOUT
   }, (error, stdout, stderr) => {
     if (error?.killed && error.signal === 'SIGKILL' && error.code == null && !signal?.aborted) {
       const program = executable === 'python3' ? 'Python' : executable === 'git' ? 'Git' : 'Orca CLI'
-      reject(new Error(`${program} timed out after ${TIMEOUT_MS / 1000} seconds.`))
+      reject(new Error(`${program} timed out after ${timeout / 1000} seconds.`))
     } else if (error) reject(Object.assign(error, { stdout, stderr }))
     else resolve({ stdout, stderr })
   })
