@@ -25,6 +25,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Changed
 
+- Catalog installs now get ODD Flow Orca plugin 0.2.1, which includes the Windows APPDATA fix listed under **Fixed** below.
 - Orca worker placement falls back to a tab when the split and its single retry both report the same pending timeout, and reports the orphan leaf so the coordinator can close it.
 - Before accepting a worker result, the coordinator re-runs the reported command that proves the main acceptance criterion, or the RED-to-GREEN test when the writer worked test-first.
 - When a worker did not report the command that proves the main acceptance criterion, the coordinator runs it from the spec's `## Verification` section and says in the close that the report left it out. The Orca dispatch and full delegation references and the README now name that command instead of any reported command.

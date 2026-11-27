@@ -14,6 +14,54 @@
       "description": "View and switch the odd-flow profile and mode for agent sessions in the focused workspace.",
       "releases": [
         {
+          "version": "0.2.1",
+          "commit": "1aa0ae6a166b1510ffbba9c225e488d9ba45a21c",
+          "contentHash": "fcd42b47445736fbed61911eb0878885c596214e641c9b0e7f07919e27687929",
+          "execution": "trusted-worker",
+          "minimumOrca": "1.4.259",
+          "name": "ODD Flow",
+          "contributes": [
+            {
+              "kind": "panels",
+              "name": "ODD Flow"
+            },
+            {
+              "kind": "commands",
+              "name": "ODD Flow: Open panel"
+            },
+            {
+              "kind": "commands",
+              "name": "ODD Flow: Toggle mode"
+            },
+            {
+              "kind": "events",
+              "name": "agent.status.changed"
+            },
+            {
+              "kind": "events",
+              "name": "workspace.changed"
+            },
+            {
+              "kind": "hooks",
+              "name": "agent.prompt.before"
+            },
+            {
+              "kind": "keybindings",
+              "name": "Mod+Alt+Shift+O",
+              "detail": "odd-flow.openProfiles"
+            },
+            {
+              "kind": "statusBarItems",
+              "name": "odd"
+            }
+          ],
+          "capabilities": [
+            "agent:read",
+            "workspace:read",
+            "settings:own"
+          ]
+        },
+        {
           "version": "0.2.0",
           "commit": "6e12f883251d4d6809e90965a2cbb8bd15d63b24",
           "contentHash": "0f9e7a3e490f54a08b172f92790b3864a6d314c99bb5de87c821ca22140f5137",
