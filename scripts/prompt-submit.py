@@ -134,7 +134,7 @@ def mode_state(session_id):
         env["CLAUDE_CODE_SESSION_ID"] = session_id
     done = subprocess.run(
         [sys.executable, "-I", PROFILE_SCRIPT, "mode", "--json"],
-        env=env, capture_output=True, text=True, timeout=5, check=False,
+        env=env, capture_output=True, text=True, encoding="utf-8", timeout=5, check=False,
     )
     if done.returncode != 0:
         return {}
@@ -192,7 +192,7 @@ def antigravity_main():
     """Mark the session and inject prompt context only on the first invocation of a turn."""
     steps = []
     try:
-        payload = json.loads(sys.stdin.read())
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         if isinstance(payload, dict):
             conversation = payload.get("conversationId")
             mark_first_prompt(conversation, payload.get("lastUserInput"))
@@ -212,7 +212,7 @@ def main():
     if ANTIGRAVITY:
         return antigravity_main()
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
     except (ValueError, OSError):
         payload = {}
     session_id = payload.get("session_id") if isinstance(payload, dict) else None
