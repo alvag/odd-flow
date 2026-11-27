@@ -1,0 +1,135 @@
+{
+  "userSid": "S-1-5-21-1111111111-2222222222-3333333333-1001",
+  "cases": [
+    {
+      "name": "explicit_user_system_administrators_abbreviated",
+      "sddl": "D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": true
+    },
+    {
+      "name": "inherited_user_system_administrators_abbreviated",
+      "sddl": "D:(A;OICIID;FA;;;SY)(A;OICIID;FA;;;BA)(A;OICIID;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": true
+    },
+    {
+      "name": "full_sid_forms_and_lowercase_user_sid",
+      "sddl": "D:(A;;FA;;;S-1-5-18)(A;;FA;;;S-1-5-32-544)(A;;FA;;;s-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": true
+    },
+    {
+      "name": "protected_dacl_with_allowed_sids",
+      "sddl": "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": true
+    },
+    {
+      "name": "inherit_only_ace_for_allowed_sid",
+      "sddl": "D:(A;OICIIO;FA;;;SY)(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": true
+    },
+    {
+      "name": "full_sddl_with_owner_group_and_sacl",
+      "sddl": "O:S-1-5-21-1111111111-2222222222-3333333333-1001G:SYD:(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)S:(AU;SAFA;FA;;;WD)",
+      "accept": true
+    },
+    {
+      "name": "empty_dacl",
+      "sddl": "D:",
+      "accept": true
+    },
+    {
+      "name": "empty_protected_dacl",
+      "sddl": "D:P",
+      "accept": true
+    },
+    {
+      "name": "deny_only_dacl",
+      "sddl": "D:(D;;FA;;;WD)",
+      "accept": true
+    },
+    {
+      "name": "deny_everyone_plus_allow_user",
+      "sddl": "D:(D;;FA;;;WD)(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": true
+    },
+    {
+      "name": "null_dacl",
+      "sddl": "D:NO_ACCESS_CONTROL",
+      "accept": false
+    },
+    {
+      "name": "missing_dacl_section",
+      "sddl": "O:SYG:SY",
+      "accept": false
+    },
+    {
+      "name": "allow_everyone",
+      "sddl": "D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)(A;;FR;;;WD)",
+      "accept": false
+    },
+    {
+      "name": "allow_users",
+      "sddl": "D:(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)(A;OICIID;FR;;;BU)",
+      "accept": false
+    },
+    {
+      "name": "allow_authenticated_users",
+      "sddl": "D:(A;OICI;FA;;;SY)(A;;FR;;;AU)",
+      "accept": false
+    },
+    {
+      "name": "allow_creator_owner",
+      "sddl": "D:(A;OICIIO;FA;;;CO)(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": false
+    },
+    {
+      "name": "allow_owner_rights",
+      "sddl": "D:(A;;FA;;;OW)(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": false
+    },
+    {
+      "name": "allow_another_user_sid",
+      "sddl": "D:(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)(A;;FA;;;S-1-5-21-1000000000-2000000000-3000000000-1001)",
+      "accept": false
+    },
+    {
+      "name": "readonly_grant_to_another_sid",
+      "sddl": "D:(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)(A;;FR;;;S-1-5-21-1000000000-2000000000-3000000000-1002)",
+      "accept": false
+    },
+    {
+      "name": "inherit_only_ace_for_another_sid",
+      "sddl": "D:(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)(A;OICIIO;FR;;;WD)",
+      "accept": false
+    },
+    {
+      "name": "allow_everyone_after_deny_everyone",
+      "sddl": "D:(D;;FA;;;WD)(A;;FR;;;WD)(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": false
+    },
+    {
+      "name": "object_ace_type",
+      "sddl": "D:(OA;;FA;;;SY)",
+      "accept": false
+    },
+    {
+      "name": "callback_ace_type",
+      "sddl": "D:(XA;;FA;;;SY;(Member_of {SID(SY)}))",
+      "accept": false
+    },
+    {
+      "name": "malformed_unclosed_ace",
+      "sddl": "D:(A;;FA;;;SY",
+      "accept": false
+    },
+    {
+      "name": "malformed_dacl_flags",
+      "sddl": "D:garbage",
+      "accept": false
+    },
+    {
+      "name": "malformed_ace_field_count",
+      "sddl": "D:(A;;FA;;SY)",
+      "accept": false
+    }
+  ]
+}
