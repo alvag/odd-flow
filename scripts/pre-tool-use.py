@@ -39,7 +39,7 @@ DOUBLE_QUOTE_PART = re.compile(r"\\[$`\"\\\n]|(?P<expansion>[$`])")
 QUOTED_FRAGMENT = re.compile(r'\\[\s\S]|\$\(|"|[^"\\$]+|\$')
 POWERSHELL_TOKEN = re.compile(
     r"(?P<space>[ \t]+)|(?P<separator>\r?\n|&&|\|\||[;|])|"
-    r"""(?:(?P<single>'(?:[^'"]|'')+')|(?P<double>"[^"$`]+")|"""
+    r"""(?:(?P<single>'(?:[^'"&|<>\r\n]|'')+')|(?P<double>"[^"$`&|<>\r\n]+")|"""
     r"""(?P<bare>[^\s;|&'"$`@{}()#<>,]+))(?=[ \t\r\n;|&]|\Z)"""
 )
 POWERSHELL_UNSUPPORTED = re.compile(r"[%^\x00\u2018-\u201e]|[^\S \t\r\n]|\r(?!\n)")
@@ -178,6 +178,8 @@ def powershell_launches(command):
             value = value.replace("''", "'")
         # Native binding honors even a quoted stop-parsing token.
         if value == "--%" or (kind == "bare" and value.startswith("~")):
+            raise LaunchError(error)
+        if kind == "bare" and value.startswith("-") and not value.startswith("--") and "." in value:
             raise LaunchError(error)
         if value.endswith("\\") and any(char.isspace() for char in value):
             raise LaunchError(error)

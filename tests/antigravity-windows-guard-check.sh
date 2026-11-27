@@ -33,7 +33,7 @@ for name, spec in (
     (r"specs\valid.md", valid), (r"specs\with spaces.md", valid),
     (r"specs\invalid.md", invalid), ("it's.md", valid), ("its.md", valid),
     ("~tilde.md", valid), ("bad/it's.md", invalid), ("bad/its.md", valid),
-    ("a^b.md", valid), ("ab.md", valid), ("x%OS%y.md", valid),
+    ("a^b.md", valid), ("ab.md", valid), ("x%OS%y.md", valid), ("-its.md", valid),
 ):
     path = scratch / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +120,11 @@ class WindowsGuardCheck(unittest.TestCase):
             ("bare tilde", launch + r"~\x.md"),
             ("batch caret", "orca.cmd orchestration task-create --spec-file a^b.md"),
             ("batch percent expansion", "orca.cmd orchestration task-create --spec-file 'x%OS%y.md'"),
+            ("single-quoted ampersand", base + " --comment 'a&b'"),
+            ("double-quoted pipe", base + ' --comment "a|b"'),
+            ("quoted redirection", base + " --comment 'a>b'"),
+            ("multiline inline spec", f"orca orchestration task-create --spec '{valid.rstrip()}'"),
+            ("bare dotted single-dash word", launch + "-its.md"),
         ):
             with self.subTest(name=name):
                 self.check(command, "deny", parse_reason, parse_hint)
