@@ -3,9 +3,11 @@
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File codex-worker.ps1 [model [effort]]
 #
 # The PowerShell twin of codex-worker.sh, for Orca terminals on Windows, which run
-# PowerShell instead of sh. It passes Codex the same argv: the workspace-write sandbox
-# with outbound network so the worker can reach Orca. It never changes the user's
-# Codex config.
+# PowerShell instead of sh. Commands still use the workspace-write sandbox, but it
+# cannot reach Orca's named pipe on Windows. Codex rejects combining the flags, so
+# --approve-for-me replaces --sandbox workspace-write and routes escalations to
+# automatic review. Outbound network stays enabled so the worker can reach Orca.
+# It never changes the user's Codex config.
 #
 # Unlike codex-worker.sh, it refuses a double quote, a backslash or whitespace in the
 # model or effort, and a double quote in an Orca variable: Windows rebuilds a command
@@ -74,5 +76,5 @@ if ($LASTEXITCODE -eq 0) {
     $codexArgs.AddRange([string[]]@('-c', 'mcp_servers.engram.enabled=false'))
 }
 
-& codex --no-daemon --sandbox workspace-write @codexArgs
+& codex --no-daemon --approve-for-me @codexArgs
 exit $LASTEXITCODE
