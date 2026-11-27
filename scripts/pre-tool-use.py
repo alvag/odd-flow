@@ -197,10 +197,10 @@ def workspace_root(cwd, workspace_paths=()):
 
     git = subprocess.run(
         ["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, timeout=2, check=False,
+        capture_output=True, timeout=2, check=False,
     )
     if git.returncode == 0:
-        return Path(git.stdout.rstrip("\n")).resolve()
+        return Path(git.stdout.decode("utf-8").rstrip("\r\n")).resolve()
     if workspace_paths:
         resolved_cwd = cwd.resolve()
         roots = [Path(path).resolve() for path in workspace_paths]
@@ -498,7 +498,7 @@ def antigravity_edit_decision(payload, args):
 def antigravity_main():
     decision, reason = None, None
     try:
-        payload = json.load(sys.stdin)
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
         call = payload.get("toolCall")
         name = call.get("name")
         args = call.get("args")
@@ -514,6 +514,8 @@ def antigravity_main():
                 normalized |= {"tool_name": "Agent", "tool_input": {"prompt": args.get("Prompt")}}
             reason = denial_reason(normalized)
             decision = "deny" if reason else None
+    except UnicodeDecodeError:
+        decision, reason = "deny", "Hook input is not valid UTF-8."
     except Exception:  # Internal errors must not block an unrelated tool call.
         decision, reason = None, None
     output = {"decision": decision or "allow"}
@@ -525,7 +527,7 @@ def antigravity_main():
 def main():
     if ANTIGRAVITY:
         return antigravity_main()
-    payload = json.load(sys.stdin)
+    payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     field = EDIT_PATH_FIELDS.get(payload.get("tool_name"))
     if CODEX and payload.get("tool_name") == "apply_patch":
         decision, reason = "deny", codex_patch_denial(payload)
@@ -544,6 +546,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except UnicodeDecodeError:
+        print("odd-flow: hook input is not valid UTF-8.", file=sys.stderr)
+        sys.exit(2)
     except Exception:  # Internal errors must not block an unrelated tool call.
         if ANTIGRAVITY:
             print(json.dumps({"decision": "allow"}))
