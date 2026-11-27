@@ -11,7 +11,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Added
 
-- `scripts/codex-worker.ps1` starts Codex workers from Orca terminals on Windows, which run PowerShell. It takes the same arguments and checks as `scripts/codex-worker.sh` and passes Codex the same flags. `bash tests/codex-launch-check.sh` compares the two launchers when PowerShell is installed.
+- `scripts/codex-worker.ps1` starts Codex workers from Orca terminals on Windows, which run PowerShell. It takes the same arguments and checks as `scripts/codex-worker.sh`. It passes `--approve-for-me` instead of `--sandbox workspace-write` because the sandbox cannot reach Orca's named pipe. Commands still use workspace-write, but Codex's automatic review decides all worker escalations, not just those for `orca` commands. `bash tests/codex-launch-check.sh` compares the two launchers when PowerShell is installed.
 
 ### Fixed
 

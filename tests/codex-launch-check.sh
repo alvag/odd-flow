@@ -283,13 +283,20 @@ PS1
   parity() { # name
     local want wec got gec host
     want=$(run_sh); wec=$?
+    want=${want/#$'--no-daemon\n--sandbox\nworkspace-write\n'/$'--no-daemon\n--approve-for-me\n'}
     for host in "${PS_HOSTS[@]}"; do
       got=$(run_ps "$host" -ExecutionPolicy Bypass -File "$PS1_PATH" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"}); gec=$?
-      expect "$host: codex-worker.ps1 matches codex-worker.sh: $1" "$want" "${got//codex-worker.ps1/codex-worker.sh}" "$wec" "$gec" exact
+      expect "$host: codex-worker.ps1 matches codex-worker.sh except for --approve-for-me: $1" "$want" "${got//codex-worker.ps1/codex-worker.sh}" "$wec" "$gec" exact # The anchored substitution above rewrites only the expected argv prefix.
     done
   }
   CH=$T/empty-codex
-  RUN_ENV=("${PS_ENV[@]}"); RUN_ARGS=(gpt-6-luna medium); parity "model and effort"
+  RUN_ENV=("${PS_ENV[@]}"); RUN_ARGS=(gpt-6-luna medium)
+  for host in "${PS_HOSTS[@]}"; do
+    out=$(run_ps "$host" -ExecutionPolicy Bypass -File "$PS1_PATH" "${RUN_ARGS[@]}"); ec=$?
+    expect "$host: PowerShell argv includes --approve-for-me and no --sandbox" --approve-for-me \
+      "$(printf '%s\n' "$out" | grep -E '^--(approve-for-me|sandbox)(=|$)')" 0 "$ec" exact
+  done
+  parity "model and effort"
   CH=$T/ps-engram; parity "Engram configured"
   CH=$T/empty-codex
   RUN_ARGS=(); parity "no arguments"

@@ -342,8 +342,8 @@ def terminal_command(agent, model, effort):
 
     Codex started by `worker-start --agent codex` runs in a sandbox that blocks the
     connection to Orca, so its worker could never report; scripts/codex-worker.sh
-    (codex-worker.ps1 on Windows) pins the workspace-write sandbox and the network
-    override that lets it reach Orca.
+    pins workspace-write; codex-worker.ps1 selects it with --approve-for-me on
+    Windows. Both set the network override that lets it reach Orca.
     """
     if agent != "codex":
         return None
