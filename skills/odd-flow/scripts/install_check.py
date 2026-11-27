@@ -215,11 +215,13 @@ def catalog_version(root):
         data = json.loads(shipped_file(root, "orca-catalog.json").read_bytes())
         plugin, = data["plugins"]
         # Publishing places the newest release first.
-        version = plugin["releases"][0]["version"]
+        release = plugin["releases"][0]
+        version = release["version"]
         version_parts(version, orca=True)
     except (CheckError, OSError, ValueError, TypeError, KeyError, IndexError, RuntimeError):
         raise CheckError("cannot read newest release from orca-catalog.json") from None
-    return version
+    commit = release.get("commit")
+    return version, commit if isinstance(commit, str) and commit else None
 
 
 def check_orca(root):
@@ -253,8 +255,16 @@ def check_orca(root):
             details["version"] = version
             if "plugin_status" not in details:
                 raise CheckError("invalid Orca plugin status")
-            expected = manifest_version(root, "orca") if folder else catalog_version(root)
+            if folder:
+                expected = manifest_version(root, "orca")
+            else:
+                expected, expected_commit = catalog_version(root)
+                if expected_commit is not None:
+                    details["expected_commit"] = expected_commit
             state = "in sync" if version == expected else "version differs"
+            if state == "in sync" and "expected_commit" in details and "source_commit" in details:
+                if details["source_commit"] != details["expected_commit"]:
+                    state = "commit differs"
             yield status("orca", state, expected_version=expected, **details)
         except CheckError as error:
             yield {**unreadable("orca", error, "cannot read Orca plugin state"), **details}
@@ -330,8 +340,13 @@ def print_report(report):
             details.append(f'Orca status: {row["plugin_status"]}')
         if "source" in row:
             details.append(f'source: {row["source"]}')
-        if "source_commit" in row:
+        if (row.get("source") == "catalog" and "expected_version" in row
+                and ("source_commit" not in row or "expected_commit" not in row)):
+            details.append("commit: unknown")
+        elif "source_commit" in row:
             details.append(f'commit: {sanitize_human_output(row["source_commit"])}')
+        if row["status"] == "commit differs":
+            details.append(f'catalog commit: {sanitize_human_output(row["expected_commit"])}')
         if "plugin_error" in row:
             error = sanitize_human_output(row["plugin_error"])
             if len(error) > 200:
@@ -378,7 +393,7 @@ def main():
     states = {row["status"] for row in report["installs"]}
     if "unreadable" in states or "reason" in report:
         return 3
-    return int(bool({"version differs", "files differ"} & states))
+    return int(bool({"version differs", "files differ", "commit differs"} & states))
 
 
 if __name__ == "__main__":
