@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import runpy
+import shlex
 import shutil
 import stat
 import subprocess
@@ -321,8 +322,9 @@ def check_init_blocks(warnings):
             session["persistent_mode_error"] = "cannot resolve persistent orchestrator mode"
 
     rows = []
+    init_script = Path(__file__).resolve().with_name("init.py")
     for runtime, target in init["TARGETS"].items():
-        rerun = f"python3 skills/odd-flow/scripts/init.py plan --runtime {runtime}"
+        rerun = shlex.join(["python3", str(init_script), "plan", "--runtime", runtime])
         reason = None
         try:
             path = Path.home() / target
@@ -330,7 +332,7 @@ def check_init_blocks(warnings):
         except init["InitError"]:
             # read_current only refuses symlinks, and its message includes the path.
             reason = "instructions file is a symlink"
-        except (OSError, UnicodeError):
+        except (OSError, UnicodeError, RuntimeError):
             reason = "cannot read instructions file"
         else:
             try:
@@ -381,6 +383,9 @@ def print_init_blocks(blocks):
                 f'({sanitize_human_output(blocks["session_mode_source"])}) is session-only')
         if "persistent_mode_error" in blocks:
             line += "; persistent mode could not be resolved"
+        elif "expected_mode" in blocks:
+            line += (f'; comparing against persistent mode: {sanitize_human_output(blocks["expected_mode"])} '
+                     f'({sanitize_human_output(blocks["mode_source"])})')
         print(line)
     for row in rows:
         line = f'  {LABELS[row["runtime"]]}: {row["status"]}'

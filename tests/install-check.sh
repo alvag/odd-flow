@@ -204,6 +204,11 @@ elif case == "cli-timeout":
         assert "timed out" in rows[runtime]["reason"] and "30" in rows[runtime]["reason"], rows[runtime]
         assert "path" not in rows[runtime]
     assert rows["codex"]["status"] == rows["antigravity"]["status"] == "in sync", rows
+    blocks = report["init_blocks"]
+    assert blocks.get("status") != "unreadable", blocks
+    assert "expected_mode" in blocks, blocks
+    assert blocks["runtimes"] == [{"runtime": runtime, "status": "not installed"}
+                                  for runtime in ("claude", "codex", "antigravity")], blocks
 elif case == "drift":
     assert rows["claude"]["status"] == "version differs"
     assert rows["codex"]["status"] == "files differ"
@@ -229,20 +234,26 @@ else:
 PY
 }
 
+init_script=$("$python" -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' \
+    "$root/skills/odd-flow/scripts/init.py")
+rerun_codex=$("$python" -I -c 'import shlex, sys; print(shlex.join(["python3", sys.argv[1], "plan", "--runtime", "codex"]))' \
+    "$init_script")
+
 assert_init() {
-    "$python" -I - "$1" <<'PY'
+    "$python" -I - "$1" "$init_script" <<'PY'
 import json
 import os
 from pathlib import Path
+import shlex
 import sys
 
-case = sys.argv[1]
+case, init_script = sys.argv[1:]
 assert not Path("err").read_text()
 report = json.loads(Path("out").read_text())
 blocks, warnings = report["init_blocks"], report["warnings"]
 home = Path(os.environ["HOME"])
 codex_file = str(home / ".codex/AGENTS.md")
-rerun = "re-run /odd-flow init: python3 skills/odd-flow/scripts/init.py plan --runtime codex"
+rerun = "re-run /odd-flow init: " + shlex.join(["python3", init_script, "plan", "--runtime", "codex"])
 absent = [{"runtime": runtime, "status": "not installed"} for runtime in ("claude", "codex", "antigravity")]
 if case == "mode-unreadable":
     assert blocks == {"status": "unreadable", "reason": "cannot resolve orchestrator mode"}, blocks
@@ -519,7 +530,13 @@ import sys
 from unittest.mock import patch
 
 
-def timed_out(command, *, timeout=None, **kwargs):
+original_run = subprocess.run
+
+
+def timed_out(command, *args, **kwargs):
+    if command[1:4] != ["plugin", "list", "--json"]:
+        return original_run(command, *args, **kwargs)
+    timeout = kwargs.get("timeout")
     assert timeout == 30, (command, timeout)
     raise subprocess.TimeoutExpired(command, timeout)
 
@@ -576,6 +593,46 @@ assert_init none
 check human-init-none 0
 grep -Fx 'Init blocks: none installed' out
 
+# An unresolvable home directory leaves every init block unreadable without failing the report.
+result=0
+PATH="$bin" "$python" -I - "$root/skills/odd-flow/scripts/install_check.py" --json > out 2> err <<'PY' || result=$?
+from pathlib import Path
+import runpy
+import sys
+from unittest.mock import patch
+
+original_home = Path.home.__func__
+
+
+def unresolvable_home(cls):
+    # The install rows need a home directory too; fail only the init-block lookup.
+    if sys._getframe(1).f_code.co_name == "check_init_blocks":
+        raise RuntimeError("Could not determine home directory.")
+    return original_home(cls)
+
+
+sys.argv.pop(0)
+with patch.object(Path, "home", classmethod(unresolvable_home)):
+    runpy.run_path(sys.argv[0], run_name="__main__")
+PY
+if [ "$result" -ne 0 ]; then
+    printf 'FAIL init-no-home: expected exit 0, got %s\n' "$result" >&2
+    cat out err >&2
+    exit 1
+fi
+"$python" -I - <<'PY'
+import json
+from pathlib import Path
+
+assert not Path("err").read_text()
+report = json.loads(Path("out").read_text())
+assert report["init_blocks"]["runtimes"] == [
+    {"runtime": runtime, "status": "unreadable", "reason": "cannot read instructions file"}
+    for runtime in ("claude", "codex", "antigravity")
+], report
+assert len(report["warnings"]) == 3, report
+PY
+
 set_mode() {
     printf '{"default":"p","profiles":{"p":{}},"workflow":{"p":{"orchestratorMode":"%s"}}}\n' "$1" \
         > "$ODD_FLOW_HOME/profiles.json"
@@ -596,7 +653,7 @@ check init-mode-differs 0 --json
 assert_init mode-differs
 check human-init-mode-differs 0
 grep -Fx "  Codex: mode differs [$shown_codex_file] (installed mode: full-delegation; expected mode: organic)" out
-grep -Fx 'Warning: Codex init block: installed for full-delegation mode, but the resolved mode is organic; re-run /odd-flow init: python3 skills/odd-flow/scripts/init.py plan --runtime codex' out
+grep -Fx "Warning: Codex init block: installed for full-delegation mode, but the resolved mode is organic; re-run /odd-flow init: $rerun_codex" out
 diff -r "$scratch/init-before" "$HOME"
 
 printf '<!-- odd-flow:core -->\nedited by hand\n<!-- /odd-flow:core -->\n' > "$HOME/.codex/AGENTS.md"
@@ -604,7 +661,7 @@ check init-block-differs 0 --json
 assert_init block-differs
 check human-init-block-differs 0
 grep -Fx "  Codex: block differs [$shown_codex_file] (installed mode: unknown; expected mode: organic)" out
-grep -Fx 'Warning: Codex init block: matches no mode asset, and the resolved mode is organic; re-run /odd-flow init: python3 skills/odd-flow/scripts/init.py plan --runtime codex' out
+grep -Fx "Warning: Codex init block: matches no mode asset, and the resolved mode is organic; re-run /odd-flow init: $rerun_codex" out
 
 # Session-only overrides are compared against the persistent mode and never suggest init.
 set_mode full-delegation
@@ -614,7 +671,7 @@ env_source='env ODD_ORCHESTRATOR_MODE'
 ODD_ORCHESTRATOR_MODE=organic check session-env-in-sync 0 --json
 assert_session in-sync "$env_source"
 ODD_ORCHESTRATOR_MODE=organic check human-session-env-in-sync 0
-grep -Fx "  Current mode: organic ($env_source) is session-only" out
+grep -Fx "  Current mode: organic ($env_source) is session-only; comparing against persistent mode: full-delegation (profile p)" out
 grep -Fx "  Codex: in sync [$shown_codex_file] (installed mode: full-delegation)" out
 refute_output 'Warning:|re-run|init\.py'
 diff -r "$scratch/session-before" "$HOME"
@@ -623,7 +680,7 @@ CLAUDE_CODE_SESSION_ID=s1 "$python" -I "$root/skills/odd-flow/scripts/profile.py
 CLAUDE_CODE_SESSION_ID=s1 check session-binding-in-sync 0 --json
 assert_session in-sync 'session (CLAUDE_CODE_SESSION_ID)'
 CLAUDE_CODE_SESSION_ID=s1 check human-session-binding-in-sync 0
-grep -Fx '  Current mode: organic (session (CLAUDE_CODE_SESSION_ID)) is session-only' out
+grep -Fx '  Current mode: organic (session (CLAUDE_CODE_SESSION_ID)) is session-only; comparing against persistent mode: full-delegation (profile p)' out
 grep -Fx "  Codex: in sync [$shown_codex_file] (installed mode: full-delegation)" out
 refute_output 'Warning:|re-run|init\.py'
 
@@ -633,7 +690,7 @@ assert_session mode-differs "$env_source"
 CLAUDE_CODE_SESSION_ID=s1 check session-binding-mode-differs 0 --json
 assert_session mode-differs 'session (CLAUDE_CODE_SESSION_ID)'
 ODD_ORCHESTRATOR_MODE=organic check human-session-mode-differs 0
-grep -Fx "  Current mode: organic ($env_source) is session-only" out
+grep -Fx "  Current mode: organic ($env_source) is session-only; comparing against persistent mode: full-delegation (profile p)" out
 grep -Fx "  Codex: mode differs [$shown_codex_file] (installed mode: organic; expected mode: full-delegation)" out
 grep -Fx 'Warning: Codex init block: installed for organic mode, but the persistent mode is full-delegation; the current organic mode is session-only' out
 refute_output 're-run|init\.py'
