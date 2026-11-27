@@ -38,6 +38,7 @@ CLAUDE_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 ORCA_HANDLE_RE = re.compile(r"[A-Za-z0-9_:.-]{1,200}")
 RECORD_NAME_RE = re.compile(r"[0-9a-f]{64}")
 CODEX_LAUNCHER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-worker.sh")
+CODEX_LAUNCHER_WINDOWS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex-worker.ps1")
 CLAUDE_WORKER_SETTINGS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude-worker-settings.json")
 
 # First present variable wins. The agent column is the Orca agent id of the
@@ -312,8 +313,28 @@ def mode_line(doc, name):
 
 
 def shell_quote(value):
-    """Single-quote a value for a POSIX shell, always, so the command reads the same everywhere."""
+    """Single-quote a value for the shell of an Orca terminal, always, so the command reads the same everywhere.
+
+    Orca terminals run PowerShell on Windows and a POSIX shell elsewhere.
+    """
+    if sys.platform == "win32":
+        # PowerShell also ends a single-quoted string at a typographic single quote.
+        return "'" + re.sub("['\u2018\u2019\u201a\u201b]", lambda m: m.group() * 2, value) + "'"
     return "'" + value.replace("'", "'\\''") + "'"
+
+
+def launch_arg(label, value):
+    """Quote a model or effort for a launch command, refusing on Windows what cannot pass intact.
+
+    Windows rebuilds a command line for each native program, and Windows PowerShell 5.1
+    neither escapes an embedded '"' nor keeps a trailing '\\' from escaping the closing
+    quote, so such a value could add flags to the worker or swallow the ones after it.
+    """
+    if sys.platform == "win32" and re.search(r'["\\\s]', value):
+        raise ProfileError(
+            f"{label} {value!r} must not contain a double quote, a backslash or whitespace on Windows"
+        )
+    return shell_quote(value)
 
 
 def terminal_command(agent, model, effort):
@@ -321,11 +342,17 @@ def terminal_command(agent, model, effort):
 
     Codex started by `worker-start --agent codex` runs in a sandbox that blocks the
     connection to Orca, so its worker could never report; scripts/codex-worker.sh
-    pins the workspace-write sandbox and the network override that lets it reach Orca.
+    (codex-worker.ps1 on Windows) pins the workspace-write sandbox and the network
+    override that lets it reach Orca.
     """
     if agent != "codex":
         return None
-    args = [shell_quote(arg) for arg in (model, effort) if arg]
+    args = [launch_arg(label, arg) for label, arg in (("model", model), ("effort", effort)) if arg]
+    if sys.platform == "win32":
+        # Windows clients refuse every script by default, and RemoteSigned refuses
+        # one extracted from a downloaded archive.
+        launcher = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+        return " ".join(launcher + [shell_quote(CODEX_LAUNCHER_WINDOWS)] + args)
     return " ".join(["sh", shell_quote(CODEX_LAUNCHER)] + args)
 
 
@@ -359,9 +386,9 @@ def resolve_role(doc, role, *, selection=None):
     if agent in SPLIT_CLIS:
         split_command = SPLIT_CLIS[agent]
         if entry.get("model"):
-            split_command += f" --model {shell_quote(entry['model'])}"
+            split_command += f" --model {launch_arg('model', entry['model'])}"
             if entry.get("effort"):
-                split_command += f" --effort {shell_quote(entry['effort'])}"
+                split_command += f" --effort {launch_arg('effort', entry['effort'])}"
         if agent == "claude":
             split_command += f" --settings {shell_quote(CLAUDE_WORKER_SETTINGS)}"
     parts = [agent, entry.get("model") or "agent default model"]

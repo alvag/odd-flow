@@ -9,6 +9,15 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/codex-worker.ps1` starts Codex workers from Orca terminals on Windows, which run PowerShell. It takes the same arguments and checks as `scripts/codex-worker.sh` and passes Codex the same flags. `bash tests/codex-launch-check.sh` compares the two launchers when PowerShell is installed.
+
+### Fixed
+
+- `pane.py open` runs on Windows. It locks with `msvcrt.locking` instead of `fcntl.flock`. Because the parent terminal width is unknown there, a worker splits below when a right column exists, splits right only with `--cols`, and otherwise opens in a tab with reason `parent terminal width is unknown`. Orca CLI output is read through temporary files, so a child that keeps the output pipe open no longer holds up a timeout. `bash tests/pane-check.sh` and `bash tests/codex-launch-check.sh` pass on Windows in Git Bash.
+- On Windows, `profile.py resolve` returns a `terminal_command`, and for Codex a `split_command`, that runs in PowerShell: `powershell -NoProfile -ExecutionPolicy Bypass -File '<skill-dir>\scripts\codex-worker.ps1' '<model>' '<effort>'`, quoted by PowerShell single-quote rules. `-ExecutionPolicy Bypass` applies only to that process; a policy set by Group Policy still wins. On Windows, `profile.py resolve` and `codex-worker.ps1` refuse a model or effort that contains a double quote, a backslash or whitespace, and `codex-worker.ps1` also refuses an Orca variable that contains a double quote, because Windows PowerShell 5.1 does not pass those to native programs intact. Orca may still not deliver the task to a Codex worker after it starts on Windows; the subagent fallback then applies.
+
 ## [0.5.0] - 2026-11-26
 
 ### Added
