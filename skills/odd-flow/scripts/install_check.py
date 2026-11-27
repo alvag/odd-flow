@@ -136,6 +136,9 @@ def list_plugins(cli):
             if data["ok"] is not True:
                 raise ValueError
             data = data["result"]["plugins"]
+            if isinstance(data, list):
+                data = [entry for entry in data
+                        if isinstance(entry, dict) and isinstance(entry.get("pluginKey"), str)]
         key = "id" if cli == "claude" else "pluginKey"
         if not isinstance(data, list) or not all(isinstance(entry.get(key), str) for entry in data):
             raise ValueError

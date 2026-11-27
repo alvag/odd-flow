@@ -292,6 +292,32 @@ grep -F 'ignored' out
 grep -Fx 'Session state: 2 session binding(s), 1 prompt-hook record(s), 3 mode-notice record(s)' out
 diff -r "$scratch/before" "$HOME"
 
+ORCA_EXTRA=',5,{"pluginKey":123,"version":"0.0.1","status":"running"}' check orca-malformed-entry 0 --json
+assert_json sync
+ORCA_EXTRA=',5,{"pluginKey":123,"version":"0.0.1","status":"running"}' check human-orca-malformed-entry 0
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: running; source: folder)" out
+
+cp "$bin/orca" "$scratch/orca-fake"
+cp "$bin/claude" "$scratch/claude-fake"
+cat > "$bin/orca" <<'SH'
+#!/bin/bash
+printf '%s\n' "$ORCA_RESPONSE"
+SH
+ORCA_RESPONSE='{"ok":true,"result":{"plugins":[5,{"pluginKey":123}]}}' check human-orca-only-malformed 0
+grep -Fx 'ODD Flow Orca plugin: not installed' out
+for response in '{"ok":true,"result":{"plugins":{}}}' '{"ok":false,"result":{"plugins":[]}}'; do
+    ORCA_RESPONSE="$response" check human-orca-invalid-list 3
+    grep -Fx 'ODD Flow Orca plugin: unreadable (cannot read plugin list)' out
+done
+cp "$scratch/orca-fake" "$bin/orca"
+cat > "$bin/claude" <<'SH'
+#!/bin/bash
+printf '[{"id":"odd-flow@odd-flow"},5]\n'
+SH
+check human-claude-malformed-entry 3
+grep -Fx 'Claude Code: unreadable (cannot read plugin list)' out
+cp "$scratch/claude-fake" "$bin/claude"
+
 if [ "$(id -u)" -ne 0 ]; then
     unrelated_config="$HOME/unrelated-config"
     unrelated_data="$unrelated_config/plugins/data"
