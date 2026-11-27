@@ -37,6 +37,12 @@ SHELL_TOKEN = re.compile(
 WORD_PART = re.compile(r"""'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[^'"\\]+""")
 DOUBLE_QUOTE_PART = re.compile(r"\\[$`\"\\\n]|(?P<expansion>[$`])")
 QUOTED_FRAGMENT = re.compile(r'\\[\s\S]|\$\(|"|[^"\\$]+|\$')
+POWERSHELL_TOKEN = re.compile(
+    r"(?P<space>[ \t]+)|(?P<separator>\r?\n|&&|\|\||[;|])|"
+    r"""(?:(?P<single>'(?:[^'"]|'')+')|(?P<double>"[^"$`]+")|"""
+    r"""(?P<bare>[^\s;|&'"$`@{}()#<>,]+))(?=[ \t\r\n;|&]|\Z)"""
+)
+POWERSHELL_UNSUPPORTED = re.compile(r"[%^\x00\u2018-\u201e]|[^\S \t\r\n]|\r(?!\n)")
 PARSE_HINT = 'Write the launch as a plain command or in an unquoted $() substitution.'
 PATCH_HEADER = re.compile(r"\*\*\* (Add|Delete|Update) File: (.+)", re.DOTALL)
 # Match Rust str::trim, not Python's extra ASCII record separators.
@@ -144,6 +150,41 @@ def bash_launches(command, pos=0, *, substitution=False):
         if redirected:
             raise LaunchError("cannot parse the orchestration launch redirection")
         yield current
+
+
+def powershell_launches(command):
+    """Read the literal PowerShell subset before checking any launch in the command."""
+    error = "cannot parse the orchestration launch arguments"
+    if POWERSHELL_UNSUPPORTED.search(command):
+        raise LaunchError(error)
+    launches = []
+    words = []
+    pos = 0
+    while pos < len(command):
+        token = POWERSHELL_TOKEN.match(command, pos)
+        if token is None:
+            raise LaunchError(error)
+        pos = token.end()
+        kind, raw = token.lastgroup, token[0]
+        if kind == "space":
+            continue
+        if kind == "separator":
+            if current := launch(words):
+                launches.append(current)
+            words = []
+            continue
+        value = raw if kind == "bare" else raw[1:-1]
+        if kind == "single":
+            value = value.replace("''", "'")
+        # Native binding honors even a quoted stop-parsing token.
+        if value == "--%" or (kind == "bare" and value.startswith("~")):
+            raise LaunchError(error)
+        if value.endswith("\\") and any(char.isspace() for char in value):
+            raise LaunchError(error)
+        words.append((value, False))
+    if current := launch(words):
+        launches.append(current)
+    return launches
 
 
 def launch_spec(verb, args):
@@ -390,7 +431,7 @@ def codex_spawn_prompt(tool_input):
     return None
 
 
-def denial_reason(payload):
+def denial_reason(payload, *, read_launches=bash_launches):
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input") or {}
     if (CODEX and tool == "spawn_agent") or (not CODEX and tool in {"Agent", "Task"}):
@@ -415,7 +456,7 @@ def denial_reason(payload):
         surface = None
         parsed = 0
         try:
-            for verb, args in bash_launches(command):
+            for verb, args in read_launches(command):
                 parsed += 1
                 selected = launch_spec(verb, args)
                 if selected is None:
@@ -512,7 +553,10 @@ def antigravity_main():
                 normalized |= {"tool_name": "Bash", "tool_input": {"command": args.get("CommandLine")}}
             else:
                 normalized |= {"tool_name": "Agent", "tool_input": {"prompt": args.get("Prompt")}}
-            reason = denial_reason(normalized)
+            if name == "run_command" and sys.platform == "win32":
+                reason = denial_reason(normalized, read_launches=powershell_launches)
+            else:
+                reason = denial_reason(normalized)
             decision = "deny" if reason else None
     except UnicodeDecodeError:
         decision, reason = "deny", "Hook input is not valid UTF-8."
