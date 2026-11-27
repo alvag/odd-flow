@@ -89,16 +89,17 @@ if [[ -n "$windows" ]]; then
 fi
 printf '%s\n' '{"default":"test","profiles":{"test":{"verify":{"agent":"claude"},"write":{"agent":"antigravity"},"explore":{"agent":"antigravity","model":"gemini-4","effort":"low"},"review":{"agent":"pi"}}}}' >"$T/profiles.json"
 
-# Test-only seam: replace the TTY sampler and clock and optionally trace the
+# Test-only seam: fake the TTY probe and clock and optionally trace the
 # subprocess timeout while running the real CLI and pane lock against fake Orca.
 printf '%s\n' \
-  'import os, sys, time' \
+  'import os, struct, sys, time' \
   'if sys.platform == "win32":' \
   '    import msvcrt' \
   'else:' \
   '    import fcntl' \
   'from pathlib import Path' \
   'from types import SimpleNamespace' \
+  'from unittest.mock import patch' \
   'sys.dont_write_bytecode = True' \
   'script, widths, orca_timeout, record_age, *args = sys.argv[1:]' \
   'sys.path.insert(0, str(Path(script).parent))' \
@@ -162,11 +163,11 @@ printf '%s\n' \
   '        print("walk from parent:", pids[:1] == [os.getppid()], file=log)' \
   '    return [None if spec == "none" else [spec.startswith("window:"), int(spec.split(":")[1])]' \
   '            for spec, _ in zip(consoles.split(), pids)]' \
-  'windows_cols = pane.parent_cols' \
+  'real_parent_cols = pane.parent_cols' \
   'def forced_windows():' \
   '    platform, sys.platform = sys.platform, "win32"' \
   '    try:' \
-  '        return windows_cols()' \
+  '        return real_parent_cols()' \
   '    finally:' \
   '        sys.platform = platform' \
   'if consoles is not None:' \
@@ -181,7 +182,25 @@ printf '%s\n' \
   '        pane.subprocess.CREATE_NO_WINDOW = 0' \
   'elif consoles is not None:' \
   '    pane.attached_consoles = attached_consoles' \
-  'pane.parent_cols = sample if consoles is None else forced_windows' \
+  'ttys = os.environ.get("POSIX_TTYS")' \
+  'if ttys is not None:' \
+  '    chain = [entry.partition(":") for entry in ttys.split()]' \
+  '    devices = {f"/dev/{tty}": int(cols) for tty, _, cols in chain if cols}' \
+  '    def ps(argv, **kwargs):' \
+  '        pid = int(argv[-1])' \
+  '        tty = chain[pid - 2][0]' \
+  '        if tty == "invisible":' \
+  '            raise pane.subprocess.CalledProcessError(1, argv)' \
+  '        parent = pid + 1 if pid - 2 < len(chain) - 1 else 1' \
+  '        return SimpleNamespace(stdout=f"{parent} {tty}\n")' \
+  '    def posix_cols():' \
+  '        with patch.multiple(pane.os, getppid=lambda: 2, open=lambda path, flags: devices[path], close=lambda fd: None), \' \
+  '             patch.object(pane.subprocess, "run", ps), \' \
+  '             patch.object(fcntl, "ioctl", lambda fd, *args: struct.pack("HHHH", 0, fd, 0, 0)):' \
+  '            return real_parent_cols()' \
+  '    pane.parent_cols = posix_cols' \
+  'else:' \
+  '    pane.parent_cols = sample if consoles is None else forced_windows' \
   'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep, time=wall_time)' \
   'sys.argv = [script, *args]' \
   'sys.exit(pane.main())' >"$T/sample.py"
@@ -195,7 +214,7 @@ layout() {
 }
 open_pane() {
   local command=(python3 -I "$P") format=(--json)
-  if [[ -n "${widths+x}${orca_timeout+x}${trace_timeout+x}${win_consoles+x}" ]]; then
+  if [[ -n "${widths+x}${orca_timeout+x}${trace_timeout+x}${win_consoles+x}${posix_ttys+x}" ]]; then
     command=(python3 -I "$T/sample.py" "$P" "${widths-}" "${orca_timeout-}" "${record_age-}")
   fi
   if [[ -n "${text_output+x}" ]]; then
@@ -208,7 +227,8 @@ open_pane() {
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
     ORCA_FAIL_TITLE="${fail_title-0}" ORCA_HANG="${hang-}" ORCA_TRACE_TIMEOUT="${trace_timeout-}" ORCA_FAIL_BASELINE="${fail_baseline-}" \
-    ${win_consoles+WIN_CONSOLES="$win_consoles"} "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
+    ${win_consoles+WIN_CONSOLES="$win_consoles"} ${posix_ttys+POSIX_TTYS="$posix_ttys"} \
+    "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
 }
 calls() {
   printf '\nargv:\n'
@@ -640,6 +660,26 @@ out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
 expect "a split below records no width" 0 "$ec" '"placement": "split-below", "handle": "term_new"'
 
 layout "$p"
+rm -f "$width_record"
+if [[ -z "$windows" ]]; then
+  out=$(posix_ttys='ttys006:80 ttys015:211 ttys015:211 ??' settle_ms=0 open_pane --role verify); ec=$?
+  expect "Antigravity: outer pane TTY sets the width and splits right" 0 "$ec" \
+    '"placement": "split-right", "handle": "term_new", "parent": "term_parent", "target": "term_parent", "cols": 211' \
+    "$list_call$right_call$title_call"
+
+  rm -f "$width_record"
+  out=$(posix_ttys='? ?? ttys010:211 ttys010:211 ?? ttys020:90' settle_ms=0 open_pane --role verify); ec=$?
+  expect "Claude Code and Codex: skip leading no-TTY processes and stop at the host gap" 0 "$ec" \
+    '"placement": "split-right", "handle": "term_new", "parent": "term_parent", "target": "term_parent", "cols": 211' \
+    "$list_call$right_call$title_call"
+
+  rm -f "$width_record"
+  out=$(posix_ttys='? ?? ttys010:211 ttys010:211 invisible' settle_ms=0 open_pane --role verify); ec=$?
+  expect "Claude Code and Codex: an invisible ancestor preserves the pane TTY width" 0 "$ec" \
+    '"placement": "split-right", "handle": "term_new", "parent": "term_parent", "target": "term_parent", "cols": 211' \
+    "$list_call$right_call$title_call"
+fi
+
 rm -f "$width_record"
 out=$(win_consoles='none hidden:120 window:181 window:90' open_pane --role verify); ec=$?
 expect "Windows: the nearest ancestor console with a window sets the width and splits right" 0 "$ec" \
