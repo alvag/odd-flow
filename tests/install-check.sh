@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Exercise the read-only installer diagnosis without the real HOME or CLIs.
 set -eu
-unset ODD_ORCHESTRATOR_MODE ODD_FLOW_PROFILE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID \
-    CODEX_SESSION_ID ANTIGRAVITY_CONVERSATION_ID
+unset ODD_ORCHESTRATOR_MODE ODD_PROFILE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID \
+    CODEX_SESSION_ID ANTIGRAVITY_CONVERSATION_ID ORCA_PANE_KEY
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 python=$(command -v python3)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
@@ -671,6 +671,53 @@ check init-mode-unreadable 0 --json
 assert_init mode-unreadable
 check human-init-mode-unreadable 0
 grep -Fx 'Init blocks: unreadable (cannot resolve orchestrator mode)' out
+
+# Unsafe or ambiguous instructions files are unreadable; non-target files are ignored.
+set_mode organic
+rm -rf -- "$HOME/.claude/CLAUDE.md" "$HOME/.codex/AGENTS.md" "$HOME/.gemini/GEMINI.md"
+ln -s "$HOME/missing-target" "$HOME/.claude/CLAUDE.md"
+printf '<!-- odd-flow:core -->\none\n<!-- /odd-flow:core -->\n<!-- odd-flow:core -->\ntwo\n<!-- /odd-flow:core -->\n' \
+    > "$HOME/.codex/AGENTS.md"
+mkdir "$HOME/.gemini/GEMINI.md"
+printf '<!-- odd-flow:core -->\nstale\n<!-- /odd-flow:core -->\n' > "$HOME/.claude/OTHER.md"
+check init-unreadable-edge 0 --json
+"$python" -I - <<'PY'
+import json
+from pathlib import Path
+
+assert not Path("err").read_text()
+report = json.loads(Path("out").read_text())
+reasons = {
+    "claude": "instructions file is a symlink",
+    "codex": "the file has more than one odd-flow block; fix it by hand first",
+    "antigravity": "cannot read instructions file",
+}
+assert report["init_blocks"]["runtimes"] == [
+    {"runtime": runtime, "status": "unreadable", "reason": reason}
+    for runtime, reason in reasons.items()
+], report
+assert len(report["warnings"]) == 3, report
+assert "OTHER.md" not in json.dumps(report), report
+PY
+
+# Session overrides never replace the persistent mode of the default profile.
+printf '{"default":"p_full","profiles":{"p_full":{},"p_org":{}},"workflow":{"p_full":{"orchestratorMode":"full-delegation"}}}\n' \
+    > "$ODD_FLOW_HOME/profiles.json"
+rm -r -- "$HOME/.claude/CLAUDE.md" "$HOME/.codex/AGENTS.md" "$HOME/.gemini/GEMINI.md"
+"$python" -I "$root/skills/odd-flow/scripts/init.py" apply --runtime codex > /dev/null
+ORCA_PANE_KEY=pane1 "$python" -I "$root/skills/odd-flow/scripts/profile.py" session-mode organic > /dev/null
+ODD_PROFILE=p_org ORCA_PANE_KEY=pane1 ODD_ORCHESTRATOR_MODE=organic check session-multi-override 0 --json
+"$python" -I - <<'PY'
+import json
+from pathlib import Path
+
+assert not Path("err").read_text()
+report = json.loads(Path("out").read_text())
+blocks = report["init_blocks"]
+assert blocks["expected_mode"] == "full-delegation", blocks
+assert blocks["mode_source"] == "profile p_full", blocks
+assert report["warnings"] == [], report
+PY
 
 check usage 2 --unknown
 test ! -s out
