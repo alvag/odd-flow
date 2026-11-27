@@ -31,14 +31,17 @@ import subprocess
 import sys
 import unittest
 
+SUBPROCESS_TIMEOUT = 15
+
 root, scratch, orca = map(Path, sys.argv[1:])
 sys.argv[1:] = []
 profile = root / "skills/odd-flow/scripts/profile.py"
 clock = "\u23f0"
+profile_name = f"prof-{clock}"
 session = "utf8-io-test"
 workspace = scratch / f"workspace-{clock}"
 workspace.mkdir()
-subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
+subprocess.run(["git", "init", "--quiet", str(workspace)], check=True, timeout=SUBPROCESS_TIMEOUT)
 env = {
     "PATH": os.environ["PATH"],
     "HOME": str(scratch),
@@ -52,12 +55,12 @@ if sys.platform == "win32":
     env["SystemRoot"] = os.environ["SYSTEMROOT"]
 (scratch / "profiles").mkdir()
 (scratch / "profiles/profiles.json").write_text(
-    json.dumps({"default": "caf\u00e9", "profiles": {"caf\u00e9": {}}}), encoding="utf-8",
+    json.dumps({"default": profile_name, "profiles": {profile_name: {}}}), encoding="utf-8",
 )
 for key in ("ANTIGRAVITY_CONVERSATION_ID", "CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"):
     subprocess.run(
         [sys.executable, "-I", str(profile), "session-mode", "full-delegation"],
-        env=dict(env, **{key: session}), check=True, capture_output=True,
+        env=dict(env, **{key: session}), check=True, capture_output=True, timeout=SUBPROCESS_TIMEOUT,
     )
 
 
@@ -66,11 +69,11 @@ def utf8(payload):
 
 
 class Utf8IoCheck(unittest.TestCase):
-    def hook(self, script, runtime, payload):
+    def hook(self, script, runtime, payload, *, cwd=workspace):
         args = ("--runtime", runtime) if runtime else ()
         return subprocess.run(
             [sys.executable, "-I", str(root / "scripts" / script), *args],
-            cwd=workspace, env=env, input=payload, capture_output=True,
+            cwd=cwd, env=env, input=payload, capture_output=True, timeout=SUBPROCESS_TIMEOUT,
         )
 
     def guard(self, runtime, payload):
@@ -129,6 +132,61 @@ class Utf8IoCheck(unittest.TestCase):
         self.assertNotEqual(done.returncode, 0)
         self.assertEqual(done.stdout, b"")
 
+    def test_claude_rejects_invalid_utf8(self):
+        path = f"odd/tasks/{clock}.md"
+        payload = utf8({
+            "cwd": str(workspace), "session_id": session, "tool_name": "Write",
+            "tool_input": {"file_path": path},
+        }).replace(path.encode("utf-8"), b"odd/tasks/\xff.md")
+        done = self.hook("pre-tool-use.py", "", payload)
+        self.assertEqual(done.returncode, 2, done.stderr)
+        self.assertEqual(done.stdout, b"")
+        self.assertIn(b"not valid UTF-8", done.stderr)
+
+    def test_antigravity_rejects_invalid_utf8(self):
+        path = f"odd/tasks/{clock}.md"
+        payload = utf8({
+            "cwd": str(workspace), "conversationId": session,
+            "toolCall": {"name": "write_file", "args": {"Path": path}},
+        }).replace(path.encode("utf-8"), b"odd/tasks/\xff.md")
+        done = self.hook("pre-tool-use.py", "antigravity", payload)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        output = json.loads(done.stdout)
+        self.assertEqual(output["decision"], "deny")
+        self.assertIn("not valid UTF-8", output["reason"])
+
+    def test_subdirectory_edit_uses_utf8_workspace_root(self):
+        cwd = workspace / "sub"
+        cwd.mkdir()
+        for path, expected in (("../x.py", "deny"), (f"../odd/tasks/{clock}.md", None)):
+            for runtime, payload in (
+                ("antigravity", {
+                    "conversationId": session,
+                    "toolCall": {"name": "write_file", "args": {"Path": path}},
+                }),
+                ("", {
+                    "session_id": session, "tool_name": "Write", "tool_input": {"file_path": path},
+                }),
+                ("codex", {
+                    "session_id": session, "tool_name": "apply_patch",
+                    "tool_input": {"command": f"*** Begin Patch\n*** Add File: {path}\n+test\n*** End Patch"},
+                }),
+            ):
+                with self.subTest(runtime=runtime or "claude", path=path):
+                    # Escape stdin so this check isolates the Git subprocess output.
+                    request = json.dumps({"cwd": str(cwd), **payload}).encode("ascii")
+                    done = self.hook("pre-tool-use.py", runtime, request, cwd=cwd)
+                    if runtime == "antigravity":
+                        self.assertEqual(done.returncode, 0, done.stderr)
+                        self.assertEqual(json.loads(done.stdout)["decision"], expected or "allow")
+                    else:
+                        self.assertEqual(self.permission(done), expected)
+                        if runtime == "codex" and expected == "deny":
+                            self.assertIn(
+                                f"Parent edit denied for {path!r}",
+                                json.loads(done.stdout)["hookSpecificOutput"]["permissionDecisionReason"],
+                            )
+
     def test_session_start_binds_utf8_payload(self):
         done = self.hook("session-start.py", "antigravity", utf8({
             "conversationId": session, "source": f"startup-{clock}",
@@ -138,15 +196,18 @@ class Utf8IoCheck(unittest.TestCase):
         context = step["systemMessage"]["systemMessage"]
         core = root / "skills/odd-flow/assets/core-block-full-delegation.md"
         self.assertTrue(context.startswith(core.read_text(encoding="utf-8").strip()))
-        header = context.partition("### odd-flow session state")[2].split("\n", 1)[0]
-        self.assertEqual(header, f" (SessionStart source: startup-{clock})")
-        self.assertIn("profile: caf\u00e9 (file default);", context)
+        state = context.partition("### odd-flow session state")[2]
+        header, _, details = state.partition("\n")
+        with self.subTest(field="source"):
+            self.assertEqual(header, f" (SessionStart source: startup-{clock})")
+        with self.subTest(field="profile"):
+            self.assertIn(f"profile: {profile_name} (file default);", details)
         self.assertIn("session key: ANTIGRAVITY_CONVERSATION_ID; agent: antigravity", context)
 
     def test_orca_agent_discovery_preserves_utf8(self):
         done = subprocess.run(
             [sys.executable, "-I", str(profile), "discover", "--json"],
-            env=env, capture_output=True, check=True,
+            env=env, capture_output=True, check=True, timeout=SUBPROCESS_TIMEOUT,
         )
         result = json.loads(done.stdout)
         self.assertNotIn("orca_error", result)
@@ -155,7 +216,7 @@ class Utf8IoCheck(unittest.TestCase):
     def test_orca_invalid_utf8_fails_closed(self):
         done = subprocess.run(
             [sys.executable, "-I", str(profile), "check"],
-            env=dict(env, INVALID_ORCA_UTF8="1"), capture_output=True,
+            env=dict(env, INVALID_ORCA_UTF8="1"), capture_output=True, timeout=SUBPROCESS_TIMEOUT,
         )
         self.assertNotEqual(done.returncode, 0)
         self.assertIn(b"cannot list Orca agents", done.stderr)
