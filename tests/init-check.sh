@@ -12,29 +12,44 @@ run() { isolated python3 -I "$I" "$@"; }
 
 assets="$(dirname "$I")/../assets"
 expected_block() {
-    printf '<!-- odd-flow:core -->\n'
-    python3 -I -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip("\n"))' "$assets/$1"
-    printf '<!-- /odd-flow:core -->\n'
+    python3 -I -X utf8 -c 'import pathlib, sys
+print("<!-- odd-flow:core -->")
+print(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip("\n"))
+print("<!-- /odd-flow:core -->")' "$assets/$1"
 }
 expected_block core-block.md > "$T/organic"
 expected_block core-block-full-delegation.md > "$T/full-delegation"
 
-windows_cmd=$(isolated python3 -I -B -c '
+windows_plan() {
+    isolated python3 -I -B -X utf8 -c '
 import os, sys
+from types import SimpleNamespace
+from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(sys.argv[1]))
-from init import format_apply_command
-print(format_apply_command(sys.argv[2:], "nt"))
-' "$I" 'C:\Program Files\Python\python.exe' 'C:\odd flow\init.py' apply --target "C:\O'Brien\AGENTS.md"); ec=$?
-windows_expected="& 'C:\Program Files\Python\python.exe' 'C:\odd flow\init.py' 'apply' '--target' 'C:\O''Brien\AGENTS.md'"
-[[ $ec == 0 && "$windows_cmd" == "$windows_expected" ]] &&
-    ok "Windows apply command uses PowerShell quoting" ||
-    ko "Windows apply command uses PowerShell quoting" "exit $ec or wrong command: $windows_cmd"
+import init
+sys.stdout.reconfigure(newline="\n")
+with patch.object(init, "os", SimpleNamespace(name="nt", path=os.path)):
+    sys.exit(init.main(["plan", "--mode", "organic", "--target", sys.argv[2]]))' "$I" "$1"
+}
+
+windows_output=$(windows_plan "$T/O'Brien AGENTS.md"); ec=$?
+[[ $ec == 0 && "$windows_output" == *"apply (PowerShell): & "*" 'apply' '--mode' 'organic' '--target' '"*"O''Brien AGENTS.md'"$'\n'"apply (bash): "*" apply --mode organic --target "*"O'\"'\"'Brien AGENTS.md'"$'\n'* ]] &&
+    ok "Windows plan prints labeled PowerShell and bash apply commands" ||
+    ko "Windows plan prints labeled PowerShell and bash apply commands" "exit $ec or wrong labels and quoting"
+
+# Check the escaping independently of the line label so missing quote doubling is its own RED.
+windows_output=$(windows_plan "$T/O’Brien a‘b‚c‛d.md"); ec=$?
+[[ $ec == 0 && "$windows_output" == *": & "*"O’’Brien a‘‘b‚‚c‛‛d.md'"$'\n'* ]] &&
+    ok "Windows plan doubles typographic single quotes in PowerShell" ||
+    ko "Windows plan doubles typographic single quotes in PowerShell" "exit $ec or wrong typographic quoting"
+
+bash_apply_line() { sed -n -e $'s/\r$//' -e 's/^apply: //p' -e 's/^apply (bash): //p'; }
 
 m="$T/mode target.md"
 out=$(isolated ODD_ORCHESTRATOR_MODE=full-delegation python3 -I "$I" plan --runtime codex --target "$m"); ec=$?
 [[ $ec == 0 && "$out" == *"mode: full-delegation (env ODD_ORCHESTRATOR_MODE); block: assets/core-block-full-delegation.md"* ]] && ok "plan names resolved mode, source and asset" || ko "plan names resolved mode, source and asset" "exit $ec or missing mode line"
 
-apply_cmd=$(printf '%s\n' "$out" | sed -n 's/^apply: //p')
+apply_cmd=$(printf '%s\n' "$out" | bash_apply_line)
 if [[ "$apply_cmd" == *"--runtime codex"* && "$apply_cmd" == *"--mode full-delegation"* && "$apply_cmd" == *"--target "* ]] &&
     isolated ODD_ORCHESTRATOR_MODE=organic bash -c "$apply_cmd" >/dev/null &&
     cmp -s "$m" "$T/full-delegation"; then
@@ -45,9 +60,10 @@ fi
 
 mkdir "$T/plan-cwd" "$T/apply-cwd"
 plan_cwd=$(cd "$T/plan-cwd" && pwd -P)
+relative_target=$(cd "$plan_cwd" && isolated python3 -I -c 'import os, sys; sys.stdout.write(os.path.abspath("relative target.md"))')
 relative_plan=$(cd "$plan_cwd" && run plan --mode organic --target 'relative target.md'); ec=$?
-relative_apply=$(printf '%s\n' "$relative_plan" | sed -n 's/^apply: //p')
-if [[ $ec == 0 && "$relative_plan" == "target: $plan_cwd/relative target.md (will be created)"* && -n "$relative_apply" ]] &&
+relative_apply=$(printf '%s\n' "$relative_plan" | bash_apply_line)
+if [[ $ec == 0 && -n "$relative_target" && "$relative_plan" == "target: $relative_target (will be created)"* && -n "$relative_apply" ]] &&
     (cd "$T/apply-cwd" && isolated bash -c "$relative_apply" >/dev/null) &&
     cmp -s "$T/plan-cwd/relative target.md" "$T/organic" &&
     [[ ! -e "$T/apply-cwd/relative target.md" ]]; then

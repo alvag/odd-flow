@@ -125,10 +125,13 @@ def read_current(path):
         return handle.read()
 
 
-def format_apply_command(command, platform):
-    if platform == "nt":
-        return "& " + " ".join("'" + arg.replace("'", "''") + "'" for arg in command)
-    return shlex.join(command)
+def format_apply_lines(command, platform):
+    bash = shlex.join(command)
+    if platform != "nt":
+        return f"apply: {bash}"
+    # Match the PowerShell single-quote rule in profile.py's shell_quote.
+    quoted = ["'" + re.sub("['\u2018\u2019\u201a\u201b]", lambda m: m.group() * 2, arg) + "'" for arg in command]
+    return f"apply (PowerShell): & {' '.join(quoted)}\napply (bash): {bash}"
 
 
 def cmd_plan(args):
@@ -153,7 +156,7 @@ def cmd_plan(args):
         command.extend(["--runtime", args.runtime])
     if args.target is not None:
         command.extend(["--target", path])
-    print(f"apply: {format_apply_command(command, os.name)}")
+    print(format_apply_lines(command, os.name))
     if new == current:
         print("status: up to date, nothing to write")
         return
