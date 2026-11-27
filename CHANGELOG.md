@@ -9,6 +9,8 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-26
+
 ### Added
 
 - ODD Flow Orca plugin 0.2.0: Install and update from GitHub through an Orca catalog without cloning. The catalog install was verified live on Orca 1.4.278. Before switching from a folder install, run `orca plugin uninstall local.odd-flow-profiles --json`.

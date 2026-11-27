@@ -27,7 +27,7 @@ Profile: `claude-gpt`.
 | ID | Specs | Work | Route | Status | Evidence |
 |---|---|---|---|---|---|
 | T1 | S2, S3, S6, S7 | Version bump, plugin README catalog section and heading, old-anchor links, Current checkout plugin column | orca:write (full delegation: every workspace change goes to a writer) | done | see commit in L6 |
-| T2 | S9-S11, S14 | odd-flow 0.5.0: four manifests, other current-version mentions, CHANGELOG [0.5.0] section, Current checkout odd-flow column | orca:write (after T1: shares docs/compatibility.md) | pending | |
+| T2 | S9-S11, S14 | odd-flow 0.5.0: four manifests, other current-version mentions, CHANGELOG [0.5.0] section, Current checkout odd-flow column | orca:write (after T1: shares docs/compatibility.md) | done | see commit in L8 |
 | T3 | S1, S4-S6, S11-S13, S15 | Prepend the clean-clone release entry to orca-catalog.json; plugin 0.2.1 bullet in [0.5.0]; compatibility 0.5.0 / 0.2.1 row | orca:write (after T2 commit: pinned) | pending | |
 | T4 | S1-S15 | Bounded independent verify of the release entry and docs | orca:verify (Risk item 5: release) | pending | |
 
@@ -38,3 +38,5 @@ Profile: `claude-gpt`.
 - L3 (parent, 2026-11-26): baseline on main 4225593 clean clone: `orca plugin test orca-plugin` exit 1, the long-scratch-path tooltip test fails by truncation (actual tooltip ends with an ellipsis); `bash tests/orca-catalog-check.sh` exit 0 with NOTE about unreleased orca-plugin/ changes.
 - L4 (parent, 2026-11-26): baseline counts on main (clean clone in scratch): `orca plugin test orca-plugin` 158 tests, 157 pass, 1 fail ("status refresh reads only Show and warns about an outdated script for one or several coordinators", tooltip truncated by the long scratch path). T2 Task created up front: task_d265bd575102 (deps T1 task_097c4624f44a).
 - L5 (parent, 2026-11-26): T1 worker_done (ctx_afd983c1a1a5), files within surface. Spot check: `bash tests/version-check.sh` exit 0; `git grep -n "not-yet-verified-live"` only odd/tasks/catalog-verified.md:17 (historical assumption text, not a link). Writer residual risk: 0.2.1 not exercised live; auto-update and the Settings toggle unexercised.
+- L6 (parent, 2026-11-26): T1 committed as 27d2b21e36c786b7009c57e1a279c150f42710b7. Starting T2 (task_d265bd575102).
+- L7 (parent, 2026-11-26): T2 worker_done (ctx_8e48d911a9d5), files within surface. Spot check: `bash tests/version-check.sh` exit 0. Worker: run.sh 25 passed, 0 failed (setgid worker-token case skipped in its sandbox); install_check.py exit 1, all three runtimes and the Orca plugin report version differs (installed 0.4.0 / 0.2.0 vs checkout 0.5.0 / 0.2.1), as expected.
