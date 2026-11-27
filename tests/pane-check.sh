@@ -193,8 +193,12 @@ printf '%s\n' \
   '            raise pane.subprocess.CalledProcessError(1, argv)' \
   '        parent = pid + 1 if pid - 2 < len(chain) - 1 else 1' \
   '        return SimpleNamespace(stdout=f"{parent} {tty}\n")' \
+  '    def open_device(path, flags):' \
+  '        if path not in devices:' \
+  '            raise FileNotFoundError(path)' \
+  '        return devices[path]' \
   '    def posix_cols():' \
-  '        with patch.multiple(pane.os, getppid=lambda: 2, open=lambda path, flags: devices[path], close=lambda fd: None), \' \
+  '        with patch.multiple(pane.os, getppid=lambda: 2, open=open_device, close=lambda fd: None), \' \
   '             patch.object(pane.subprocess, "run", ps), \' \
   '             patch.object(fcntl, "ioctl", lambda fd, *args: struct.pack("HHHH", 0, fd, 0, 0)):' \
   '            return real_parent_cols()' \
@@ -677,6 +681,23 @@ if [[ -z "$windows" ]]; then
   out=$(posix_ttys='? ?? ttys010:211 ttys010:211 invisible' settle_ms=0 open_pane --role verify); ec=$?
   expect "Claude Code and Codex: an invisible ancestor preserves the pane TTY width" 0 "$ec" \
     '"placement": "split-right", "handle": "term_new", "parent": "term_parent", "target": "term_parent", "cols": 211' \
+    "$list_call$right_call$title_call"
+
+  rm -f "$width_record"
+  out=$(posix_ttys='? ??' settle_ms=0 open_pane --role verify); ec=$?
+  expect "POSIX: no ancestor TTY keeps the unknown-width tab" 0 "$ec" \
+    '"placement": "tab", "handle": "term_tab", "parent": "term_parent", "target": null, "cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
+    "$list_call$baseline_call$tab_call"
+
+  out=$(posix_ttys='invisible ttys015:211' settle_ms=0 open_pane --role verify); ec=$?
+  expect "POSIX: first ps lookup failure keeps the unknown-width tab" 0 "$ec" \
+    '"placement": "tab", "handle": "term_tab", "parent": "term_parent", "target": null, "cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
+    "$list_call$baseline_call$tab_call"
+
+  printf '219\n' >"$width_record"
+  out=$(posix_ttys='ttys006:80 ttys015 ??' settle_ms=0 open_pane --role verify); ec=$?
+  expect "POSIX: unopenable outer TTY falls back to inner TTY and recorded width" 0 "$ec" \
+    '"placement": "split-right", "handle": "term_new", "parent": "term_parent", "target": "term_parent", "cols": 80, "min_cols": 160, "reason": "parent terminal measured 80 columns; recorded width is 219 columns"' \
     "$list_call$right_call$title_call"
 fi
 
