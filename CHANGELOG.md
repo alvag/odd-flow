@@ -16,6 +16,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 ### Fixed
 
 - The Orca dispatch guide documents platform-specific Antigravity allow rules and explains why broad rules can approve chained commands (#71).
+- On macOS and Linux, `pane.py open` measures the outer Orca pane instead of Antigravity CLI's internal 80-column terminal, so workers split right when the pane is wide enough (#87).
 - Role prompts, the worker spec template and the Orca dispatch guide require message bodies to be written to a scratch file outside the repository and passed with `--body-file`, so the shell no longer runs backticks in worker reports and Antigravity permission rules keep matching (#82).
 - `/odd-flow check` now reports every installed ODD Flow Orca plugin, compares folder and catalog installs against their respective versions, flags differing commits when catalog versions match and both commits are known, and warns when multiple copies are enabled (#44).
 - `/odd-flow init` installs the core block for the resolved orchestrator mode and prints an apply command that pins that mode (#41).

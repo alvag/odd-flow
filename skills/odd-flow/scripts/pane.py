@@ -261,30 +261,41 @@ def parent_cols():
             pass
         return None
     pid = os.getppid()
-    while pid > 1:
-        try:
+    tty_run = []
+    try:
+        while pid > 1:
             ps = subprocess.run(
                 ["ps", "-o", "ppid=,tty=", "-p", str(pid)],
                 capture_output=True, text=True, check=True,
             )
-            next_pid, *tty = ps.stdout.split()
+            next_pid, *ttys = ps.stdout.split()
             next_pid = int(next_pid)
-            if tty and tty[0] not in {"?", "??"}:
-                try:
-                    fd = os.open(f"/dev/{tty[0]}", os.O_RDONLY | os.O_NOCTTY)
-                except FileNotFoundError:
-                    # macOS ps can report sNNN rather than ttysNNN.
-                    fd = os.open(f"/dev/tty{tty[0]}", os.O_RDONLY | os.O_NOCTTY)
-                try:
-                    size = fcntl.ioctl(fd, termios.TIOCGWINSZ, bytes(8))
-                    return struct.unpack("HHHH", size)[1] or None
-                finally:
-                    os.close(fd)
+            if ttys and ttys[0] not in {"?", "??"}:
+                tty_run.append(ttys[0])
+            elif tty_run:
+                # The terminal host marks the end of the pane's TTY run.
+                break
             if next_pid == pid:
                 break
             pid = next_pid
-        except (OSError, subprocess.SubprocessError, ValueError):
-            break
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    for tty in reversed(tty_run):
+        try:
+            try:
+                fd = os.open(f"/dev/{tty}", os.O_RDONLY | os.O_NOCTTY)
+            except FileNotFoundError:
+                # macOS ps can report sNNN rather than ttysNNN.
+                fd = os.open(f"/dev/tty{tty}", os.O_RDONLY | os.O_NOCTTY)
+            try:
+                size = fcntl.ioctl(fd, termios.TIOCGWINSZ, bytes(8))
+                cols = struct.unpack("HHHH", size)[1]
+            finally:
+                os.close(fd)
+        except (OSError, ValueError):
+            continue
+        if cols:
+            return cols
     return None
 
 
