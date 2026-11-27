@@ -45,7 +45,7 @@ class CodexPluginCheck(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, "-I", str(root / "scripts" / script), "--runtime", "codex"],
             input=json.dumps({"session_id": session, "hook_event_name": event, **payload}),
-            env=env, check=True, capture_output=True, text=True,
+            env=env, check=True, capture_output=True, text=True, encoding="utf-8",
         )
         self.assertEqual(result.stderr, "")
         self.assertTrue(result.stdout, f"{script} did not emit hook JSON")
@@ -56,12 +56,12 @@ class CodexPluginCheck(unittest.TestCase):
         return specific["additionalContext"]
 
     def test_manifest_and_marketplace(self):
-        manifest = json.loads((root / ".codex-plugin/plugin.json").read_text())
+        manifest = json.loads((root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "odd-flow")
         self.assertTrue((root / manifest["skills"] / "odd-flow/SKILL.md").is_file())
         self.assertEqual(manifest["hooks"], "./hooks/codex-hooks.json")
         self.assertTrue((root / manifest["hooks"]).is_file())
-        market = json.loads((root / ".agents/plugins/marketplace.json").read_text())
+        market = json.loads((root / ".agents/plugins/marketplace.json").read_text(encoding="utf-8"))
         self.assertEqual(market["name"], "odd-flow")
         entry, = market["plugins"]
         self.assertEqual(entry["name"], manifest["name"])
@@ -69,7 +69,7 @@ class CodexPluginCheck(unittest.TestCase):
         self.assertEqual((root / entry["source"]["path"]).resolve(), root.resolve())
 
     def test_only_codex_hook_events_and_commands(self):
-        config = json.loads((root / "hooks/codex-hooks.json").read_text())["hooks"]
+        config = json.loads((root / "hooks/codex-hooks.json").read_text(encoding="utf-8"))["hooks"]
         self.assertEqual(set(config), {"SessionStart", "UserPromptSubmit", "PreToolUse"})
         start, = config["SessionStart"]
         self.assertEqual(set(start["matcher"].split("|")), {"startup", "resume", "clear", "compact"})
@@ -94,7 +94,7 @@ class CodexPluginCheck(unittest.TestCase):
         self.assertIn("session key: CODEX_THREAD_ID; agent: codex", context)
         self.assertNotIn("CLAUDE_CODE_SESSION_ID", context)
         core = root / "skills/odd-flow/assets/core-block-full-delegation.md"
-        self.assertTrue(context.startswith(core.read_text().strip()))
+        self.assertTrue(context.startswith(core.read_text(encoding="utf-8").strip()))
 
     def test_prompt_submit_uses_codex_mode_and_worker_data(self):
         set_session_mode()
@@ -105,7 +105,7 @@ class CodexPluginCheck(unittest.TestCase):
         )
         key = hashlib.sha256(session.encode()).hexdigest()
         marker = scratch / "codex-data/prompt-sessions" / key
-        self.assertEqual(marker.read_text(), "worker")
+        self.assertEqual(marker.read_text(encoding="utf-8"), "worker")
         self.assertFalse((scratch / "claude-data").exists())
 
 

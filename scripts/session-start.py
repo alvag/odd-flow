@@ -37,7 +37,7 @@ CLEANUP_BUDGET_SECONDS = 1
 
 def read_payload():
     try:
-        return json.loads(sys.stdin.read() or "{}")
+        return json.loads((sys.stdin.buffer.read() or b"{}").decode("utf-8"))
     except (ValueError, OSError):
         return {}
 
@@ -73,12 +73,13 @@ def run_profile(env, *args):
     """Return (exit code, text) of a profile.py call; exit code None when it could not run."""
     try:
         done = subprocess.run(
-            [sys.executable, "-I", PROFILE_SCRIPT, *args],
-            env=env, capture_output=True, text=True, timeout=5, check=False,
+            [sys.executable, "-I", "-X", "utf8", PROFILE_SCRIPT, *args],
+            env=env, capture_output=True, timeout=5, check=False,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+        text = (done.stdout or done.stderr).decode("utf-8")
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
         return None, str(exc)
-    return done.returncode, (done.stdout or done.stderr).strip()
+    return done.returncode, text.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
 def session_mode(env):

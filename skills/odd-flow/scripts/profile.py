@@ -544,10 +544,11 @@ def orca_agents():
     try:
         out = subprocess.run(
             [os.environ.get("ORCA_CLI_COMMAND", "orca"), "agent", "installed", "--json"],
-            capture_output=True, text=True, timeout=30, check=True,
+            capture_output=True, timeout=30, check=True,
         ).stdout
-        data = json.loads(out)
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+        # A Windows subprocess reader thread cannot propagate decoding errors.
+        data = json.loads(out.decode("utf-8"))
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProfileError(f"cannot list Orca agents: {exc}") from exc
     items = data.get("result", data)
     if isinstance(items, dict):

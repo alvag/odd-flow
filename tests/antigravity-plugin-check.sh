@@ -44,7 +44,7 @@ class AntigravityPluginCheck(unittest.TestCase):
     def run_hook(self, stdin, hook_env=env, cwd=root, script="session-start.py"):
         result = subprocess.run(
             [sys.executable, "-I", f"./scripts/{script}", "--runtime", "antigravity"],
-            input=stdin, env=hook_env, cwd=cwd, check=True, capture_output=True, text=True,
+            input=stdin, env=hook_env, cwd=cwd, check=True, capture_output=True, text=True, encoding="utf-8",
         )
         self.assertEqual(result.stderr, "")
         output = json.loads(result.stdout)
@@ -58,7 +58,7 @@ class AntigravityPluginCheck(unittest.TestCase):
         return step["systemMessage"]["systemMessage"]
 
     def test_manifest_selects_default_skill(self):
-        manifest = json.loads((root / ".antigravity-plugin/plugin.json").read_text())
+        manifest = json.loads((root / ".antigravity-plugin/plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["name"], "odd-flow")
         self.assertNotIn("skills", manifest)
         self.assertNotIn("hooks", manifest)
@@ -67,7 +67,7 @@ class AntigravityPluginCheck(unittest.TestCase):
     def test_three_native_hooks(self):
         # Antigravity's root hooks.json maps a hook name to per-event handlers: flat for
         # SessionStart and PreInvocation, grouped (matcher + hooks) for PreToolUse.
-        config = json.loads((root / "hooks.json").read_text())
+        config = json.loads((root / "hooks.json").read_text(encoding="utf-8"))
         spec, = config.values()
         self.assertEqual(set(spec), {"SessionStart", "PreInvocation", "PreToolUse"})
         commands = {
@@ -94,7 +94,7 @@ class AntigravityPluginCheck(unittest.TestCase):
         payload = json.dumps({"conversationId": conversation})
         text = self.message(self.run_hook(payload))
         core = root / "skills/odd-flow/assets/core-block-full-delegation.md"
-        self.assertTrue(text.startswith(core.read_text().strip()))
+        self.assertTrue(text.startswith(core.read_text(encoding="utf-8").strip()))
         self.assertIn("session key: ANTIGRAVITY_CONVERSATION_ID; agent: antigravity", text)
         self.assertIn("mode: full-delegation", text)
         self.assertNotIn("wrong-", text)
@@ -103,7 +103,7 @@ class AntigravityPluginCheck(unittest.TestCase):
         payload = json.dumps({"conversationId": "agy-organic"})
         text = self.message(self.run_hook(payload))
         core = root / "skills/odd-flow/assets/core-block.md"
-        self.assertTrue(text.startswith(core.read_text().strip()))
+        self.assertTrue(text.startswith(core.read_text(encoding="utf-8").strip()))
         self.assertIn("session key: ANTIGRAVITY_CONVERSATION_ID; agent: antigravity", text)
 
     def test_ignores_foreign_plugin_roots(self):
@@ -236,7 +236,7 @@ class AntigravityPluginCheck(unittest.TestCase):
 
     def test_profile_failure_keeps_organic_fallback(self):
         broken = dict(env, ODD_FLOW_HOME=str(scratch / "missing" / "file"))
-        (scratch / "missing").write_text("not a directory")
+        (scratch / "missing").write_text("not a directory", encoding="utf-8")
         text = self.message(self.run_hook(json.dumps({"conversationId": conversation}), broken))
         self.assertIn("organic", text.lower())
 
