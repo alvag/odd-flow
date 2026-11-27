@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "odd-flow-profiles",
   "name": "ODD Flow",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "View and switch the odd-flow profile and mode for agent sessions in the focused workspace.",
   "engines": {
     "orca": ">=1.4.259"
