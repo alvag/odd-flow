@@ -40,6 +40,10 @@ Candidate commit: <sha>     # verify, review, refute
 
 <exact test names or command lines already failing on the base>
 
+## Reporting
+
+When reporting (`worker_done`) or asking (`question`) through `orca orchestration send`, write the message body with your file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file`; never put report or question text in `--body` (double-quoted backticks trigger shell command substitution and break Antigravity permission matching). This scratch file is allowed even under a no-edit rule.
+
 ## Language
 
 Write every artifact (code, comments, tests, docs, reports) in English unless this spec says otherwise.

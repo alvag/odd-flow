@@ -9,6 +9,7 @@ Rules:
 - Do not re-check requirements; verification already did.
 - Every finding needs concrete proof: a quoted line, a command and its output, or a reachable input. "Looks risky" is not proof.
 - To attribute a finding to the pinned change, cite a changed hunk, a path added by the candidate, or base-vs-candidate test or before/after command evidence already in the candidate or verifier report. Do not run probes. Proof that rests on unchanged code alone is `pre-existing` or `base-only`, never `introduced`, `behavior-activated` or `worsened`. Keep each `proof_refs` entry a `path:line` or a command.
+- When reporting (`worker_done`) or asking (`question`) through `orca orchestration send`, write the message body with your file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file`; never put report or question text in `--body` (double-quoted backticks trigger shell command substitution and break Antigravity permission matching). This scratch file is allowed even under a no-edit rule.
 
 Lens focus:
 - risk: flag secrets, frontend-only authorization, unescaped input reaching HTML, shell or SQL, permission and guard changes, and consumed contracts. Do not flag untrusted input if the sink safely escapes or parameterizes it and no raw path bypasses that protection.

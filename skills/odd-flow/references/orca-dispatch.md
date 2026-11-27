@@ -79,7 +79,7 @@ Start every independent worker of one parallel batch from a single shell command
 
 ## When Orca wakes you
 
-For any `ORCA orchestration send` message body containing backticks, write the body to a file and pass it with `--body-file`, even for one line. The shell can expand backticks in a double-quoted `--body`.
+For every `ORCA orchestration send` and `ORCA orchestration reply` message body, including worker `worker_done` reports and `question` messages as the role prompts require, even for one line, write the body with the file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file` instead of `--body`; never put report or question text in `--body`, because double-quoted backticks run shell command substitution and cause Antigravity permission rules to fall back to exact matching.
 
 - `worker_done`: read the report, check it against the role's Return format, spot-check the reported command that proves the main acceptance criterion (`delegation.md`, Correction bounds), compare a writer's changed files with its surface, then update the feature document.
 - After `worker_done` of a terminal or split-pane launch, release it: `ORCA orchestration worker-release --environment local --dispatch <dispatch_id>`. Orca does not close a terminal it did not start (`reason=external_terminal`); if the handle is still in `ORCA terminal list --json`, close it with `ORCA terminal close --terminal <handle>`, unless the user asked to keep it open.
