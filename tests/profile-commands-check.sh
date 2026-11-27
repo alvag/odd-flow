@@ -116,7 +116,7 @@ expect "default: setting the current default writes nothing" "already the defaul
 chmod 644 "$T/home/profiles.json"
 printf '%s' '{"explore": {"agent": "codex"}}' >"$T/roles3.json"
 out=$(run python3 -I "$P" save keepmode --roles-file "$T/roles3.json" --yes); ec=$?
-expect "save: keeps file mode 644" "644" "$(stat -f %Lp "$T/home/profiles.json")" 0 $ec
+expect "save: keeps file mode 644" "644" "$(python3 -I -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$T/home/profiles.json")" 0 $ec
 mv "$T/home/profiles.json" "$T/real.json"; ln -s "$T/real.json" "$T/home/profiles.json"
 out=$(run python3 -I "$P" save viaLink --roles-file "$T/roles3.json" --yes); ec=$?
 expect "save: a symlinked file is written through the link" '"viaLink"' "$(cat "$T/real.json")" 0 $ec
