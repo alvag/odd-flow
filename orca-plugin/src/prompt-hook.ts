@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import type { PluginHooks } from 'orca/host'
 
@@ -23,13 +23,10 @@ export function evaluateWindowsDaclSddl(sddl: string, userSid: string): WindowsD
   }
 
   const afterD = sddl.slice(dIndex + 2)
-  if (afterD === 'NO_ACCESS_CONTROL' || afterD.startsWith('NO_ACCESS_CONTROL' + 'S:')) {
+  const flags = /^((?:P|AI|AR)*)/i.exec(afterD)?.[1] ?? ''
+  const afterFlags = afterD.slice(flags.length)
+  if (afterFlags === 'NO_ACCESS_CONTROL' || afterFlags.startsWith('NO_ACCESS_CONTROL' + 'S:')) {
     return { ok: false, reason: 'worker-tokens has a null DACL (D:NO_ACCESS_CONTROL)' }
-  }
-
-  const flags = /^([A-Za-z]*)/.exec(afterD)?.[1] ?? ''
-  if (!/^(?:P|AI|AR)*$/i.test(flags)) {
-    return { ok: false, reason: 'worker-tokens has an unparsable DACL' }
   }
 
   const allowedSids = new Set(['SY', 'S-1-5-18', 'BA', 'S-1-5-32-544', userSid.toUpperCase()])
@@ -103,7 +100,7 @@ function checkWindowsTokenDirectory(dir: string): WindowsDaclVerdict {
     return { ok: false, reason: 'could not determine current user SID' }
   }
 
-  const aclTempDir = mkdtempSync(join(tmpdir(), 'odd-flow-acl-'))
+  const aclTempDir = mkdtempSync(join(dir, 'odd-flow-acl-'))
   try {
     const aclFile = join(aclTempDir, 'dacl.txt')
     execFileSync(

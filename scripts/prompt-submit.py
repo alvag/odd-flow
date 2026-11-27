@@ -58,12 +58,10 @@ def evaluate_windows_dacl_sddl(sddl, user_sid):
         return False
 
     after_d = sddl[d_index + 2:]
-    if after_d == "NO_ACCESS_CONTROL" or after_d.startswith("NO_ACCESS_CONTROL" + "S:"):
-        return False
-
-    flags_match = re.match(r"^([A-Za-z]*)", after_d)
+    flags_match = re.match(r"^((?:P|AI|AR)*)", after_d, re.IGNORECASE)
     flags = flags_match.group(1) if flags_match else ""
-    if not re.fullmatch(r"(?:P|AI|AR)*", flags, re.IGNORECASE):
+    after_flags = after_d[len(flags):]
+    if after_flags == "NO_ACCESS_CONTROL" or after_flags.startswith("NO_ACCESS_CONTROL" + "S:"):
         return False
 
     allowed_sids = {"SY", "S-1-5-18", "BA", "S-1-5-32-544", user_sid.upper()}

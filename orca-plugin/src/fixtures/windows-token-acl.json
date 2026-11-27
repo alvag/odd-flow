@@ -130,6 +130,41 @@
       "name": "malformed_ace_field_count",
       "sddl": "D:(A;;FA;;SY)",
       "accept": false
+    },
+    {
+      "name": "icacls_null_dacl_real_form",
+      "sddl": "D:PAINO_ACCESS_CONTROL",
+      "accept": false
+    },
+    {
+      "name": "inherited_with_low_mandatory_label",
+      "sddl": "D:AI(A;OICIID;FA;;;BA)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)S:AI(ML;OICI;NW;;;LW)",
+      "accept": true
+    },
+    {
+      "name": "generic_rights_inherit_only",
+      "sddl": "D:PAI(A;OICIIO;GWGR;;;SY)(A;;0x12019f;;;SY)(A;;FA;;;BA)(A;;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)(A;OICIIO;GA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": true
+    },
+    {
+      "name": "conditional_ace_set_by_set_acl",
+      "sddl": "D:PAI(XA;OICI;FA;;;WD;(Member_of {SID(BA)}))(A;OICI;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": false
+    },
+    {
+      "name": "users_inherit_only_read",
+      "sddl": "D:AI(A;OICIIO;FR;;;BU)(A;OICIID;FA;;;SY)(A;OICIID;FA;;;S-1-5-21-1111111111-2222222222-3333333333-1001)",
+      "accept": false
+    },
+    {
+      "name": "protected_empty_dacl_followed_by_sacl",
+      "sddl": "D:PS:(ML;;NW;;;LW)",
+      "accept": true
+    },
+    {
+      "name": "auto_inherited_empty_dacl_followed_by_sacl",
+      "sddl": "D:AIS:(ML;;NW;;;LW)",
+      "accept": true
     }
   ]
 }

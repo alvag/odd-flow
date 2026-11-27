@@ -255,6 +255,9 @@ test('evaluates shared Windows SDDL DACL fixtures', () => {
     const verdict = evaluateWindowsDaclSddl(item.sddl, WINDOWS_ACL_FIXTURE.userSid)
     assert.equal(verdict.ok, item.accept, `${item.name}: expected accept=${item.accept}, got ${JSON.stringify(verdict)}`)
   }
+  const nullDacl = evaluateWindowsDaclSddl('D:PAINO_ACCESS_CONTROL', WINDOWS_ACL_FIXTURE.userSid)
+  assert.equal(nullDacl.ok, false)
+  if (!nullDacl.ok) assert.match(nullDacl.reason, /null DACL/i)
 })
 
 test('issues a token and writes its record in a fresh private temp state dir on Windows', {
@@ -266,6 +269,27 @@ test('issues a token and writes its record in a fresh private temp state dir on 
   assert.deepEqual(readdirSync(dir), [recordName(TOKEN)])
   assert.deepEqual(JSON.parse(readFileSync(join(dir, recordName(TOKEN)), 'utf8')), { role: 'write', issuedAt: NOW })
   assert.deepEqual(logs, [])
+})
+
+test('places the icacls scratch directory under worker-tokens rather than tmpdir on Windows', {
+  skip: process.platform !== 'win32' && 'Windows ACL check only runs on win32'
+}, (t) => {
+  const { stateDir, dir, issue, logs } = fixture(t)
+  const prevTemp = process.env.TEMP
+  const prevTmp = process.env.TMP
+  process.env.TEMP = join(stateDir, 'missing-temp')
+  process.env.TMP = join(stateDir, 'missing-temp')
+  try {
+    const original = '# Role: write\nTask body'
+    assert.equal(issue(original), original + `\n\nodd-flow-worker: write ${TOKEN}\n`)
+    assert.deepEqual(readdirSync(dir), [recordName(TOKEN)])
+    assert.deepEqual(logs, [])
+  } finally {
+    if (prevTemp === undefined) delete process.env.TEMP
+    else process.env.TEMP = prevTemp
+    if (prevTmp === undefined) delete process.env.TMP
+    else process.env.TMP = prevTmp
+  }
 })
 
 test('rejects and logs a Windows token dir with an extra grant to Everyone', {

@@ -189,10 +189,16 @@ The ODD Flow Orca plugin checks ownership on platforms that expose the user ID.
 On Windows, `worker-tokens` must be a real directory (not a symlink or
 junction) whose DACL allows only the current user, `SYSTEM` (`S-1-5-18`), and
 `Administrators` (`S-1-5-32-544`), and the plugin never modifies ACLs. If a
-non-default ACL blocks issuance, reset it with:
+non-default ACL blocks issuance, reset it from `cmd.exe` with:
 
-```sh
+```cmd
 icacls <dir> /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"
+```
+
+Or in PowerShell:
+
+```powershell
+icacls <dir> /inheritance:r /grant:r "$($env:USERNAME):(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F"
 ```
 
 If the plugin cannot issue a token, it leaves the prompt unchanged and logs
