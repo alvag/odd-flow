@@ -60,7 +60,7 @@
 
         If the wait still reports `agent-hooks-review-prompt` after you apply the user's choice, but `ORCA terminal read --terminal <handle> --screen` shows the Codex prompt, close the pane with `ORCA terminal close --terminal <handle>`, repeat placement (step 3 of [Launch one worker](#launch-one-worker)) to open a fresh pane, and resume at terminal step 3 with the new handle. The menu can appear after the wait succeeds, so read the screen once before step 4 and handle the menu as above if it appears.
 
-        In a new worktree, Antigravity prompts for workspace trust. If the wait exits 1 with `"blockedReason": "agent-trust-workspace"`, keep the terminal open and do not run step 4 yet. Read the prompt with `ORCA terminal read --terminal <handle> --screen` and relay it and its options to the user unchanged. Only the user decides how to answer for that worktree. Re-run the wait after applying the user's choice and continue to step 4 only once it succeeds.
+        Workspace trust behavior can vary. In live checks (`agy` 1.5.18, 2026-11-27), Antigravity prompted for trust in a new macOS worktree; on Windows it added the folder to `trustedWorkspaces` without prompting, with `allowNonWorkspaceAccess` set to `true`. If the wait exits 1 with `"blockedReason": "agent-trust-workspace"`, keep the terminal open and do not run step 4 yet. Read the prompt with `ORCA terminal read --terminal <handle> --screen` and relay it and its options to the user unchanged. Only the user decides how to answer for that worktree. Re-run the wait after applying the user's choice and continue to step 4 only once it succeeds.
      4. `ORCA orchestration worker-start --environment local --task <taskId> --terminal <handle> --json`, without `flags`.
      If a step fails, close the pane or terminal you opened (`ORCA terminal close --terminal <handle>`) and report the error with the `taskId` if one exists. The task stays unassigned for a retry with `worker-start --task`; never fall back to `worker-start --agent codex`.
 4. End the turn. Orca wakes you; never poll.
@@ -85,7 +85,25 @@ For every `ORCA orchestration send` and `ORCA orchestration reply` message body,
 - After `worker_done` of a terminal or split-pane launch, release it: `ORCA orchestration worker-release --environment local --dispatch <dispatch_id>`. Orca does not close a terminal it did not start (`reason=external_terminal`); if the handle is still in `ORCA terminal list --json`, close it with `ORCA terminal close --terminal <handle>`, unless the user asked to keep it open.
 - To correct a Codex writer whose split pane or tab has closed, follow [Launch one worker](#launch-one-worker), including pane placement in step 3 and the terminal steps. Use the original spec plus the correction. The relaunch continues the same unit and counts as the correction against the original worker's [correction bound](delegation.md#correction-bounds). Do not send a follow-up with `ORCA orchestration send --to dispatch:<dispatch_id>`: Orca can return `"delivery": "reopened"` and start Codex in its own terminal, not through `scripts/codex-worker.sh`, so the launcher's sandbox and network pins are not guaranteed (Codex CLI 0.171.0, observed 2026-11-23). If a reopened dispatch shows a folder or workspace trust prompt, never answer it for the user. Stop the dispatch with `ORCA orchestration worker-stop --environment local --dispatch <dispatch_id>`, or relay the screen unchanged if the user wants to answer it.
 - `question`: answer from the task or the user's instructions. Otherwise relay it to the user unchanged: every option, label and description in original order, and the allowed answers. Return a valid answer to the worker once.
-- An Antigravity worker that pauses with `stopReason=needs-input` when it first runs `orca orchestration send` (verified 2026-11-24, `agy` 1.5.16) is waiting for `orca` command permission, not failing. Relay it to the user: only they decide whether to persist `orca` permission in Antigravity `settings.json`. Once persisted, later Antigravity workers send `worker_done` without escalation. Do not answer the prompt for them.
+- An Antigravity worker can pause with `stopReason=needs-input` at a permission prompt. The `orca orchestration` lifecycle commands (`send`, `check`, `ask`, `reply`) can run outside the terminal sandbox, which blocks Orca on Windows. Outside the sandbox, Auto mode's review sometimes approves these commands and sometimes asks. Declining a prompt ends the worker's turn before it can send `worker_done`. Relay the prompt to the user unchanged. They can approve once or fix the allow rule; do not answer the prompt or persist a rule for them.
+
+  To avoid repeated prompts, the user can add the appropriate JSON string below to `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` (Windows: `%USERPROFILE%\.gemini\antigravity-cli\settings.json`). Do not use `agy --settings` to add the rule: it replaces the user's entire `permissions` object for that session.
+
+  macOS/Linux:
+
+  ```json
+  "command(orca orchestration)"
+  ```
+
+  Windows (keep the doubled backslashes in JSON):
+
+  ```json
+  "command(regex:orca orchestration (send|check|ask|reply) [^;&|`$\\r\\n]*)"
+  ```
+
+  On startup, Antigravity may rewrite `settings.json` and store the rule's `&` as `\u0026`; JSON decodes both forms to the same string, so the rule is unchanged.
+
+  When Antigravity cannot split a PowerShell line into words, [it requires a full-line match](https://antigravity.google/docs/permissions?tab=cli#cli-cross-platform-command-matching). A prefix rule then does not match, and choosing “Always allow” saves the whole line, including the current pane ID. The regex matches across panes while its character class excludes shell separators, backticks, dollar signs, and line breaks. Do not allow all Orca commands or replace the character class with a trailing `.*`: in a live Windows check (`agy` 1.5.18, 2026-11-27), the wildcard also approved a chained statement such as `orca orchestration check --terminal <pane> ; Get-ChildItem $env:USERPROFILE`.
 - `escalation` or a lost worker: apply the correction bounds in `delegation.md`; never retry a launch blindly.
 - If a dependency unit fails or exhausts its correction bound, follow the active mode. Cancel each pending dependent with `ORCA orchestration task-update --environment local --id <task_id> --status failed --result cancelled`, or keep it pending for a relaunch that continues the unit. Do not leave dependents pending silently.
 - On every wake, after handling the message and any `worker_done` checks above, run `ORCA orchestration task-list --environment local --ready --brief` and start the ready Tasks of this request. A successful outcome makes dependents ready before you check the report. Start a dependent only after every dependency's report passes the checks above.
