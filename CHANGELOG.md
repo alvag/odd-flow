@@ -15,6 +15,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Fixed
 
+- Role prompts, the worker spec template and the Orca dispatch guide require message bodies to be written to a scratch file outside the repository and passed with `--body-file`, so the shell no longer runs backticks in worker reports and Antigravity permission rules keep matching (#82).
 - `/odd-flow check` now reports every installed ODD Flow Orca plugin, compares folder and catalog installs against their respective versions, flags differing commits when catalog versions match and both commits are known, and warns when multiple copies are enabled (#44).
 - `/odd-flow init` installs the core block for the resolved orchestrator mode and prints an apply command that pins that mode (#41).
 - Read Orca output and hook input explicitly as UTF-8 in `pane.py`, `profile.py`, `session-start.py`, and `pre-tool-use.py`. Use UTF-8 in the Codex and Antigravity plugin tests instead of the Windows system encoding (#64, #70).
