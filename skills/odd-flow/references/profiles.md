@@ -123,6 +123,14 @@ plugin data directory, SessionStart skips automatic cleanup. Both forms continue
 past failures; the hook stays silent, while `prune` reports partial counts and
 errors and exits with status 2.
 
+On Windows, both forms skip symlinks, junctions and other reparse points below
+the configured base, in state directories and state files. They keep each state
+directory open while they scan it, so it cannot be renamed or removed, and they
+delete a file through a handle only if it is still the file they scanned. A
+directory or file that another process holds in a conflicting mode is left in
+place and reported as an error. Without the required Win32 functions, nothing is
+removed.
+
 A bare profile name (`/odd-flow B`) is not a command: ask whether the user meant `--profile B`.
 
 In Claude Code the plugin skill is invoked as `/odd-flow:odd-flow <command>`. In a headless session (2026-11-23) a plain `/odd-flow <command>` was not expanded as a skill call and reached the model as text; interactive sessions are unchecked. When such text arrives, treat it as the matching command.

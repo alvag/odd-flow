@@ -16,6 +16,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 ### Fixed
 
 - `/odd-flow check` now warns when an installed init core block differs from the resolved orchestrator mode or cannot be read, without changing the exit code or advising re-init for a session-only mode (#77), and skips malformed entries in the Orca plugin list (#83).
+- On Windows, `profile.py prune`, SessionStart cleanup and the session-state counts of `/odd-flow check` work instead of refusing, doing nothing or reporting `unreadable`. They never follow symlinks, junctions or other reparse points below the configured base, keep state directories open while scanning, delete a file through a Win32 handle only when its file ID still matches, and leave anything they cannot verify (#62).
 - The Orca dispatch guide documents platform-specific Antigravity allow rules and explains why broad rules can approve chained commands (#71).
 - On macOS and Linux, `pane.py open` measures the outer Orca pane instead of Antigravity CLI's internal 80-column terminal, so workers split right when the pane is wide enough (#87).
 - Role prompts, the worker spec template and the Orca dispatch guide require message bodies to be written to a scratch file outside the repository and passed with `--body-file`, so the shell no longer runs backticks in worker reports and Antigravity permission rules keep matching (#82).
