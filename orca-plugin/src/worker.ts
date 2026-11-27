@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, delimiter, isAbsolute, join, resolve } from 'node:path'
+import { basename, delimiter, isAbsolute, join, resolve, win32 } from 'node:path'
 import type { HostMethods } from 'orca/host'
 import type { OrcaWorkerApi } from 'orca/worker'
 import { attentionItems, currentWork, featureOwners, hiddenDashboardWork, isActiveDispatch, parseGit, parseOrcaTime, selectFeatureDoc,
@@ -73,6 +73,7 @@ export type WorkerOptions = {
   resolveOrca: (env: Env) => Promise<string | undefined>
   env: Env
   home: string
+  platform: NodeJS.Platform
   scheduleRefresh: (refresh: () => Promise<void>) => () => void
 }
 
@@ -367,7 +368,7 @@ async function agentRow(
 
 export function createWorker({
   run = runPython, runExecutable = exec, resolveOrca = resolveOrcaExecutable, env = process.env, home = homedir(),
-  scheduleRefresh = scheduleStatusRefresh
+  platform = process.platform, scheduleRefresh = scheduleStatusRefresh
 }: Partial<WorkerOptions> = {}) {
   return (orca: OrcaWorkerApi): (() => void) => {
     function logDiagnostic(format: () => string) {
@@ -421,6 +422,8 @@ export function createWorker({
     function isolatedEnv(): Env {
       const cleanEnv = { ...env }
       for (const key of SESSION_KEYS) delete cleanEnv[key]
+      // Orca forks trusted workers without APPDATA, and the Orca CLI cannot find its data folder on Windows without it.
+      if (platform === 'win32' && !cleanEnv.APPDATA) cleanEnv.APPDATA = win32.join(home, 'AppData', 'Roaming')
       return cleanEnv
     }
 

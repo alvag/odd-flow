@@ -79,7 +79,7 @@ async function fixture(
   })
   const defaults = {
     env, run: fakeRun, resolveOrca: async () => fakeOrca, runExecutable: async () => dispatches(),
-    scheduleRefresh: () => () => {}
+    scheduleRefresh: () => () => {}, platform: 'linux' as const
   }
   let stop: (() => void) | undefined
   const activate = main.createWorker({ ...defaults, ...options })
@@ -120,6 +120,30 @@ test('uses the focused workspace and maps Claude, Codex and Antigravity to one c
   ])
   assert.deepEqual(worker.refusals, [])
   await worker.deactivate()
+})
+
+test('on Windows gives child processes the Roaming APPDATA from home unless APPDATA is already set', async () => {
+  for (const [childEnv, appData] of [
+    [env, 'C:\\Users\\max\\AppData\\Roaming'],
+    [{ ...env, APPDATA: 'D:\\Roaming' }, 'D:\\Roaming']
+  ] as const) {
+    const envs: Record<string, string | undefined>[] = []
+    const worker = await fixture({ profileScript: currentScript }, [], {
+      env: childEnv, home: 'C:\\Users\\max', platform: 'win32',
+      run: async (argv, runEnv) => { envs.push(runEnv); return fakeRun(argv, runEnv) },
+      runExecutable: async (_executable, argv, cliEnv) => {
+        envs.push(cliEnv)
+        return argv[1] === 'run-list' ? cliOk({ runs: [] }) : dispatches()
+      }
+    })
+    try {
+      await worker.request('state')
+      assert.ok(envs.length > 0)
+      for (const seen of envs) assert.deepEqual(seen, { ODD_FLOW_HOME: '/keep', APPDATA: appData })
+    } finally {
+      await worker.deactivate()
+    }
+  }
 })
 
 test('skips Show for unsupported agents and agents with no session id, with a reason', async () => {
@@ -809,6 +833,7 @@ async function controlsFixture(
     resolveOrca: async () => fakeOrca,
     run: options.run ?? fakeRun,
     runExecutable: options.runExecutable ?? runExecutable,
+    platform: 'linux',
     scheduleRefresh: (refresh) => {
       tick = refresh
       return () => { tick = undefined }
