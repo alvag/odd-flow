@@ -15,7 +15,9 @@ import tempfile
 import time
 
 if sys.platform == "win32":
+    import ctypes
     import msvcrt
+    from ctypes import wintypes
     O_NOFOLLOW = O_NONBLOCK = 0
 else:
     import fcntl
@@ -32,6 +34,7 @@ SPLIT_HINT = "A pane may have opened. Check terminal list and close it."
 CREATE_HINT = "A terminal may have opened. Check terminal list and close it."
 ORCA_TIMEOUT_SECS = 30
 ORCA_SPLIT_TIMEOUT_SECS = 40
+CONSOLE_PROBE_TIMEOUT_SECS = 2
 
 
 def run_orca(argv, timeout):
@@ -169,8 +172,88 @@ def leaves(node, height=1):
         yield from leaves(node["first"], child_height)
 
 
+CONSOLE_PROBE = r"""
+import ctypes, json, sys
+from ctypes import wintypes
+class Info(ctypes.Structure):
+    _fields_ = [("size", wintypes._COORD), ("cursor", wintypes._COORD), ("attributes", wintypes.WORD),
+                ("window", wintypes.SMALL_RECT), ("maximum", wintypes._COORD)]
+kernel32 = ctypes.WinDLL("kernel32")
+kernel32.CreateFileW.restype = wintypes.HANDLE
+kernel32.GetConsoleWindow.restype = wintypes.HWND
+kernel32.GetConsoleScreenBufferInfo.argtypes = (wintypes.HANDLE, ctypes.POINTER(Info))
+kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+consoles = []
+for pid in map(int, sys.argv[1:]):
+    kernel32.FreeConsole()
+    console = None
+    if kernel32.AttachConsole(pid):
+        out = kernel32.CreateFileW("CONOUT$", 0xC0000000, 3, None, 3, 0, None)
+        if out not in (None, wintypes.HANDLE(-1).value):
+            info = Info()
+            if kernel32.GetConsoleScreenBufferInfo(out, ctypes.byref(info)):
+                console = [bool(kernel32.GetConsoleWindow()), info.window.Right - info.window.Left + 1]
+            kernel32.CloseHandle(out)
+    consoles.append(console)
+print(json.dumps(consoles))
+"""
+
+
+def ancestor_pids():
+    class Entry(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = (wintypes.HANDLE, ctypes.POINTER(Entry))
+    kernel32.Process32NextW.argtypes = (wintypes.HANDLE, ctypes.POINTER(Entry))
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (None, wintypes.HANDLE(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    parents = {}
+    try:
+        entry = Entry(dwSize=ctypes.sizeof(Entry))
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            parents[entry.th32ProcessID] = entry.th32ParentProcessID
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    pids, pid = [], parents.get(os.getpid())
+    while pid in parents and pid not in pids:
+        pids.append(pid)
+        pid = parents[pid]
+    return pids
+
+
+def attached_consoles(pids):
+    # Attaching swaps the process's console, so a child does it: this process
+    # keeps its console and std handles for the Orca calls that follow.
+    proc = subprocess.run(
+        [sys.executable, "-I", "-S", "-c", CONSOLE_PROBE, *map(str, pids)],
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
+        creationflags=subprocess.CREATE_NO_WINDOW, timeout=CONSOLE_PROBE_TIMEOUT_SECS,
+    )
+    return json.loads(proc.stdout)
+
+
 def parent_cols():
     if sys.platform == "win32":
+        # The agent's shell tool runs in hidden consoles with a default width;
+        # the nearest ancestor console that has a window is the Orca pane.
+        try:
+            for console in attached_consoles(ancestor_pids()):
+                if console and console[0]:
+                    return console[1] or None
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
         return None
     pid = os.getppid()
     while pid > 1:
