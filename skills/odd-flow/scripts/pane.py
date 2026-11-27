@@ -2,7 +2,9 @@
 """Open an Orca worker in a split pane or a separate tab."""
 
 import argparse
-import fcntl
+import contextlib
+import errno
+import io
 import json
 import os
 import re
@@ -10,8 +12,15 @@ import struct
 import subprocess
 import sys
 import tempfile
-import termios
 import time
+
+if sys.platform == "win32":
+    import msvcrt
+    O_NOFOLLOW = O_NONBLOCK = 0
+else:
+    import fcntl
+    import termios
+    O_NOFOLLOW, O_NONBLOCK = os.O_NOFOLLOW, os.O_NONBLOCK
 
 # Isolated mode omits the script directory. Always import the bundled profile.
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -25,15 +34,30 @@ ORCA_TIMEOUT_SECS = 30
 ORCA_SPLIT_TIMEOUT_SECS = 40
 
 
+def run_orca(argv, timeout):
+    if sys.platform != "win32":
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    # After a timeout kill, Windows run() reads the pipes to EOF, so a descendant still holding
+    # them would stall it past the limit. Files have no EOF to wait for.
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        try:
+            proc = subprocess.run(argv, stdout=out, stderr=err, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            # Without pipes the exception carries the time left in the final wait, not the limit.
+            exc.timeout = timeout
+            raise
+        for stream in (out, err):
+            stream.seek(0)
+        with io.TextIOWrapper(out) as stdout, io.TextIOWrapper(err) as stderr:
+            return subprocess.CompletedProcess(argv, proc.returncode, stdout.read(), stderr.read())
+
+
 def terminal(*args, timeout_context=""):
     hint = {"split": f". {SPLIT_HINT}", "create": f". {CREATE_HINT}"}.get(args[0], "")
     uncertain = hint + timeout_context
     timeout = ORCA_SPLIT_TIMEOUT_SECS if args[0] == "split" else ORCA_TIMEOUT_SECS
     try:
-        proc = subprocess.run(
-            [os.environ.get("ORCA_CLI_COMMAND", "orca"), "terminal", *args, "--json"],
-            capture_output=True, text=True, timeout=timeout,
-        )
+        proc = run_orca([os.environ.get("ORCA_CLI_COMMAND", "orca"), "terminal", *args, "--json"], timeout)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             f"Orca terminal {args[0]}: timed out (limit: {exc.timeout}s){uncertain}"
@@ -146,6 +170,8 @@ def leaves(node, height=1):
 
 
 def parent_cols():
+    if sys.platform == "win32":
+        return None
     pid = os.getppid()
     while pid > 1:
         try:
@@ -176,7 +202,7 @@ def parent_cols():
 
 def recorded_width(path):
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
         with os.fdopen(fd, "rb") as record:
             age = time.time() - os.fstat(record.fileno()).st_mtime
             if not 0 <= age <= 10 * 60:
@@ -184,6 +210,33 @@ def recorded_width(path):
             return int(record.read(16))
     except (OSError, ValueError):
         return None
+
+
+@contextlib.contextmanager
+def pane_lock(path):
+    if sys.platform != "win32":
+        fd = os.open(path, os.O_CREAT | os.O_RDONLY | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "r") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            yield
+        return
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        while True:
+            try:
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                break
+            except OSError as exc:
+                # LK_LOCK gives up after about ten one-second retries; keep waiting.
+                if exc.errno != errno.EDEADLOCK:
+                    raise
+        try:
+            yield
+        finally:
+            # Closing the handle releases the lock only eventually; unlock first.
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
 
 
 def open_pane(args):
@@ -208,9 +261,7 @@ def open_pane(args):
 
     pane_path = os.path.join(tempfile.gettempdir(), f"odd-flow-pane-{parent}")
     width_path = pane_path + ".cols"
-    lock_fd = os.open(pane_path + ".lock", os.O_CREAT | os.O_RDONLY | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(lock_fd, "r") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with pane_lock(pane_path + ".lock"):
         target, parent_alone = None, False
         if command is not None:
             layout = terminal("list", "--include-visual-layouts")
@@ -267,7 +318,7 @@ def open_pane(args):
                 if direction == "vertical" and args.cols is None and cols is not None and cols >= min_cols:
                     try:
                         fd = os.open(
-                            width_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_NONBLOCK,
+                            width_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | O_NOFOLLOW | O_NONBLOCK,
                             0o600,
                         )
                         with os.fdopen(fd, "w") as record:

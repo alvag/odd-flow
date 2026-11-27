@@ -9,6 +9,9 @@ pass=0; fail=0
 expect() { # name, expected exit, actual exit, expected output, [expected argv]
   local argv
   argv=$(calls)
+  if [[ -n "$windows" ]]; then
+    out=${out//$'\r'/}; argv=${argv//$'\r'/}
+  fi
   if [[ "$2" == "$3" && "$out" == *"$4"* && "$argv" == *"${5:-}"* ]]; then
     pass=$((pass+1)); echo "PASS $1"
   else
@@ -75,12 +78,23 @@ printf '%s\n' \
   '  *) exit 99 ;;' \
   'esac' >"$T/orca"
 chmod +x "$T/orca"
+windows=; [[ "$(python3 -I -c 'import sys; print(sys.platform)')" == win32 ]] && windows=1
+orca_cli="$T/orca"
+if [[ -n "$windows" ]]; then
+  # Windows cannot execute the shell script itself.
+  printf '@"%s" "%s" %%*\r\n' "$(cygpath -w "$(command -v sh)")" "$(cygpath -w "$T/orca")" >"$T/orca.cmd"
+  orca_cli="$T/orca.cmd"
+fi
 printf '%s\n' '{"default":"test","profiles":{"test":{"verify":{"agent":"claude"},"write":{"agent":"antigravity"},"explore":{"agent":"antigravity","model":"gemini-4","effort":"low"},"review":{"agent":"pi"}}}}' >"$T/profiles.json"
 
 # Test-only seam: replace the TTY sampler and clock and optionally trace the
 # subprocess timeout while running the real CLI and pane lock against fake Orca.
 printf '%s\n' \
-  'import fcntl, os, sys, time' \
+  'import os, sys, time' \
+  'if sys.platform == "win32":' \
+  '    import msvcrt' \
+  'else:' \
+  '    import fcntl' \
   'from pathlib import Path' \
   'from types import SimpleNamespace' \
   'sys.dont_write_bytecode = True' \
@@ -110,8 +124,12 @@ printf '%s\n' \
   '    if lock.exists():' \
   '        with lock.open() as fd:' \
   '            try:' \
-  '                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)' \
-  '            except BlockingIOError:' \
+  '                if sys.platform == "win32":' \
+  '                    msvcrt.locking(fd.fileno(), msvcrt.LK_NBLCK, 1)' \
+  '                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)' \
+  '                else:' \
+  '                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)' \
+  '            except (BlockingIOError, PermissionError):' \
   '                return True' \
   '    return False' \
   'def sample():' \
@@ -158,7 +176,7 @@ open_pane() {
   fi
   : >"$T/argv"
   : >"$T/argv.samples"
-  env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" \
+  env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$orca_cli" \
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
@@ -178,7 +196,9 @@ calls() {
 p=$(leaf term_parent); r1=$(leaf term_r1); r2=$(leaf term_r2); r3=$(leaf term_r3)
 list_call=$'\nargv:\nterminal\nlist\n--include-visual-layouts\n--json'
 baseline_call=$'\nterminal\nlist\n--worktree\ncurrent\n--limit\n1000\n--json'
-claude_command="claude --settings '${ROOT//\'/\'\\\'\'}/skills/odd-flow/scripts/claude-worker-settings.json'"
+settings="$ROOT/skills/odd-flow/scripts/claude-worker-settings.json"
+[[ -z "$windows" ]] || settings=$(cygpath -w "$settings")
+claude_command="claude --settings '${settings//\'/\'\\\'\'}'"
 tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\n--command\n'"$claude_command"$'\n--json'
 right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\n'"$claude_command"$'\n--json'
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
@@ -581,12 +601,21 @@ out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
 [[ ! -e "$width_record" ]] || ec=1
 expect "a split below records no width" 0 "$ec" '"placement": "split-below", "handle": "term_new"'
 
+layout "$p"
+if [[ -n "$windows" ]]; then
+  out=$(open_pane --role verify); ec=$?
+  expect "Windows without --cols: tab because the width is unknown" 0 "$ec" \
+    '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' "$list_call$baseline_call$tab_call"$'\n\nend argv'
+else
+  echo "SKIP Windows without --cols: tab because the width is unknown: Windows only"
+fi
+
 # Two launches for the same parent: the second waits on the pane lock and runs once the first times out.
 layout "$p"
 started=$SECONDS
 : >"$T/argv"; : >"$T/argv.samples"
 : >"$T/argv.lists"
-env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
+env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$orca_cli" ORCA_LOG="$T/argv" \
   ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG=list \
   python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json \
   >"$T/first.out" 2>&1 &
@@ -599,13 +628,14 @@ second_ec=99
 second_out='hung list did not start in time'
 if (( i < 100 )); then
   echo 'second launch' >>"$T/argv.lists"
-  second_out=$(env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$T/orca" ORCA_LOG="$T/argv" \
+  second_out=$(env -i HOME="$T" PATH="$PATH" TMPDIR="$T" ODD_FLOW_HOME="$T" ORCA_CLI_COMMAND="$orca_cli" ORCA_LOG="$T/argv" \
     ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE=term_parent ORCA_HANG= \
     python3 -I "$T/sample.py" "$P" "" 1 "" open --role verify --title 'T1 verify: example' --cols 160 --json 2>&1)
   second_ec=$?
 fi
 wait "$first"; first_ec=$?
 events=$(cat "$T/argv.lists")
+[[ -z "$windows" ]] || events=${events//$'\r'/}
 out="first=$first_ec $(cat "$T/first.out") second=$second_ec $second_out"$'\n'"$events"
 ec=0
 if (( first_ec != 1 || second_ec != 0 || SECONDS - started >= 4 )); then ec=1; fi
