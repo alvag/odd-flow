@@ -39,7 +39,9 @@ CONSOLE_PROBE_TIMEOUT_SECS = 2
 
 def run_orca(argv, timeout):
     if sys.platform != "win32":
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(
+            argv, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+        )
     # After a timeout kill, Windows run() reads the pipes to EOF, so a descendant still holding
     # them would stall it past the limit. Files have no EOF to wait for.
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
@@ -51,7 +53,10 @@ def run_orca(argv, timeout):
             raise
         for stream in (out, err):
             stream.seek(0)
-        with io.TextIOWrapper(out) as stdout, io.TextIOWrapper(err) as stderr:
+        with (
+            io.TextIOWrapper(out, encoding="utf-8", errors="replace") as stdout,
+            io.TextIOWrapper(err, encoding="utf-8", errors="replace") as stderr,
+        ):
             return subprocess.CompletedProcess(argv, proc.returncode, stdout.read(), stderr.read())
 
 

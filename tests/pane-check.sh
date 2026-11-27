@@ -74,7 +74,9 @@ printf '%s\n' \
   '      echo "{\"ok\":false,\"error\":{\"message\":\"split refused\"}}"; exit 1' \
   '    fi' \
   '    echo "{\"ok\":true,\"result\":{\"split\":{\"handle\":\"term_new\"}}}" ;;' \
-  '  "terminal set-pane-title") echo "{\"ok\":true}" ;;' \
+  '  "terminal set-pane-title")' \
+  '    if [ "${ORCA_FAIL_TITLE:-}" = 1 ]; then printf "title refused: \377\n" >&2; exit 1; fi' \
+  '    echo "{\"ok\":true}" ;;' \
   '  *) exit 99 ;;' \
   'esac' >"$T/orca"
 chmod +x "$T/orca"
@@ -205,7 +207,7 @@ open_pane() {
     ORCA_LOG="$T/argv" ORCA_LAYOUT="$T/layout" ORCA_TERMINAL_HANDLE="${parent-term_parent}" \
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
-    ORCA_HANG="${hang-}" ORCA_TRACE_TIMEOUT="${trace_timeout-}" ORCA_FAIL_BASELINE="${fail_baseline-}" \
+    ORCA_FAIL_TITLE="${fail_title-0}" ORCA_HANG="${hang-}" ORCA_TRACE_TIMEOUT="${trace_timeout-}" ORCA_FAIL_BASELINE="${fail_baseline-}" \
     ${win_consoles+WIN_CONSOLES="$win_consoles"} "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
 }
 calls() {
@@ -228,6 +230,17 @@ tab_call=$'\nterminal\ncreate\n--worktree\ncurrent\n--title\nT1 verify: example\
 right_call=$'\nterminal\nsplit\n--terminal\nterm_parent\n--direction\nvertical\n--command\n'"$claude_command"$'\n--json'
 title_call=$'\nterminal\nset-pane-title\n--terminal\nterm_new\n--title\nT1 verify: example\n--json'
 width_record="$T/odd-flow-pane-term_parent.cols"
+
+layout "$(leaf term_parent "$(printf '\342\217\260')")"
+out=$(open_pane --role verify --cols 160); ec=$?
+expect "UTF-8 terminal layout opens a pane" 0 "$ec" \
+  '"placement": "split-right", "handle": "term_new"' "$list_call$right_call$title_call"
+
+layout "$p"
+out=$(fail_title=1 open_pane --role verify --cols 160); ec=$?
+[[ "$out" == *'"placement": "split-right", "handle": "term_new"'* ]] || ec=1
+expect "invalid UTF-8 in Orca stderr is replaced without losing placement" 0 "$ec" \
+  '"title_error": "Orca terminal set-pane-title: title refused: \ufffd"' "$list_call$right_call$title_call"
 
 expect_late() { # name, expected result, [earlier handles...]
   local timeout_error="$out" out ec
