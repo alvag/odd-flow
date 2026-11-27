@@ -34,6 +34,7 @@ SPLIT_HINT = "A pane may have opened. Check terminal list and close it."
 CREATE_HINT = "A terminal may have opened. Check terminal list and close it."
 ORCA_TIMEOUT_SECS = 30
 ORCA_SPLIT_TIMEOUT_SECS = 40
+CONSOLE_PROBE_TIMEOUT_SECS = 2
 
 
 def run_orca(argv, timeout):
@@ -238,7 +239,7 @@ def attached_consoles(pids):
     proc = subprocess.run(
         [sys.executable, "-I", "-S", "-c", CONSOLE_PROBE, *map(str, pids)],
         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=subprocess.CREATE_NO_WINDOW, timeout=CONSOLE_PROBE_TIMEOUT_SECS,
     )
     return json.loads(proc.stdout)
 

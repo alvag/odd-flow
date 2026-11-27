@@ -171,6 +171,13 @@ printf '%s\n' \
   '    # Under env -i the Windows parent chain stops at env.exe, so keep only the real first step.' \
   '    nearest = pane.ancestor_pids()[:1] if sys.platform == "win32" else [os.getppid()]' \
   '    pane.ancestor_pids = lambda: [*nearest, *range(2, 10)]' \
+  'if consoles == "hang":' \
+  '    # The real probe call answers a window console only after its limit; POSIX lacks the Windows flag.' \
+  '    pane.CONSOLE_PROBE = "import json, time; time.sleep(5); print(json.dumps([[True, 181]]))"' \
+  '    pane.CONSOLE_PROBE_TIMEOUT_SECS = 1' \
+  '    if not hasattr(pane.subprocess, "CREATE_NO_WINDOW"):' \
+  '        pane.subprocess.CREATE_NO_WINDOW = 0' \
+  'elif consoles is not None:' \
   '    pane.attached_consoles = attached_consoles' \
   'pane.parent_cols = sample if consoles is None else forced_windows' \
   'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep, time=wall_time)' \
@@ -631,6 +638,12 @@ out=$(win_consoles='hidden:200 none hidden:120' open_pane --role verify); ec=$?
 expect "Windows: no ancestor console with a window keeps the unknown-width tab" 0 "$ec" \
   '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
   "$list_call$baseline_call$tab_call"$'\n\nend argv\nsamples:\nwalk from parent: True'
+
+rm -f "$width_record"
+out=$(win_consoles=hang open_pane --role verify); ec=$?
+expect "Windows: a console probe past its timeout keeps the unknown-width tab" 0 "$ec" \
+  '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
+  "$list_call$baseline_call$tab_call"$'\n\nend argv'
 
 # Two launches for the same parent: the second waits on the pane lock and runs once the first times out.
 layout "$p"
