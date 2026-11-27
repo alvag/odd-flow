@@ -287,6 +287,56 @@ else:
 PY
 }
 
+assert_session() {
+    "$python" -I - "$1" "$2" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+case, source = sys.argv[1:]
+assert not Path("err").read_text()
+report = json.loads(Path("out").read_text())
+blocks, warnings = report["init_blocks"], report["warnings"]
+row = {"runtime": "codex", "path": str(Path(os.environ["HOME"]) / ".codex/AGENTS.md")}
+expected = {"session_only": True, "session_mode": "organic", "session_mode_source": source}
+expected_warnings = []
+if case == "unresolved":
+    expected["persistent_mode_error"] = "cannot resolve persistent orchestrator mode"
+    row.update(status="installed", installed_mode="full-delegation")
+else:
+    expected.update(expected_mode="full-delegation", mode_source="profile p")
+    if case == "in-sync":
+        row.update(status="in sync", installed_mode="full-delegation")
+    elif case == "mode-differs":
+        row.update(status="mode differs", installed_mode="organic", expected_mode="full-delegation")
+        expected_warnings = [
+            "Codex init block: installed for organic mode, but the persistent mode is full-delegation; "
+            "the current organic mode is session-only"
+        ]
+    else:
+        row.update(status="block differs", installed_mode="unknown", expected_mode="full-delegation")
+        expected_warnings = [
+            "Codex init block: matches no mode asset, and the persistent mode is full-delegation; "
+            "the current organic mode is session-only"
+        ]
+runtimes = blocks.pop("runtimes")
+assert blocks == expected, blocks
+assert runtimes == [
+    {"runtime": "claude", "status": "not installed"}, row,
+    {"runtime": "antigravity", "status": "not installed"},
+], runtimes
+assert warnings == expected_warnings, warnings
+PY
+}
+
+refute_output() {
+    if grep -E "$1" out; then
+        printf 'FAIL unexpected output: %s\n' "$1" >&2
+        exit 1
+    fi
+}
+
 # The checkout and the catalog intentionally disagree about the newest version.
 check_root="$scratch/orca-checkout"
 copy_install "$check_root"
@@ -556,6 +606,52 @@ check human-init-block-differs 0
 grep -Fx "  Codex: block differs [$shown_codex_file] (installed mode: unknown; expected mode: organic)" out
 grep -Fx 'Warning: Codex init block: matches no mode asset, and the resolved mode is organic; re-run /odd-flow init: python3 skills/odd-flow/scripts/init.py plan --runtime codex' out
 
+# Session-only overrides are compared against the persistent mode and never suggest init.
+set_mode full-delegation
+"$python" -I "$root/skills/odd-flow/scripts/init.py" apply --runtime codex > /dev/null
+cp -R "$HOME" "$scratch/session-before"
+env_source='env ODD_ORCHESTRATOR_MODE'
+ODD_ORCHESTRATOR_MODE=organic check session-env-in-sync 0 --json
+assert_session in-sync "$env_source"
+ODD_ORCHESTRATOR_MODE=organic check human-session-env-in-sync 0
+grep -Fx "  Current mode: organic ($env_source) is session-only" out
+grep -Fx "  Codex: in sync [$shown_codex_file] (installed mode: full-delegation)" out
+refute_output 'Warning:|re-run|init\.py'
+diff -r "$scratch/session-before" "$HOME"
+
+CLAUDE_CODE_SESSION_ID=s1 "$python" -I "$root/skills/odd-flow/scripts/profile.py" session-mode organic > /dev/null
+CLAUDE_CODE_SESSION_ID=s1 check session-binding-in-sync 0 --json
+assert_session in-sync 'session (CLAUDE_CODE_SESSION_ID)'
+CLAUDE_CODE_SESSION_ID=s1 check human-session-binding-in-sync 0
+grep -Fx '  Current mode: organic (session (CLAUDE_CODE_SESSION_ID)) is session-only' out
+grep -Fx "  Codex: in sync [$shown_codex_file] (installed mode: full-delegation)" out
+refute_output 'Warning:|re-run|init\.py'
+
+"$python" -I "$root/skills/odd-flow/scripts/init.py" apply --runtime codex --mode organic > /dev/null
+ODD_ORCHESTRATOR_MODE=organic check session-mode-differs 0 --json
+assert_session mode-differs "$env_source"
+CLAUDE_CODE_SESSION_ID=s1 check session-binding-mode-differs 0 --json
+assert_session mode-differs 'session (CLAUDE_CODE_SESSION_ID)'
+ODD_ORCHESTRATOR_MODE=organic check human-session-mode-differs 0
+grep -Fx "  Current mode: organic ($env_source) is session-only" out
+grep -Fx "  Codex: mode differs [$shown_codex_file] (installed mode: organic; expected mode: full-delegation)" out
+grep -Fx 'Warning: Codex init block: installed for organic mode, but the persistent mode is full-delegation; the current organic mode is session-only' out
+refute_output 're-run|init\.py'
+
+printf '<!-- odd-flow:core -->\nedited by hand\n<!-- /odd-flow:core -->\n' > "$HOME/.codex/AGENTS.md"
+ODD_ORCHESTRATOR_MODE=organic check session-block-differs 0 --json
+assert_session block-differs "$env_source"
+
+"$python" -I "$root/skills/odd-flow/scripts/init.py" apply --runtime codex > /dev/null
+printf 'not json\n' > "$ODD_FLOW_HOME/profiles.json"
+ODD_ORCHESTRATOR_MODE=organic check session-unresolved 0 --json
+assert_session unresolved "$env_source"
+ODD_ORCHESTRATOR_MODE=organic check human-session-unresolved 0
+grep -Fx "  Current mode: organic ($env_source) is session-only; persistent mode could not be resolved" out
+grep -Fx "  Codex: installed [$shown_codex_file] (installed mode: full-delegation)" out
+refute_output 'Warning:|re-run|init\.py'
+set_mode organic
+
 mkdir -p "$HOME/.gemini"
 ln -sf "$HOME/.codex/AGENTS.md" "$HOME/.claude/CLAUDE.md"
 printf '<!-- odd-flow:core -->\n' > "$HOME/.codex/AGENTS.md"
@@ -565,6 +661,10 @@ assert_init unreadable
 check human-init-unreadable 0
 grep -Fx '  Claude Code: unreadable (instructions file is a symlink)' out
 grep -F 'Warning: Claude Code init block: unreadable (instructions file is a symlink)' out
+set_mode full-delegation
+ODD_ORCHESTRATOR_MODE=organic check human-session-unreadable 0
+grep -Fx 'Warning: Claude Code init block: unreadable (instructions file is a symlink); fix the file' out
+refute_output 're-run|init\.py'
 
 printf 'not json\n' > "$ODD_FLOW_HOME/profiles.json"
 check init-mode-unreadable 0 --json

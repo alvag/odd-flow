@@ -284,6 +284,20 @@ def count_session_state():
         return {"status": "unreadable", "reason": "cannot scan session state directories"}
 
 
+def resolve_persistent_mode(init):
+    """Return (mode, source) that init would resolve without session-only overrides."""
+    profile = runpy.run_path(init["PROFILE_SCRIPT"])
+    session_vars = (var for var, _ in profile["SESSION_VARS"])
+    saved = dict(os.environ)
+    try:
+        # resolve_mode runs profile.py in a child process that inherits this environment.
+        for var in (profile["MODE_ENV"], "ODD_PROFILE", *session_vars):
+            os.environ.pop(var, None)
+        return init["resolve_mode"](None)
+    finally:
+        os.environ.update(saved)
+
+
 def check_init_blocks(warnings):
     try:
         init = runpy.run_path(Path(__file__).with_name("init.py"))
@@ -295,6 +309,16 @@ def check_init_blocks(warnings):
         blocks = {name: init["rendered_block"](name).rstrip("\n") for name in init["CORE_BLOCKS"]}
     except (OSError, UnicodeError):
         return {"status": "unreadable", "reason": "cannot read checkout core blocks"}
+
+    session = {}
+    # The same sources init.py's warn_if_session_only treats as session-only.
+    if source == "env ODD_ORCHESTRATOR_MODE" or source.startswith("session ("):
+        session = {"session_only": True, "session_mode": mode, "session_mode_source": source}
+        try:
+            mode, source = resolve_persistent_mode(init)
+        except Exception:
+            mode = None
+            session["persistent_mode_error"] = "cannot resolve persistent orchestrator mode"
 
     rows = []
     for runtime, target in init["TARGETS"].items():
@@ -315,8 +339,8 @@ def check_init_blocks(warnings):
                 reason = str(error)
         if reason is not None:
             rows.append(status(runtime, "unreadable", reason=reason))
-            warnings.append(f"{LABELS[runtime]} init block: unreadable ({reason}); "
-                            f"fix the file, then re-run /odd-flow init: {rerun}")
+            advice = "fix the file" if session else f"fix the file, then re-run /odd-flow init: {rerun}"
+            warnings.append(f"{LABELS[runtime]} init block: unreadable ({reason}); {advice}")
             continue
         if match is None:
             rows.append(status(runtime, "not installed"))
@@ -325,18 +349,25 @@ def check_init_blocks(warnings):
             (name for name, block in blocks.items() if match[0].rstrip("\n") == block), "unknown",
         )
         details = {"path": str(path), "installed_mode": installed}
+        if mode is None:
+            rows.append(status(runtime, "installed", **details))
+            continue
         if installed == mode:
             rows.append(status(runtime, "in sync", **details))
             continue
+        baseline = "persistent" if session else "resolved"
         if installed == "unknown":
             state = "block differs"
-            problem = f"matches no mode asset, and the resolved mode is {mode}"
+            problem = f"matches no mode asset, and the {baseline} mode is {mode}"
         else:
             state = "mode differs"
-            problem = f"installed for {installed} mode, but the resolved mode is {mode}"
+            problem = f"installed for {installed} mode, but the {baseline} mode is {mode}"
         rows.append(status(runtime, state, expected_mode=mode, **details))
-        warnings.append(f"{LABELS[runtime]} init block: {problem}; re-run /odd-flow init: {rerun}")
-    return {"expected_mode": mode, "mode_source": source, "runtimes": rows}
+        advice = (f'the current {session["session_mode"]} mode is session-only' if session
+                  else f"re-run /odd-flow init: {rerun}")
+        warnings.append(f"{LABELS[runtime]} init block: {problem}; {advice}")
+    expected = {} if mode is None else {"expected_mode": mode, "mode_source": source}
+    return {**expected, **session, "runtimes": rows}
 
 
 def print_init_blocks(blocks):
@@ -344,10 +375,13 @@ def print_init_blocks(blocks):
         print(f'Init blocks: unreadable ({sanitize_human_output(blocks["reason"])})')
         return
     rows = [row for row in blocks["runtimes"] if row["status"] != "not installed"]
-    if not rows:
-        print("Init blocks: none installed")
-        return
-    print("Init blocks:")
+    print("Init blocks:" if rows else "Init blocks: none installed")
+    if blocks.get("session_only"):
+        line = (f'  Current mode: {blocks["session_mode"]} '
+                f'({sanitize_human_output(blocks["session_mode_source"])}) is session-only')
+        if "persistent_mode_error" in blocks:
+            line += "; persistent mode could not be resolved"
+        print(line)
     for row in rows:
         line = f'  {LABELS[row["runtime"]]}: {row["status"]}'
         if "reason" in row:
