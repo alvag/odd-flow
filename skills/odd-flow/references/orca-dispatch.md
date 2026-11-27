@@ -10,7 +10,13 @@
 1. Resolve the role:
    `python3 <skill-dir>/scripts/profile.py resolve <role> --json`
    Use its `flags` exactly and print its `notice`. On a non-zero exit, stop and report the error; do not launch with guessed flags.
-2. Build the spec from `assets/spec-template.md` and `assets/roles/<role>.md`. Write it with the file tool to a scratch file outside the worktree (for example `$TMPDIR/odd-flow/<session>/<task-id>.md`). Never use heredocs. In `task-create` and `worker-start`, pass the resolved literal path to `--spec-file`, quoted if needed, not a variable (such as `$SPEC`), command substitution, or glob. In Claude Code, a guard denial means the launch did not run: fix the spec or pass a readable literal path and retry; do not bypass the guard. The hook checks the declaration at launch, not subsequent edits.
+2. Build the full spec from `assets/spec-template.md` and `assets/roles/<role>.md`. Write it with the file tool to a scratch file outside the worktree (for example `$TMPDIR/odd-flow/<session>/<task-id>.md`).
+   For Codex workers on every platform, write a separate pointer spec in scratch and pass its path to `task-create --spec-file` instead of the full spec. Orca types the spec into Codex's prompt, and on Windows it can lose the Enter keystroke after a long brief, leaving the task as an unsent draft. The pointer spec contains only these parts, in order:
+   - The full spec's first line (`# Role: <role>`).
+   - One line telling the worker to read the whole file at the full spec's resolved literal path before doing anything else and to follow it as its task spec.
+   - For writers only, the full spec's `## Allowed edit surfaces` section copied unchanged so the launch guard can check it. Keep it last: the guard reads each line after the heading up to the next heading as a path entry.
+
+   Claude and Antigravity workers still get the full spec. The same rules apply to both files: use the file tool, never heredocs. In `task-create` and `worker-start`, pass the resolved literal path to `--spec-file`, quoted if needed, not a variable (such as `$SPEC`), command substitution, or glob. In Claude Code, a guard denial means the launch did not run: fix the spec or pass a readable literal path and retry; do not bypass the guard. The hook checks the declaration at launch, not subsequent edits.
    A dependent unit's spec must point to the feature document or commits for upstream results. Orca does not include those results in the dispatch.
 3. For a writer in a folder without Git, use Project folders without Git below. Otherwise run placement for this launch:
    `python3 <skill-dir>/scripts/pane.py open --role <role> --title "<T# role: short title>" --json`
