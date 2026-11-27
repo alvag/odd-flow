@@ -15,8 +15,8 @@
       "releases": [
         {
           "version": "0.2.1",
-          "commit": "1aa0ae6a166b1510ffbba9c225e488d9ba45a21c",
-          "contentHash": "fcd42b47445736fbed61911eb0878885c596214e641c9b0e7f07919e27687929",
+          "commit": "7a75e483cd9ab327a8146bfd7b0d9e1b65b01347",
+          "contentHash": "e39e292fd9a2c7fffa523e45cdc02ee6243f0ccbe3f161572f266add615fd670",
           "execution": "trusted-worker",
           "minimumOrca": "1.4.259",
           "name": "ODD Flow",
