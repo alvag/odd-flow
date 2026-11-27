@@ -164,10 +164,11 @@ forced() { # platform, Python expression over the loaded `profile` module; reads
   env -i HOME="$T" PATH="$PATH" ODD_FLOW_HOME="${FORCED_HOME:-$T}" CLAUDE_CODE_SESSION_ID=s1 ODD_PROFILE=p python3 -I -c '
 import importlib.util, sys
 platform, path, expression = sys.argv[1:]
-sys.platform = platform
 spec = importlib.util.spec_from_file_location("odd_flow_profile", path)
 profile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(profile)
+# Forced only after the stdlib has loaded under the real platform; profile.py reads it at call time.
+sys.platform = platform
 print(eval(expression))
 ' "$1" "$DP" "$2" 2>&1
 }
