@@ -69,7 +69,8 @@ SH
 cat > "$bin/orca" <<'SH'
 #!/bin/bash
 [[ "$*" = "plugin list --json" ]] || exit 99
-printf '{"ok":true,"result":{"plugins":[{"pluginKey":"local.odd-flow-profiles","version":"%s","status":"%s","error":"%s"}]}}\n' "$ORCA_VERSION" "${ORCA_STATUS:-running}" "${ORCA_ERROR:-plugin local.odd-flow-profiles is errored after repeated failures}"
+source_field=${ORCA_SOURCE-',"source":{"kind":"local-path","resolvedCommit":null}'}
+printf '{"ok":true,"result":{"plugins":[{"pluginKey":"local.odd-flow-profiles","version":"%s","status":"%s","error":"%s"%s}%s]}}\n' "$ORCA_VERSION" "${ORCA_STATUS:-running}" "${ORCA_ERROR:-plugin local.odd-flow-profiles is errored after repeated failures}" "$source_field" "${ORCA_EXTRA:-}"
 SH
 chmod +x "$bin/claude" "$bin/orca"
 
@@ -77,7 +78,7 @@ check() {
     label=$1 expected=$2
     shift 2
     result=0
-    PATH="$bin" "$python" -I "$root/skills/odd-flow/scripts/install_check.py" "$@" > out 2> err || result=$?
+    PATH="$bin" "$python" -I "${check_root:-$root}/skills/odd-flow/scripts/install_check.py" "$@" > out 2> err || result=$?
     if [ "$result" -ne "$expected" ]; then
         printf 'FAIL %s: expected exit %s, got %s\n' "$label" "$expected" "$result" >&2
         cat out err >&2
@@ -100,8 +101,44 @@ report = json.loads(lines[0])
 assert report["schema"] == "odd-flow.install-check/v1"
 rows = {row["runtime"]: row for row in report["installs"]}
 assert set(rows) == {"claude", "codex", "antigravity", "orca"}, rows
-if case == "sync":
+if case in ("orca-catalog", "orca-duplicate", "orca-commit-diff"):
+    orca = {row["plugin_key"]: row for row in report["installs"] if row["runtime"] == "orca"}
+    _, catalog_version, catalog_commit = Path("catalog-release").read_text().split()
+    local_key = "local.odd-flow-profiles"
+    catalog_key = "mirror.odd-flow-profiles" if case == "orca-duplicate" else "alvag.odd-flow-profiles"
+    assert set(orca) == {local_key, catalog_key}, orca
+    assert orca[local_key]["source"] == "folder", orca
+    assert orca[local_key]["version"] == orca[local_key]["expected_version"] == "9.8.7", orca
+    assert orca[local_key]["status"] == "in sync", orca
+    assert orca[catalog_key]["source"] == "catalog", orca
+    assert orca[catalog_key]["source_commit"] == (
+        catalog_commit if case == "orca-catalog" else "different-commit"
+    ), orca
+    assert orca[catalog_key]["plugin_status"] == "idle", orca
+    assert orca[catalog_key]["expected_version"] == catalog_version, orca
+    if case == "orca-catalog":
+        assert orca[local_key]["plugin_status"] == "disabled", orca
+        assert orca[catalog_key]["version"] == catalog_version, orca
+        assert orca[catalog_key]["status"] == "in sync", orca
+        assert report["warnings"] == [], report
+    elif case == "orca-commit-diff":
+        assert orca[catalog_key]["version"] == catalog_version, orca
+        assert orca[catalog_key]["expected_commit"] == catalog_commit, orca
+        assert orca[catalog_key]["status"] == "commit differs", orca
+    else:
+        assert orca[catalog_key]["version"] == "0.0.1", orca
+        assert orca[catalog_key]["status"] == "version differs", orca
+        assert report["warnings"] == [
+            "More than one ODD Flow Orca plugin copy is enabled; each copy runs a worker and a prompt hook."
+        ], report
+elif case == "sync":
     legacy_report = {key: value for key, value in report.items() if key != "session_state"}
+    assert rows["orca"]["plugin_key"] == "local.odd-flow-profiles", rows["orca"]
+    assert rows["orca"]["source"] == "folder", rows["orca"]
+    legacy_report["installs"] = [
+        {key: value for key, value in row.items() if key not in ("plugin_key", "source")}
+        for row in report["installs"]
+    ]
     assert legacy_report == {
         "schema": "odd-flow.install-check/v1",
         "installs": [
@@ -183,6 +220,66 @@ else:
 PY
 }
 
+# The checkout and the catalog intentionally disagree about the newest version.
+check_root="$scratch/orca-checkout"
+copy_install "$check_root"
+mkdir -p "$check_root/orca-plugin"
+printf '{"version":"9.8.7"}\n' > "$check_root/orca-plugin/orca-plugin.json"
+cp "$root/orca-catalog.json" "$check_root/orca-catalog.json"
+"$python" -I - "$check_root/orca-catalog.json" > catalog-release <<'PYTHON'
+import json
+import sys
+
+plugin, = json.load(open(sys.argv[1]))["plugins"]
+release = plugin["releases"][0]
+print(plugin["id"], release["version"], release["commit"])
+PYTHON
+read -r catalog_key catalog_version catalog_commit < catalog-release
+ORCA_VERSION="$catalog_version" ORCA_SOURCE= check human-orca-no-source 1
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: version differs (ODD Flow Orca plugin $catalog_version; checkout ODD Flow Orca plugin 9.8.7; Orca status: running; source: folder)" out
+catalog_row=',{"pluginKey":"%s","version":"%s","status":"idle","source":{"kind":"marketplace","resolvedCommit":"%s","marketplace":{"resolvedCommit":"different-commit"}}},{"pluginKey":"example.unrelated","version":"0.0.1","status":"running"}'
+ORCA_VERSION=9.8.7 ORCA_STATUS=disabled ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" "$catalog_commit") check orca-catalog 0 --json
+assert_json orca-catalog
+ORCA_VERSION=9.8.7 ORCA_STATUS=disabled ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" different-commit) check orca-commit-diff 1 --json
+assert_json orca-commit-diff
+ORCA_VERSION=9.8.7 ORCA_STATUS=disabled ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" different-commit) check human-orca-commit-diff 1
+grep -Fx "ODD Flow Orca plugin [$catalog_key]: commit differs (ODD Flow Orca plugin $catalog_version; Orca status: idle; source: catalog; commit: different-commit; catalog commit: $catalog_commit)" out
+cp "$check_root/orca-catalog.json" "$scratch/catalog-original.json"
+"$python" -I - "$check_root/orca-catalog.json" <<'PYTHON'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+catalog = json.loads(path.read_bytes())
+del catalog["plugins"][0]["releases"][0]["commit"]
+path.write_text(json.dumps(catalog))
+PYTHON
+ORCA_VERSION=9.8.7 ORCA_STATUS=disabled ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" "$catalog_commit") check human-orca-no-release-commit 0
+grep -Fx "ODD Flow Orca plugin [$catalog_key]: in sync (ODD Flow Orca plugin $catalog_version; Orca status: idle; source: catalog; commit: unknown)" out || { cat out >&2; exit 1; }
+mv "$scratch/catalog-original.json" "$check_root/orca-catalog.json"
+ORCA_VERSION=9.8.7 ORCA_STATUS=disabled ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" '') check human-orca-no-installed-commit 0
+grep -Fx "ODD Flow Orca plugin [$catalog_key]: in sync (ODD Flow Orca plugin $catalog_version; Orca status: idle; source: catalog; commit: unknown)" out
+ORCA_VERSION=9.8.7 ORCA_EXTRA=$(printf "$catalog_row" mirror.odd-flow-profiles 0.0.1 different-commit) check orca-duplicate 1 --json
+assert_json orca-duplicate
+ORCA_VERSION=9.8.7 ORCA_EXTRA=$(printf "$catalog_row" mirror.odd-flow-profiles 0.0.1 different-commit) check human-orca-duplicate 1
+grep -Fx "ODD Flow Orca plugin [mirror.odd-flow-profiles]: version differs (ODD Flow Orca plugin 0.0.1; catalog ODD Flow Orca plugin $catalog_version; Orca status: idle; source: catalog; commit: different-commit)" out
+grep -Fx 'Warning: More than one ODD Flow Orca plugin copy is enabled; each copy runs a worker and a prompt hook.' out
+ORCA_VERSION=9.8.7 ORCA_STATUS=errored ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" "$catalog_commit") check human-orca-errored-dup 0
+grep -Fx 'Warning: More than one ODD Flow Orca plugin copy is enabled; each copy runs a worker and a prompt hook.' out
+ORCA_VERSION=9.8.7 ORCA_STATUS=invalid_status ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" "$catalog_commit") check human-orca-invalid-status 3
+grep -F '[local.odd-flow-profiles]: unreadable (invalid Orca plugin status)' out
+if grep -F 'More than one ODD Flow Orca plugin copy' out; then
+    exit 1
+fi
+
+mv "$check_root/orca-catalog.json" "$scratch/catalog-original.json"
+ORCA_VERSION=9.8.7 ORCA_STATUS=disabled ORCA_ERROR=' ' ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" "$catalog_commit") check human-orca-no-catalog 3
+grep -F "[$catalog_key]: unreadable (cannot read newest release from orca-catalog.json)" out
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: in sync (ODD Flow Orca plugin 9.8.7; Orca status: disabled; source: folder)" out
+mv "$scratch/catalog-original.json" "$check_root/orca-catalog.json"
+unset check_root
+
 cp -R "$HOME" "$scratch/before"
 check sync 0 --json
 assert_json sync
@@ -190,7 +287,7 @@ check human 0
 grep -Fx "Claude Code: in sync [$claude] (odd-flow $version)" out
 grep -Fx "Codex: in sync [$codex_path] (odd-flow $version)" out
 grep -Fx "Antigravity: in sync [$agy] (odd-flow $version)" out
-grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: running)" out
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: running; source: folder)" out
 grep -F 'ignored' out
 grep -Fx 'Session state: 2 session binding(s), 1 prompt-hook record(s), 3 mode-notice record(s)' out
 diff -r "$scratch/before" "$HOME"
@@ -250,24 +347,24 @@ export ORCA_STATUS=errored
 check orca-error 0 --json
 assert_json orca-error
 check human-orca-error 0
-grep -F 'Orca status: errored; plugin local.odd-flow-profiles is errored after repeated failures' out
+grep -F 'Orca status: errored; source: folder; plugin local.odd-flow-profiles is errored after repeated failures' out
 export ORCA_ERROR='\nplugin local.odd-flow-profiles is errored\r\n\t after\u001b\u009b repeated\u2028failures\u007f'
 check orca-error-controls 0 --json
 assert_json orca-error-controls
 check human-orca-error-controls 0
-grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; plugin local.odd-flow-profiles is errored after repeated failures)" out
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; source: folder; plugin local.odd-flow-profiles is errored after repeated failures)" out
 grep -F 'Orca reports its listed version, state, and any error for a non-running plugin.' out
 export ORCA_ERROR='plugin\u202e error\u200b'
 check orca-error-format 0 --json
 assert_json orca-error-format
 check human-orca-error-format 0
-grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; plugin error)" out
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; source: folder; plugin error)" out
 error_prefix=$(printf '%200s' '' | tr ' ' x)
 export ORCA_ERROR="${error_prefix}tail"
 check orca-error-long 0 --json
 assert_json orca-error-long
 check human-orca-error-long 0
-grep -Fx "ODD Flow Orca plugin: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; ${error_prefix}...)" out
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: in sync (ODD Flow Orca plugin $ORCA_VERSION; Orca status: errored; source: folder; ${error_prefix}...)" out
 unset ORCA_ERROR
 unset ORCA_STATUS
 
@@ -304,7 +401,7 @@ check drift 1 --json
 assert_json drift
 check human-drift 1
 grep -Fx "Claude Code: version differs [$claude] (odd-flow $CLAUDE_VERSION; checkout odd-flow $version)" out
-grep -Fx "ODD Flow Orca plugin: version differs (ODD Flow Orca plugin $ORCA_VERSION; checkout ODD Flow Orca plugin $orca_checkout_version; Orca status: running)" out
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: version differs (ODD Flow Orca plugin $ORCA_VERSION; checkout ODD Flow Orca plugin $orca_checkout_version; Orca status: running; source: folder)" out
 grep -Fx "Warning: Claude Code (odd-flow $CLAUDE_VERSION): the Orca tokened marker requires odd-flow hooks 0.4.0 or newer." out
 grep -Fx "Codex: files differ [$codex_path] (odd-flow $version): hooks/codex-hooks.json, scripts/session-start.py" out
 

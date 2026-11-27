@@ -15,6 +15,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Fixed
 
+- `/odd-flow check` now reports every installed ODD Flow Orca plugin, compares folder and catalog installs against their respective versions, flags differing commits when catalog versions match and both commits are known, and warns when multiple copies are enabled (#44).
 - Read Orca output and hook input explicitly as UTF-8 in `pane.py`, `profile.py`, `session-start.py`, and `pre-tool-use.py`. Use UTF-8 in the Codex and Antigravity plugin tests instead of the Windows system encoding (#64, #70).
 - On Windows, `scripts/prompt-submit.py` validates `worker-tokens` via `ctypes` without spawning a child process, requiring a real directory (not a symlink or junction) owned by the current user whose DACL allows only the current user, `SYSTEM`, and `Administrators`, without modifying ACLs.
 - `scripts/prompt-submit.py` reads stdin as strict UTF-8 and decodes `profile.py mode --json` as UTF-8, so prompts containing characters outside `cp1252` such as `U+23F0` no longer fail on Windows; undecodable input records no marker.

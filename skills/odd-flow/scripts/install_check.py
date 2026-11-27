@@ -15,9 +15,17 @@ import unicodedata
 
 SCHEMA = "odd-flow.install-check/v1"
 VERSION = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
+SEMVER_NUMBER = r"0|[1-9][0-9]*"
+SEMVER_PRERELEASE = rf"(?:{SEMVER_NUMBER}|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
+ORCA_VERSION = re.compile(
+    rf"({SEMVER_NUMBER})\.({SEMVER_NUMBER})\.({SEMVER_NUMBER})"
+    rf"(?:-{SEMVER_PRERELEASE}(?:\.{SEMVER_PRERELEASE})*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+)
 OUTPUT_SPACE = re.compile(r"[\s\x00-\x1f\x7f-\x9f]+")
 HOOKS_MIN_VERSION = (0, 4, 0)
 PLUGIN_LIST_TIMEOUT_SECS = 30
+ORCA_PLUGIN_SUFFIX = ".odd-flow-profiles"
 MANIFEST_BY_RUNTIME = {
     "claude": ".claude-plugin/plugin.json",
     "codex": ".codex-plugin/plugin.json",
@@ -45,8 +53,9 @@ class CheckError(Exception):
     pass
 
 
-def version_parts(value):
-    match = VERSION.fullmatch(value) if isinstance(value, str) else None
+def version_parts(value, *, orca=False):
+    pattern = ORCA_VERSION if orca else VERSION
+    match = pattern.fullmatch(value) if isinstance(value, str) else None
     if match is None:
         raise CheckError("invalid plugin version")
     return tuple(map(int, match.groups()))
@@ -78,7 +87,7 @@ def manifest_version(root, runtime):
         version = data["version"]
     except (OSError, ValueError, TypeError, KeyError, RuntimeError):
         raise CheckError("cannot read plugin manifest version") from None
-    version_parts(version)
+    version_parts(version, orca=runtime == "orca")
     return version
 
 
@@ -201,27 +210,65 @@ def sanitize_human_output(value):
     return OUTPUT_SPACE.sub(" ", value).strip()
 
 
+def catalog_version(root):
+    try:
+        data = json.loads(shipped_file(root, "orca-catalog.json").read_bytes())
+        plugin, = data["plugins"]
+        # Publishing places the newest release first.
+        release = plugin["releases"][0]
+        version = release["version"]
+        version_parts(version, orca=True)
+    except (CheckError, OSError, ValueError, TypeError, KeyError, IndexError, RuntimeError):
+        raise CheckError("cannot read newest release from orca-catalog.json") from None
+    commit = release.get("commit")
+    return version, commit if isinstance(commit, str) and commit else None
+
+
 def check_orca(root):
     try:
-        for entry in list_plugins("orca"):
-            if entry["pluginKey"] == "local.odd-flow-profiles":
-                version, plugin_status = entry.get("version"), entry.get("status")
-                version_parts(version)
-                if not isinstance(plugin_status, str) or not re.fullmatch(r"[a-z-]+", plugin_status):
-                    raise CheckError("invalid Orca plugin status")
-                expected = manifest_version(root, "orca")
-                state = "in sync" if version == expected else "version differs"
-                row = status("orca", state, version=version, expected_version=expected,
-                             plugin_status=plugin_status)
-                error = entry.get("error")
-                if plugin_status != "running" and isinstance(error, str):
-                    error = OUTPUT_SPACE.sub(" ", error).strip()
-                    if error:
-                        row["plugin_error"] = error
-                return row
-        return status("orca", "not installed")
+        entries = [entry for entry in list_plugins("orca")
+                   if entry["pluginKey"].endswith(ORCA_PLUGIN_SUFFIX)]
     except CheckError as error:
-        return unreadable("orca", error, "cannot read Orca plugin state")
+        yield unreadable("orca", error, "cannot read Orca plugin state")
+        return
+    if not entries:
+        yield status("orca", "not installed")
+        return
+    for entry in entries:
+        source = entry.get("source")
+        source = source if isinstance(source, dict) else {}
+        kind = source.get("kind")
+        folder = not isinstance(kind, str) or kind in ("", "local-path")
+        details = {"plugin_key": entry["pluginKey"], "source": "folder" if folder else "catalog"}
+        commit = source.get("resolvedCommit")
+        if isinstance(commit, str) and commit:
+            details["source_commit"] = commit
+        version, plugin_status = entry.get("version"), entry.get("status")
+        if isinstance(plugin_status, str) and re.fullmatch(r"[a-z-]+", plugin_status):
+            details["plugin_status"] = plugin_status
+            error = entry.get("error")
+            if plugin_status != "running" and isinstance(error, str):
+                error = OUTPUT_SPACE.sub(" ", error).strip()
+                if error:
+                    details["plugin_error"] = error
+        try:
+            version_parts(version, orca=True)
+            details["version"] = version
+            if "plugin_status" not in details:
+                raise CheckError("invalid Orca plugin status")
+            if folder:
+                expected = manifest_version(root, "orca")
+            else:
+                expected, expected_commit = catalog_version(root)
+                if expected_commit is not None:
+                    details["expected_commit"] = expected_commit
+            state = "in sync" if version == expected else "version differs"
+            if state == "in sync" and "expected_commit" in details and "source_commit" in details:
+                if details["source_commit"] != details["expected_commit"]:
+                    state = "commit differs"
+            yield status("orca", state, expected_version=expected, **details)
+        except CheckError as error:
+            yield {**unreadable("orca", error, "cannot read Orca plugin state"), **details}
 
 
 def count_session_state():
@@ -255,15 +302,19 @@ def check(root):
         if start == len(rows):
             rows.append(status(runtime, "not installed"))
 
-    orca = check_orca(root)
-    rows.append(orca)
-    if "version" in orca:
-        for row in rows[:-1]:
+    orca = list(check_orca(root))
+    if any("expected_version" in row for row in orca):
+        for row in rows:
             if "version" in row and version_parts(row["version"]) < HOOKS_MIN_VERSION:
                 report["warnings"].append(
                     f'{LABELS[row["runtime"]]} {row["version"]}: '
                     "the Orca tokened marker requires odd-flow hooks 0.4.0 or newer."
                 )
+    if sum(row.get("plugin_status", "disabled") != "disabled" for row in orca) > 1:
+        report["warnings"].append(
+            "More than one ODD Flow Orca plugin copy is enabled; each copy runs a worker and a prompt hook."
+        )
+    rows.extend(orca)
     if hashes is None:
         report["reason"] = "cannot read checkout files"
     report["session_state"] = count_session_state()
@@ -273,25 +324,38 @@ def check(root):
 def print_report(report):
     for row in report["installs"]:
         label = LABELS[row["runtime"]]
-        line = f'{label}: {row["status"]}'
+        name = f'{label} [{sanitize_human_output(row["plugin_key"])}]' if "plugin_key" in row else label
+        line = f'{name}: {row["status"]}'
         if "reason" in row:
             line += f' ({sanitize_human_output(row["reason"])})'
         if "path" in row:
             line += f' [{sanitize_human_output(row["path"])}]'
+        details = []
         if "version" in row:
             component = label if row["runtime"] == "orca" else "odd-flow"
-            line += f' ({component} {row["version"]}'
-            if row["version"] != row["expected_version"]:
-                line += f'; checkout {component} {row["expected_version"]}'
-            if "plugin_status" in row:
-                line += f'; Orca status: {row["plugin_status"]}'
-            if "plugin_error" in row:
-                error = sanitize_human_output(row["plugin_error"])
-                if len(error) > 200:
-                    error = error[:200] + "..."
-                if error:
-                    line += f"; {error}"
-            line += ")"
+            details.append(f'{component} {row["version"]}')
+            if "expected_version" in row and row["version"] != row["expected_version"]:
+                baseline = "catalog" if row.get("source") == "catalog" else "checkout"
+                details.append(f'{baseline} {component} {row["expected_version"]}')
+        if "plugin_status" in row:
+            details.append(f'Orca status: {row["plugin_status"]}')
+        if "source" in row:
+            details.append(f'source: {row["source"]}')
+        if (row.get("source") == "catalog" and "expected_version" in row
+                and ("source_commit" not in row or "expected_commit" not in row)):
+            details.append("commit: unknown")
+        elif "source_commit" in row:
+            details.append(f'commit: {sanitize_human_output(row["source_commit"])}')
+        if row["status"] == "commit differs":
+            details.append(f'catalog commit: {sanitize_human_output(row["expected_commit"])}')
+        if "plugin_error" in row:
+            error = sanitize_human_output(row["plugin_error"])
+            if len(error) > 200:
+                error = error[:200] + "..."
+            if error:
+                details.append(error)
+        if details:
+            line += " (" + "; ".join(details) + ")"
         if row.get("files_differ"):
             prefix = ": " if row["status"] == "files differ" else ": files differ: "
             line += prefix + ", ".join(map(sanitize_human_output, row["files_differ"]))
@@ -299,9 +363,11 @@ def print_report(report):
     if "reason" in report:
         print(f'Checkout: unreadable ({sanitize_human_output(report["reason"])})')
     for warning in report["warnings"]:
-        source, message = warning.split(": ", 1)
-        label, version = source.rsplit(" ", 1)
-        print(f"Warning: {label} (odd-flow {version}): {message}")
+        source, sep, message = warning.partition(": ")
+        if sep:
+            label, version = source.rsplit(" ", 1)
+            warning = f"{label} (odd-flow {version}): {message}"
+        print(f"Warning: {warning}")
     print("Compared: files under skills/, scripts/, and hooks/ in both trees, hooks.json, "
           "and runtime manifests. Other files (including .git, untracked extras outside "
           "shipped paths, Python bytecode, and .DS_Store) are ignored. "
@@ -328,7 +394,7 @@ def main():
     states = {row["status"] for row in report["installs"]}
     if "unreadable" in states or "reason" in report:
         return 3
-    return int(bool({"version differs", "files differ"} & states))
+    return int(bool({"version differs", "files differ", "commit differs"} & states))
 
 
 if __name__ == "__main__":
