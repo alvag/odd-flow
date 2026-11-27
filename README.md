@@ -95,6 +95,8 @@ agy plugin install ./odd-flow
 
 For development, run `agy plugin install "$PWD"` from the checkout instead. Reinstall after changing the checkout, and review the plugin's hook in Antigravity before relying on it.
 
+If Orca workers pause for command approval, see the [Antigravity permission rules for macOS/Linux and Windows](skills/odd-flow/references/orca-dispatch.md#when-orca-wakes-you).
+
 The package is a native Antigravity CLI plugin for `agy` 1.5.16 (https://antigravity.google/docs/build-plugins). `.antigravity-plugin/plugin.json` selects the shared `skills/odd-flow` skill, and the root `hooks.json` registers a flat `SessionStart` handler (`python3 -I ./scripts/session-start.py --runtime antigravity`), a flat `PreInvocation` handler (`scripts/prompt-submit.py --runtime antigravity`: worker marking and full-delegation reinjection on the first invocation of each turn, `invocationNum == 0`; the counter is 0-indexed in `agy` 1.5.16 and defaults to `0` when omitted) and a grouped `PreToolUse` handler (`scripts/pre-tool-use.py --runtime antigravity`: parent edit guard for the file-edit tools and writer launch admission for `run_command` and `invoke_subagent`). The hook reads the payload's `conversationId`, uses it as `ANTIGRAVITY_CONVERSATION_ID` for profile resolution (an inherited Claude or Codex id never overrides it), and returns the core block and active profile as an `injectSteps` system message.
 
 Validate a checkout without installing it, with a scratch home:
