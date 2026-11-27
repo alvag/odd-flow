@@ -284,6 +284,84 @@ def count_session_state():
         return {"status": "unreadable", "reason": "cannot scan session state directories"}
 
 
+def check_init_blocks(warnings):
+    try:
+        init = runpy.run_path(Path(__file__).with_name("init.py"))
+        mode, source = init["resolve_mode"](None)
+    except Exception:
+        # Init-block diagnostics must not prevent the install report or change its exit code.
+        return {"status": "unreadable", "reason": "cannot resolve orchestrator mode"}
+    try:
+        blocks = {name: init["rendered_block"](name).rstrip("\n") for name in init["CORE_BLOCKS"]}
+    except (OSError, UnicodeError):
+        return {"status": "unreadable", "reason": "cannot read checkout core blocks"}
+
+    rows = []
+    for runtime, target in init["TARGETS"].items():
+        rerun = f"python3 skills/odd-flow/scripts/init.py plan --runtime {runtime}"
+        reason = None
+        try:
+            path = Path.home() / target
+            current = init["read_current"](path)
+        except init["InitError"]:
+            # read_current only refuses symlinks, and its message includes the path.
+            reason = "instructions file is a symlink"
+        except (OSError, UnicodeError):
+            reason = "cannot read instructions file"
+        else:
+            try:
+                match = init["existing_block"](current)
+            except init["InitError"] as error:
+                reason = str(error)
+        if reason is not None:
+            rows.append(status(runtime, "unreadable", reason=reason))
+            warnings.append(f"{LABELS[runtime]} init block: unreadable ({reason}); "
+                            f"fix the file, then re-run /odd-flow init: {rerun}")
+            continue
+        if match is None:
+            rows.append(status(runtime, "not installed"))
+            continue
+        installed = next(
+            (name for name, block in blocks.items() if match[0].rstrip("\n") == block), "unknown",
+        )
+        details = {"path": str(path), "installed_mode": installed}
+        if installed == mode:
+            rows.append(status(runtime, "in sync", **details))
+            continue
+        if installed == "unknown":
+            state = "block differs"
+            problem = f"matches no mode asset, and the resolved mode is {mode}"
+        else:
+            state = "mode differs"
+            problem = f"installed for {installed} mode, but the resolved mode is {mode}"
+        rows.append(status(runtime, state, expected_mode=mode, **details))
+        warnings.append(f"{LABELS[runtime]} init block: {problem}; re-run /odd-flow init: {rerun}")
+    return {"expected_mode": mode, "mode_source": source, "runtimes": rows}
+
+
+def print_init_blocks(blocks):
+    if blocks.get("status") == "unreadable":
+        print(f'Init blocks: unreadable ({sanitize_human_output(blocks["reason"])})')
+        return
+    rows = [row for row in blocks["runtimes"] if row["status"] != "not installed"]
+    if not rows:
+        print("Init blocks: none installed")
+        return
+    print("Init blocks:")
+    for row in rows:
+        line = f'  {LABELS[row["runtime"]]}: {row["status"]}'
+        if "reason" in row:
+            line += f' ({sanitize_human_output(row["reason"])})'
+        if "path" in row:
+            line += f' [{sanitize_human_output(row["path"])}]'
+        if "installed_mode" in row:
+            details = [f'installed mode: {row["installed_mode"]}']
+            if "expected_mode" in row:
+                details.append(f'expected mode: {row["expected_mode"]}')
+            line += " (" + "; ".join(details) + ")"
+        print(line)
+
+
 def check(root):
     report = {"schema": SCHEMA, "installs": [], "warnings": []}
     rows = report["installs"]
@@ -321,6 +399,7 @@ def check(root):
     if hashes is None:
         report["reason"] = "cannot read checkout files"
     report["session_state"] = count_session_state()
+    report["init_blocks"] = check_init_blocks(report["warnings"])
     return report
 
 
@@ -365,12 +444,13 @@ def print_report(report):
         print(line)
     if "reason" in report:
         print(f'Checkout: unreadable ({sanitize_human_output(report["reason"])})')
+    print_init_blocks(report["init_blocks"])
     for warning in report["warnings"]:
         source, sep, message = warning.partition(": ")
-        if sep:
-            label, version = source.rsplit(" ", 1)
+        label, _, version = source.rpartition(" ")
+        if sep and VERSION.fullmatch(version):
             warning = f"{label} (odd-flow {version}): {message}"
-        print(f"Warning: {warning}")
+        print(f"Warning: {sanitize_human_output(warning)}")
     print("Compared: files under skills/, scripts/, and hooks/ in both trees, hooks.json, "
           "and runtime manifests. Other files (including .git, untracked extras outside "
           "shipped paths, Python bytecode, and .DS_Store) are ignored. "

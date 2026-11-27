@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Exercise the read-only installer diagnosis without the real HOME or CLIs.
 set -eu
+unset ODD_ORCHESTRATOR_MODE ODD_FLOW_PROFILE CLAUDE_CODE_SESSION_ID CODEX_THREAD_ID \
+    CODEX_SESSION_ID ANTIGRAVITY_CONVERSATION_ID
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 python=$(command -v python3)
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
@@ -132,7 +134,13 @@ if case in ("orca-catalog", "orca-duplicate", "orca-commit-diff"):
             "More than one ODD Flow Orca plugin copy is enabled; each copy runs a worker and a prompt hook."
         ], report
 elif case == "sync":
-    legacy_report = {key: value for key, value in report.items() if key != "session_state"}
+    legacy_report = {key: value for key, value in report.items()
+                     if key not in ("session_state", "init_blocks")}
+    assert report.get("init_blocks") == {
+        "expected_mode": "organic", "mode_source": "default",
+        "runtimes": [{"runtime": runtime, "status": "not installed"}
+                     for runtime in ("claude", "codex", "antigravity")],
+    }, report
     assert rows["orca"]["plugin_key"] == "local.odd-flow-profiles", rows["orca"]
     assert rows["orca"]["source"] == "folder", rows["orca"]
     legacy_report["installs"] = [
@@ -217,6 +225,65 @@ else:
     assert report.get("session_state") == {
         "session_bindings": 0, "prompt_sessions": 0, "session_modes": 0,
     }, report
+    assert [row["status"] for row in report["init_blocks"]["runtimes"]] == ["not installed"] * 3, report
+PY
+}
+
+assert_init() {
+    "$python" -I - "$1" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+case = sys.argv[1]
+assert not Path("err").read_text()
+report = json.loads(Path("out").read_text())
+blocks, warnings = report["init_blocks"], report["warnings"]
+home = Path(os.environ["HOME"])
+codex_file = str(home / ".codex/AGENTS.md")
+rerun = "re-run /odd-flow init: python3 skills/odd-flow/scripts/init.py plan --runtime codex"
+absent = [{"runtime": runtime, "status": "not installed"} for runtime in ("claude", "codex", "antigravity")]
+if case == "mode-unreadable":
+    assert blocks == {"status": "unreadable", "reason": "cannot resolve orchestrator mode"}, blocks
+    assert warnings == [], warnings
+elif case == "unreadable":
+    reasons = {
+        "claude": "instructions file is a symlink",
+        "codex": "the file has an unbalanced odd-flow marker; fix it by hand first",
+        "antigravity": "cannot read instructions file",
+    }
+    assert blocks["runtimes"] == [
+        {"runtime": runtime, "status": "unreadable", "reason": reason}
+        for runtime, reason in reasons.items()
+    ], blocks
+    assert len(warnings) == 3, warnings
+    for (runtime, reason), warning in zip(reasons.items(), warnings):
+        assert reason in warning and warning.endswith(f"--runtime {runtime}"), warning
+        assert str(home) not in warning, warning
+else:
+    mode = "full-delegation" if case == "in-sync" else "organic"
+    assert blocks["expected_mode"] == mode, blocks
+    assert blocks["mode_source"] == ("default" if case == "none" else "profile p"), blocks
+    row = {"runtime": "codex", "path": codex_file}
+    if case == "none":
+        row = absent[1]
+        expected_warnings = []
+    elif case == "in-sync":
+        row.update(status="in sync", installed_mode="full-delegation")
+        expected_warnings = []
+    elif case == "mode-differs":
+        row.update(status="mode differs", installed_mode="full-delegation", expected_mode="organic")
+        expected_warnings = [
+            "Codex init block: installed for full-delegation mode, but the resolved mode is organic; " + rerun
+        ]
+    else:
+        row.update(status="block differs", installed_mode="unknown", expected_mode="organic")
+        expected_warnings = [
+            "Codex init block: matches no mode asset, and the resolved mode is organic; " + rerun
+        ]
+    assert blocks["runtimes"] == [absent[0], row, absent[2]], blocks
+    assert warnings == expected_warnings, warnings
 PY
 }
 
@@ -446,6 +513,64 @@ export HOME="$scratch/missing-home" ODD_FLOW_HOME="$scratch/missing-home/odd-sta
 export CLAUDE_CONFIG_DIR="$scratch/missing-home/claude-config" CODEX_HOME="$scratch/missing-home/codex-config"
 check absent 0 --json
 assert_json absent
+
+export HOME=$(printf '%s/init-\342\200\256home' "$scratch")
+export ODD_FLOW_HOME="$HOME/odd-state"
+export CLAUDE_CONFIG_DIR="$HOME/claude-config" CODEX_HOME="$HOME/codex-config"
+mkdir -p "$HOME/.claude" "$ODD_FLOW_HOME"
+printf 'My own rules.\n' > "$HOME/.claude/CLAUDE.md"
+shown_codex_file="$scratch/init-home/.codex/AGENTS.md"
+
+check init-none 0 --json
+assert_init none
+check human-init-none 0
+grep -Fx 'Init blocks: none installed' out
+
+set_mode() {
+    printf '{"default":"p","profiles":{"p":{}},"workflow":{"p":{"orchestratorMode":"%s"}}}\n' "$1" \
+        > "$ODD_FLOW_HOME/profiles.json"
+}
+set_mode full-delegation
+"$python" -I "$root/skills/odd-flow/scripts/init.py" apply --runtime codex > /dev/null
+check init-in-sync 0 --json
+assert_init in-sync
+check human-init-in-sync 0
+grep -Fx "  Codex: in sync [$shown_codex_file] (installed mode: full-delegation)" out
+if grep -F 'Warning:' out; then
+    exit 1
+fi
+
+set_mode organic
+cp -R "$HOME" "$scratch/init-before"
+check init-mode-differs 0 --json
+assert_init mode-differs
+check human-init-mode-differs 0
+grep -Fx "  Codex: mode differs [$shown_codex_file] (installed mode: full-delegation; expected mode: organic)" out
+grep -Fx 'Warning: Codex init block: installed for full-delegation mode, but the resolved mode is organic; re-run /odd-flow init: python3 skills/odd-flow/scripts/init.py plan --runtime codex' out
+diff -r "$scratch/init-before" "$HOME"
+
+printf '<!-- odd-flow:core -->\nedited by hand\n<!-- /odd-flow:core -->\n' > "$HOME/.codex/AGENTS.md"
+check init-block-differs 0 --json
+assert_init block-differs
+check human-init-block-differs 0
+grep -Fx "  Codex: block differs [$shown_codex_file] (installed mode: unknown; expected mode: organic)" out
+grep -Fx 'Warning: Codex init block: matches no mode asset, and the resolved mode is organic; re-run /odd-flow init: python3 skills/odd-flow/scripts/init.py plan --runtime codex' out
+
+mkdir -p "$HOME/.gemini"
+ln -sf "$HOME/.codex/AGENTS.md" "$HOME/.claude/CLAUDE.md"
+printf '<!-- odd-flow:core -->\n' > "$HOME/.codex/AGENTS.md"
+printf '\377\n' > "$HOME/.gemini/GEMINI.md"
+check init-unreadable 0 --json
+assert_init unreadable
+check human-init-unreadable 0
+grep -Fx '  Claude Code: unreadable (instructions file is a symlink)' out
+grep -F 'Warning: Claude Code init block: unreadable (instructions file is a symlink)' out
+
+printf 'not json\n' > "$ODD_FLOW_HOME/profiles.json"
+check init-mode-unreadable 0 --json
+assert_init mode-unreadable
+check human-init-mode-unreadable 0
+grep -Fx 'Init blocks: unreadable (cannot resolve orchestrator mode)' out
 
 check usage 2 --unknown
 test ! -s out
