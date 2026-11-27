@@ -59,7 +59,7 @@ init.os.replace=boom; sys.exit(init.main(["remove","--target",sys.argv[2]]))' "$
 [[ $? == 2 && "$out" == *"injected"* ]] && cmp -s "$h" "$T/fail.orig" && [[ -z $(find "$T" -name '.odd-flow-*' -print) ]] && ok "failed write keeps the target and leaves no temp" || ko "failed write" "$out"
 # a block-only file is emptied, mode kept
 o="$T/only.md"; python3 -I "$I" apply --target "$o" >/dev/null; chmod 640 "$o"
-out=$(run remove --target "$o"); [[ $? == 0 && ! -s "$o" && $(stat -f %Lp "$o" 2>/dev/null || stat -c %a "$o") == 640 ]] && ok "block-only file emptied, mode kept" || ko "block-only" "$out"
+out=$(run remove --target "$o"); [[ $? == 0 && ! -s "$o" && $(python3 -I -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "$o") == 640 ]] && ok "block-only file emptied, mode kept" || ko "block-only" "$out"
 
 echo "passed=$pass failed=$fail"
 [[ $fail == 0 ]]
