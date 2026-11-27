@@ -69,7 +69,8 @@ SH
 cat > "$bin/orca" <<'SH'
 #!/bin/bash
 [[ "$*" = "plugin list --json" ]] || exit 99
-printf '{"ok":true,"result":{"plugins":[{"pluginKey":"local.odd-flow-profiles","version":"%s","status":"%s","error":"%s","source":{"kind":"local-path","resolvedCommit":null}}%s]}}\n' "$ORCA_VERSION" "${ORCA_STATUS:-running}" "${ORCA_ERROR:-plugin local.odd-flow-profiles is errored after repeated failures}" "${ORCA_EXTRA:-}"
+source_field=${ORCA_SOURCE-',"source":{"kind":"local-path","resolvedCommit":null}'}
+printf '{"ok":true,"result":{"plugins":[{"pluginKey":"local.odd-flow-profiles","version":"%s","status":"%s","error":"%s"%s}%s]}}\n' "$ORCA_VERSION" "${ORCA_STATUS:-running}" "${ORCA_ERROR:-plugin local.odd-flow-profiles is errored after repeated failures}" "$source_field" "${ORCA_EXTRA:-}"
 SH
 chmod +x "$bin/claude" "$bin/orca"
 
@@ -234,6 +235,8 @@ release = plugin["releases"][0]
 print(plugin["id"], release["version"], release["commit"])
 PYTHON
 read -r catalog_key catalog_version catalog_commit < catalog-release
+ORCA_VERSION="$catalog_version" ORCA_SOURCE= check human-orca-no-source 1
+grep -Fx "ODD Flow Orca plugin [local.odd-flow-profiles]: version differs (ODD Flow Orca plugin $catalog_version; checkout ODD Flow Orca plugin 9.8.7; Orca status: running; source: folder)" out
 catalog_row=',{"pluginKey":"%s","version":"%s","status":"idle","source":{"kind":"marketplace","resolvedCommit":"%s","marketplace":{"resolvedCommit":"different-commit"}}},{"pluginKey":"example.unrelated","version":"0.0.1","status":"running"}'
 ORCA_VERSION=9.8.7 ORCA_STATUS=disabled ORCA_EXTRA=$(printf "$catalog_row" "$catalog_key" "$catalog_version" "$catalog_commit") check orca-catalog 0 --json
 assert_json orca-catalog

@@ -237,7 +237,8 @@ def check_orca(root):
     for entry in entries:
         source = entry.get("source")
         source = source if isinstance(source, dict) else {}
-        folder = source.get("kind") == "local-path"
+        kind = source.get("kind")
+        folder = not isinstance(kind, str) or kind in ("", "local-path")
         details = {"plugin_key": entry["pluginKey"], "source": "folder" if folder else "catalog"}
         commit = source.get("resolvedCommit")
         if isinstance(commit, str) and commit:
