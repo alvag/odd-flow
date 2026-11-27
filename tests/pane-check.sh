@@ -154,7 +154,25 @@ printf '%s\n' \
   '    wall_time = lambda: 1_700_000_000' \
   '    mtime = wall_time() - float(record_age)' \
   '    os.utime(Path(os.environ["TMPDIR"]) / "odd-flow-pane-term_parent.cols", (mtime, mtime))' \
-  'pane.parent_cols = sample' \
+  'consoles = os.environ.get("WIN_CONSOLES")' \
+  'def attached_consoles(pids):' \
+  '    with open(os.environ["ORCA_LOG"] + ".samples", "a") as log:' \
+  '        print("walk from parent:", pids[:1] == [os.getppid()], file=log)' \
+  '    return [None if spec == "none" else [spec.startswith("window:"), int(spec.split(":")[1])]' \
+  '            for spec, _ in zip(consoles.split(), pids)]' \
+  'windows_cols = pane.parent_cols' \
+  'def forced_windows():' \
+  '    platform, sys.platform = sys.platform, "win32"' \
+  '    try:' \
+  '        return windows_cols()' \
+  '    finally:' \
+  '        sys.platform = platform' \
+  'if consoles is not None:' \
+  '    # Under env -i the Windows parent chain stops at env.exe, so keep only the real first step.' \
+  '    nearest = pane.ancestor_pids()[:1] if sys.platform == "win32" else [os.getppid()]' \
+  '    pane.ancestor_pids = lambda: [*nearest, *range(2, 10)]' \
+  '    pane.attached_consoles = attached_consoles' \
+  'pane.parent_cols = sample if consoles is None else forced_windows' \
   'pane.time = SimpleNamespace(monotonic_ns=lambda: round(now * 1_000_000_000), sleep=sleep, time=wall_time)' \
   'sys.argv = [script, *args]' \
   'sys.exit(pane.main())' >"$T/sample.py"
@@ -168,7 +186,7 @@ layout() {
 }
 open_pane() {
   local command=(python3 -I "$P") format=(--json)
-  if [[ -n "${widths+x}${orca_timeout+x}${trace_timeout+x}" ]]; then
+  if [[ -n "${widths+x}${orca_timeout+x}${trace_timeout+x}${win_consoles+x}" ]]; then
     command=(python3 -I "$T/sample.py" "$P" "${widths-}" "${orca_timeout-}" "${record_age-}")
   fi
   if [[ -n "${text_output+x}" ]]; then
@@ -181,7 +199,7 @@ open_pane() {
     ${min_cols+ODD_FLOW_SPLIT_MIN_COLS="$min_cols"} ORCA_FAIL_SPLIT="${fail_split-0}" \
     ${settle_ms+ODD_FLOW_SPLIT_SETTLE_MS="$settle_ms"} ORCA_FAIL_CREATE="${fail_create-0}" \
     ORCA_HANG="${hang-}" ORCA_TRACE_TIMEOUT="${trace_timeout-}" ORCA_FAIL_BASELINE="${fail_baseline-}" \
-    "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
+    ${win_consoles+WIN_CONSOLES="$win_consoles"} "${command[@]}" open --title 'T1 verify: example' ${format[@]+"${format[@]}"} "$@" 2>&1
 }
 calls() {
   printf '\nargv:\n'
@@ -602,13 +620,17 @@ out=$(widths='219' settle_ms=0 open_pane --role verify); ec=$?
 expect "a split below records no width" 0 "$ec" '"placement": "split-below", "handle": "term_new"'
 
 layout "$p"
-if [[ -n "$windows" ]]; then
-  out=$(open_pane --role verify); ec=$?
-  expect "Windows without --cols: tab because the width is unknown" 0 "$ec" \
-    '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' "$list_call$baseline_call$tab_call"$'\n\nend argv'
-else
-  echo "SKIP Windows without --cols: tab because the width is unknown: Windows only"
-fi
+rm -f "$width_record"
+out=$(win_consoles='none hidden:120 window:181 window:90' open_pane --role verify); ec=$?
+expect "Windows: the nearest ancestor console with a window sets the width and splits right" 0 "$ec" \
+  '"placement": "split-right", "handle": "term_new", "parent": "term_parent", "target": "term_parent", "cols": 181' \
+  "$list_call$right_call$title_call"$'\n\nend argv\nsamples:\nwalk from parent: True'
+
+rm -f "$width_record"
+out=$(win_consoles='hidden:200 none hidden:120' open_pane --role verify); ec=$?
+expect "Windows: no ancestor console with a window keeps the unknown-width tab" 0 "$ec" \
+  '"cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
+  "$list_call$baseline_call$tab_call"$'\n\nend argv\nsamples:\nwalk from parent: True'
 
 # Two launches for the same parent: the second waits on the pane lock and runs once the first times out.
 layout "$p"
