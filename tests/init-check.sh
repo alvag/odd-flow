@@ -19,6 +19,17 @@ expected_block() {
 expected_block core-block.md > "$T/organic"
 expected_block core-block-full-delegation.md > "$T/full-delegation"
 
+windows_cmd=$(isolated python3 -I -B -c '
+import os, sys
+sys.path.insert(0, os.path.dirname(sys.argv[1]))
+from init import format_apply_command
+print(format_apply_command(sys.argv[2:], "nt"))
+' "$I" 'C:\Program Files\Python\python.exe' 'C:\odd flow\init.py' apply --target "C:\O'Brien\AGENTS.md"); ec=$?
+windows_expected="& 'C:\Program Files\Python\python.exe' 'C:\odd flow\init.py' 'apply' '--target' 'C:\O''Brien\AGENTS.md'"
+[[ $ec == 0 && "$windows_cmd" == "$windows_expected" ]] &&
+    ok "Windows apply command uses PowerShell quoting" ||
+    ko "Windows apply command uses PowerShell quoting" "exit $ec or wrong command: $windows_cmd"
+
 m="$T/mode target.md"
 out=$(isolated ODD_ORCHESTRATOR_MODE=full-delegation python3 -I "$I" plan --runtime codex --target "$m"); ec=$?
 [[ $ec == 0 && "$out" == *"mode: full-delegation (env ODD_ORCHESTRATOR_MODE); block: assets/core-block-full-delegation.md"* ]] && ok "plan names resolved mode, source and asset" || ko "plan names resolved mode, source and asset" "exit $ec or missing mode line"
@@ -30,6 +41,19 @@ if [[ "$apply_cmd" == *"--runtime codex"* && "$apply_cmd" == *"--mode full-deleg
     ok "plan prints a runnable apply command pinned to its mode and arguments"
 else
     ko "plan prints a runnable apply command pinned to its mode and arguments" "command: $apply_cmd"
+fi
+
+mkdir "$T/plan-cwd" "$T/apply-cwd"
+plan_cwd=$(cd "$T/plan-cwd" && pwd -P)
+relative_plan=$(cd "$plan_cwd" && run plan --mode organic --target 'relative target.md'); ec=$?
+relative_apply=$(printf '%s\n' "$relative_plan" | sed -n 's/^apply: //p')
+if [[ $ec == 0 && "$relative_plan" == "target: $plan_cwd/relative target.md (will be created)"* && -n "$relative_apply" ]] &&
+    (cd "$T/apply-cwd" && isolated bash -c "$relative_apply" >/dev/null) &&
+    cmp -s "$T/plan-cwd/relative target.md" "$T/organic" &&
+    [[ ! -e "$T/apply-cwd/relative target.md" ]]; then
+    ok "a relative target is pinned to the plan directory"
+else
+    ko "a relative target is pinned to the plan directory" "plan exit $ec or replay did not write the planned file"
 fi
 
 if isolated ODD_ORCHESTRATOR_MODE=invalid python3 -I "$I" apply --mode organic --target "$T/explicit.md" >/dev/null &&
@@ -47,6 +71,21 @@ session_plan=$(isolated CLAUDE_CODE_SESSION_ID=init-test python3 -I "$(dirname "
     "$session_plan" == *"session (CLAUDE_CODE_SESSION_ID)"*"warning:"*"session-only"*"persistent"* ]] &&
     ok "plan warns when persisting a mode from the environment or session" ||
     ko "plan warns when persisting a mode from the environment or session" "session exit $ec or missing warning"
+
+warning=$(printf '%s\n' "$session_plan" | sed -n '/^warning: /p')
+env_apply=$(isolated ODD_ORCHESTRATOR_MODE=full-delegation python3 -I "$I" apply --target "$T/apply-env.md"); env_ec=$?
+session_apply=$(isolated CLAUDE_CODE_SESSION_ID=init-test python3 -I "$I" apply --target "$T/session.md"); session_ec=$?
+current_apply=$(isolated CLAUDE_CODE_SESSION_ID=init-test python3 -I "$I" apply --target "$T/session.md"); current_ec=$?
+explicit_apply=$(isolated ODD_ORCHESTRATOR_MODE=full-delegation python3 -I "$I" apply --mode organic --target "$T/apply-explicit.md"); explicit_ec=$?
+if [[ -n "$warning" && $env_ec == 0 && $session_ec == 0 && $current_ec == 0 && $explicit_ec == 0 &&
+    "$env_apply" == *"odd-flow block written"*"mode: full-delegation"*"assets/core-block-full-delegation.md"*"$warning"* &&
+    "$session_apply" == *"odd-flow block written"*"mode: full-delegation"*"assets/core-block-full-delegation.md"*"$warning"* &&
+    "$current_apply" == *"up to date, nothing written"*"mode: full-delegation"*"$warning"* &&
+    "$explicit_apply" == *"odd-flow block written"*"mode: organic"*"assets/core-block.md"* && "$explicit_apply" != *"warning:"* ]]; then
+    ok "apply reports the mode and asset and warns only on session-only resolution"
+else
+    ko "apply reports the mode and asset and warns only on session-only resolution" "missing mode, asset or expected warning"
+fi
 
 refuses=1
 for command in plan apply; do

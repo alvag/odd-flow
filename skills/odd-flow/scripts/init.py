@@ -86,6 +86,11 @@ def resolve_mode(override):
         raise InitError(f"cannot resolve mode ({exc}); pass --mode organic|full-delegation") from exc
 
 
+def warn_if_session_only(source):
+    if source == "env ODD_ORCHESTRATOR_MODE" or source.startswith("session ("):
+        print("warning: the resolved mode is session-only, but the installed block is persistent")
+
+
 def rendered_block(mode):
     with open(os.path.join(SKILL_DIR, "assets", CORE_BLOCKS[mode]), encoding="utf-8") as handle:
         body = handle.read().strip("\n")
@@ -120,6 +125,12 @@ def read_current(path):
         return handle.read()
 
 
+def format_apply_command(command, platform):
+    if platform == "nt":
+        return "& " + " ".join("'" + arg.replace("'", "''") + "'" for arg in command)
+    return shlex.join(command)
+
+
 def cmd_plan(args):
     path = target_path(args.runtime, args.target)
     current = read_current(path)
@@ -136,14 +147,13 @@ def cmd_plan(args):
             "unknown",
         )
         print(f"installed mode: {installed}")
-    if source == "env ODD_ORCHESTRATOR_MODE" or source.startswith("session ("):
-        print("warning: the resolved mode is session-only, but the installed block is persistent")
+    warn_if_session_only(source)
     command = [sys.executable, os.path.abspath(__file__), "apply", "--mode", mode]
     if args.runtime is not None:
         command.extend(["--runtime", args.runtime])
     if args.target is not None:
-        command.extend(["--target", args.target])
-    print(f"apply: {shlex.join(command)}")
+        command.extend(["--target", path])
+    print(f"apply: {format_apply_command(command, os.name)}")
     if new == current:
         print("status: up to date, nothing to write")
         return
@@ -174,17 +184,19 @@ def cmd_apply(args):
     path = target_path(args.runtime, args.target)
     current = read_current(path)
     match = existing_block(current)
-    mode, _ = resolve_mode(args.mode)
+    mode, source = resolve_mode(args.mode)
     new = updated_content(current, rendered_block(mode), match)
     if new == current:
         print(f"{path}: up to date, nothing written")
-        return
-    backup = None
-    if os.path.exists(path):
-        backup = f"{path}.bak-odd-flow-{time.strftime('%Y%m%d-%H%M%S')}"
-        shutil.copy2(path, backup)
-    write_atomic(path, new)
-    print(f"{path}: odd-flow block written" + (f"; backup: {backup}" if backup else " (new file)"))
+    else:
+        backup = None
+        if os.path.exists(path):
+            backup = f"{path}.bak-odd-flow-{time.strftime('%Y%m%d-%H%M%S')}"
+            shutil.copy2(path, backup)
+        write_atomic(path, new)
+        print(f"{path}: odd-flow block written" + (f"; backup: {backup}" if backup else " (new file)"))
+    print(f"mode: {mode}; block: assets/{CORE_BLOCKS[mode]}")
+    warn_if_session_only(source)
 
 
 def cmd_remove(args):

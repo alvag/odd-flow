@@ -14,7 +14,7 @@ The runtime is detected from the session variables; pass `--runtime` or `--targe
 
 1. Run `python3 <skill-dir>/scripts/init.py plan` (add `--runtime <name>` when the user names another runtime).
 2. Show the user the target file, mode line, any installed-mode line or warning, and the diff exactly as printed.
-3. Wait for an explicit yes. Then run the apply command printed by the plan, including `--mode` and any `--runtime` or `--target` arguments. Report the backup path it prints.
+3. Wait for an explicit yes. Then run the apply command printed by the plan, including `--mode` and any `--runtime` or `--target` arguments. On Windows, the printed command is for PowerShell, the shell used by Orca terminals there. Report the backup path it prints.
 4. To uninstall, run `init.py remove` with the same runtime or target arguments, without `--mode`.
 
 The installed block is static. Re-run init after a lasting mode change, such as `/odd-flow --profile-mode` or a profile default change that selects a different mode. A session-only `/odd-flow --mode` is not a reason to re-run init.
