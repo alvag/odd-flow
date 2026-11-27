@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import { test, type TestContext } from 'node:test'
 import { setImmediate as nextTurn, setTimeout as delay } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -319,7 +319,29 @@ test('loads many pages on a cold read even when their elapsed time exceeds five 
   }
 })
 
-test('resolves an absolute configured file, then an executable on PATH, then the bundled file', async (t) => {
+test('reports the shorter page timeout applied near the dispatch scan deadline', async (t) => {
+  const sleeper = join(await temp(t), 'sleep.cjs')
+  await writeFile(sleeper, 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20000)\n')
+  // The scan fixes its deadline before it resolves the executable, so 250 ms of budget remain.
+  let nearDeadline = false
+  t.mock.method(performance, 'now', () => nearDeadline ? 59_750 : 0)
+  const worker = await fixture({ profileScript: currentScript }, [terminalOnly], {
+    // Node preloads the sleeper before it would fail to load the dispatch-list argv as a script.
+    env: { NODE_OPTIONS: `--require "${sleeper.split(sep).join('/')}"` },
+    resolveOrca: async () => { nearDeadline = true; return process.execPath },
+    runExecutable: undefined
+  })
+  try {
+    const { workerCheckError } = await worker.request('state')
+    assert.equal(workerCheckError, 'Could not check dispatched workers: Orca CLI timed out after 0.25 seconds.')
+  } finally {
+    await worker.deactivate()
+  }
+})
+
+test('resolves an absolute configured file, then an executable on PATH, then the bundled file', {
+  skip: process.platform === 'win32' && 'relies on the POSIX executable bit to pass over a non-executable file on PATH'
+}, async (t) => {
   const home = await temp(t)
   const configured = await scriptAt(join(home, 'configured'))
   const first = join(home, 'first')
@@ -338,7 +360,9 @@ test('resolves an absolute configured file, then an executable on PATH, then the
   assert.equal(await main.resolveOrcaExecutable({}, join(home, 'missing')), undefined)
 })
 
-test('executes the Orca file directly and passes the dispatch list argv unchanged', async (t) => {
+test('executes the Orca file directly and passes the dispatch list argv unchanged', {
+  skip: process.platform === 'win32' && 'runs a POSIX shell-script fixture'
+}, async (t) => {
   const home = await temp(t)
   const executable = join(home, 'orca literal; $(printf marker)')
   await writeFile(executable, `#!/bin/sh
@@ -482,7 +506,9 @@ test('keeps the raw failure when a traceback line ends in the argparse phrase', 
   }
 })
 
-test('keeps the raw failure when the script path contains the argparse phrase and stderr is empty', async (t) => {
+test('keeps the raw failure when the script path contains the argparse phrase and stderr is empty', {
+  skip: process.platform === 'win32' && 'Windows file names cannot contain newlines'
+}, async (t) => {
   const home = await temp(t)
   const script = await scriptAt(join(home, 'path\nhelper: error: unrecognized arguments: --json\n', 'profile.py'))
   await writeFile(script, 'raise SystemExit(1)\n')
@@ -691,7 +717,9 @@ for (const [name, result, expected] of [
   ['invalid payload', { stdout: '{"ok":true,"result":{"workers":[{}]}}', stderr: '' }, /invalid dispatch list/i],
   ['ok false', { stdout: '{"ok":false}', stderr: '' }, /reported failure/i]
 ] as const) {
-  test(`fails closed on dispatch-list ${name}, preserving rows and rejecting every mutation before Python`, async (t) => {
+  test(`fails closed on dispatch-list ${name}, preserving rows and rejecting every mutation before Python`, {
+    skip: name === 'timeout' && process.platform === 'win32' && 'runs a POSIX shell-script fixture'
+  }, async (t) => {
     const commands: string[] = []
     if (name === 'timeout') {
       const executable = join(await temp(t), 'sleeping-orca')

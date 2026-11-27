@@ -12,6 +12,7 @@ type PromptEvent = PluginHooks['agent.prompt.before']['event']
 const TOKEN = '0123456789abcdef'.repeat(2)
 const NOW = 1_800_000_000_000
 const LIFETIME = 15 * 60 * 1000
+const issuesTokens = { skip: process.platform === 'win32' && 'Windows cannot report a 0700 token directory' }
 
 function promptEvent(prompt: string, inputKind: PromptEvent['inputKind'] = 'orchestration'): PromptEvent {
   return { agent: null, terminalId: 't1', inputKind, prompt }
@@ -33,7 +34,7 @@ function fixture(t: { after: (cleanup: () => void) => void }) {
 function assertIssuanceFailure(logs: string[], dir: string, reason: string) {
   assert.equal(logs.length, 1)
   assert.ok(logs[0].includes('role=write'))
-  assert.ok(logs[0].includes(dir))
+  assert.ok(logs[0].includes(JSON.stringify(dir)))
   assert.ok(logs[0].includes(reason))
   assert.ok(!logs[0].includes(TOKEN))
 }
@@ -62,7 +63,7 @@ async function firePrompt(stateDir: string, prompt: string, inputKind?: PromptEv
   }
 }
 
-test('appends the lowercase first matching role and token after writing its private record', async (t) => {
+test('appends the lowercase first matching role and token after writing its private record', issuesTokens, async (t) => {
   const { stateDir, dir } = fixture(t)
   const original = 'Orca dispatch\r\n# Role: explore extra\r\n# rOlE: WrItE \t\r\n# Role: verify\r\nTask body\r\n'
   const before = Date.now()
@@ -84,7 +85,7 @@ test('appends the lowercase first matching role and token after writing its priv
   assert.deepEqual(logs, [])
 })
 
-test('logs once, passes unchanged and creates no record when the record write fails', (t) => {
+test('logs once, passes unchanged and creates no record when the record write fails', issuesTokens, (t) => {
   const { dir, issue, logs } = fixture(t)
   mkdirSync(dir, { mode: 0o700 })
   mkdirSync(join(dir, recordName(TOKEN)))
@@ -105,7 +106,9 @@ test('logs once through Orca and leaves the prompt unchanged for a non-private t
 })
 
 for (const [permission, mode] of [['setgid', 0o2700], ['sticky', 0o1700]] as const) {
-  test(`rejects and logs a ${permission} token directory`, (t) => {
+  test(`rejects and logs a ${permission} token directory`, {
+    skip: process.platform === 'win32' && 'Windows has no setgid or sticky bits'
+  }, (t) => {
     const { dir, issue, logs } = fixture(t)
     mkdirSync(dir, { mode: 0o700 })
     chmodSync(dir, mode)
@@ -123,7 +126,9 @@ test('rejects and logs a relative state directory without creating a token direc
   assertIssuanceFailure(logs, join(relativeStateDir, 'worker-tokens'), 'state directory must be absolute')
 })
 
-test('rejects and logs a token directory symlink without writing into its target', (t) => {
+test('rejects and logs a token directory symlink without writing into its target', {
+  skip: process.platform === 'win32' && 'creating a directory symlink on Windows needs extra privilege'
+}, (t) => {
   const { stateDir, dir, issue, logs } = fixture(t)
   const target = join(stateDir, 'target')
   mkdirSync(target, { mode: 0o700 })
@@ -177,19 +182,19 @@ test('passes unknown roles and malformed role lines unchanged', async (t) => {
   }
 })
 
-test('still appends when a tokened marker is not on the last non-empty line', (t) => {
+test('still appends when a tokened marker is not on the last non-empty line', issuesTokens, (t) => {
   const original = `# Role: write\nodd-flow-worker: write ${'a'.repeat(32)}\nTask body`
   const { issue } = fixture(t)
   assert.equal(issue(original), original + `\n\nodd-flow-worker: write ${TOKEN}\n`)
 })
 
-test('appends a tokened marker even when a bare marker is already last', (t) => {
+test('appends a tokened marker even when a bare marker is already last', issuesTokens, (t) => {
   const original = '# Role: write\nTask body\nodd-flow-worker: write'
   const { issue } = fixture(t)
   assert.equal(issue(original), original + `\n\nodd-flow-worker: write ${TOKEN}\n`)
 })
 
-test('prunes older numeric timestamps on issuance but keeps cutoff and malformed records', (t) => {
+test('prunes older numeric timestamps on issuance but keeps cutoff and malformed records', issuesTokens, (t) => {
   const { dir, issue } = fixture(t)
   mkdirSync(dir, { mode: 0o700 })
   const expired = recordName('a'.repeat(32))
