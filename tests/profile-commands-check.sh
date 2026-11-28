@@ -126,10 +126,14 @@ expect "save: a symlinked file is written through the link" '"viaLink"' "$(cat "
 printf '\xff\xfe' >"$T/latin.json"
 out=$(run python3 -I "$P" save bad --roles-file "$T/latin.json" --yes); ec=$?
 expect "save: a non-UTF-8 roles file is an odd-flow error" "odd-flow:" "$out" 2 $ec
-rm "$T/home/profiles.json"; mv "$T/real.json" "$T/home/profiles.json"; chmod 555 "$T/home"
-out=$(run python3 -I "$P" save ro --roles-file "$T/roles3.json" --yes); ec=$?
-expect "save: a read-only directory is an odd-flow error" "odd-flow: cannot write" "$out" 2 $ec
-chmod 755 "$T/home"
+if [ "$(id -u)" -eq 0 ]; then
+  echo "SKIP save: a read-only directory is an odd-flow error (running as root)"
+else
+  rm "$T/home/profiles.json"; mv "$T/real.json" "$T/home/profiles.json"; chmod 555 "$T/home"
+  out=$(run python3 -I "$P" save ro --roles-file "$T/roles3.json" --yes); ec=$?
+  chmod 755 "$T/home"
+  expect "save: a read-only directory is an odd-flow error" "odd-flow: cannot write" "$out" 2 $ec
+fi
 
 echo "passed=$pass failed=$fail"
 [ "$fail" -eq 0 ]
