@@ -17,12 +17,13 @@ PLUGIN_ROOT = Path((None if ANTIGRAVITY else os.environ.get(ROOT_VAR)) or Path(_
 SURFACE_SCRIPT = PLUGIN_ROOT / "skills" / "odd-flow" / "scripts" / "surface.py"
 EDIT_PATH_FIELDS = {"Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path"}
 LAUNCHES = {"task-create", "worker-start"}
-NESTED_SHELLS = {"powershell", "pwsh", "cmd", "bash", "sh"}
+EVAL_COMMANDS = {"eval", "invoke-expression", "iex"}
+NESTED_SHELLS = {"powershell", "pwsh", "cmd", "bash", "sh", "zsh", "dash", "ksh"} | EVAL_COMMANDS
 DIRECTORY_CHANGES = {"cd", "set-location", "push-location", "pop-location", "pushd", "popd", "sl", "chdir"}
-POSIX_PREFIXES = {"{", "!", "if", "then", "do", "else", "elif", "while", "until", "time"}
+POSIX_PREFIXES = {"{", "!", "if", "then", "do", "else", "elif", "while", "until", "time", "function", "coproc"}
 COMMAND_WRAPPERS = {"env", "command", "exec", "builtin", "nohup", "nice", "timeout"}
 WRAPPER_VALUE_OPTIONS = {
-    "env": {"-u", "--unset", "-C", "--chdir"},
+    "env": {"-u", "--unset", "-C", "--chdir", "-P", "-S", "--split-string"},
     "exec": {"-a"},
     "nice": {"-n", "--adjustment"},
     "timeout": {"-k", "--kill-after", "-s", "--signal"},
@@ -44,7 +45,8 @@ VALUE_FLAGS = {
 WORD_FRAGMENT = re.compile(r"""(?:'[^']*'|\\[\s\S]|\$(?!\()|[^\s;&|()<>'"`\\$])+|\$\(|""" r'["`]')
 SHELL_TOKEN = re.compile(
     r"""(?P<space>[ \t]+|\\\n)|(?P<comment>\#[^\n]*)|"""
-    r"""(?P<redirect>[0-9]*(?:<<<|<<-?|<>|>>|>&|<&|>\||[<>]))|(?P<operator>[\n;&|()])|"""
+    r"""(?P<redirect>[0-9]*(?:<<<|<<-?|<>|>>|>&|<&|>\||[<>]))|"""
+    r"""(?P<operator>;;&|;;|;&|&&|\|\||\|&|[\n;&|()])|"""
     rf"(?P<word>{WORD_FRAGMENT.pattern})"
 )
 WORD_PART = re.compile(r"""'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[^'"\\]+""")
@@ -106,8 +108,9 @@ def program_name(word):
 
 
 def command_start(words, *, posix):
-    """Skip shell prefixes and locate the invoked program inside common wrappers."""
+    """Locate the invoked program and collect wrapper cwd and re-parsing effects."""
     start = 0
+    changes_cwd = reparses = False
     allow_assignment = posix
     while start < len(words):
         word = words[start][0]
@@ -116,6 +119,8 @@ def command_start(words, *, posix):
             if word == "time":
                 while start < len(words) and words[start][0] in {"-p", "--"}:
                     start += 1
+            elif word == "function":
+                start += 1  # Skip the function name, not the body.
             continue
         if allow_assignment and re.match(r"[a-zA-Z_]\w*=", word):
             start += 1
@@ -129,27 +134,41 @@ def command_start(words, *, posix):
             start += 1
             if option == "--":
                 break
-            if option in WRAPPER_VALUE_OPTIONS.get(wrapper, ()):
+            takes_value = WRAPPER_VALUE_OPTIONS.get(wrapper, ())
+            if option.startswith("--"):
+                option, attached, _ = option.partition("=")
+            else:
+                # The first value-taking flag owns the rest of a short bundle.
+                for i, flag in enumerate(option[1:], 2):
+                    if "-" + flag in takes_value:
+                        option, attached = "-" + flag, option[i:]
+                        break
+                else:
+                    continue
+            if wrapper == "env":
+                changes_cwd |= option in {"-C", "--chdir"}
+                reparses |= option in {"-S", "--split-string"}
+            if option in takes_value and not attached:
                 start += 1
         if wrapper == "timeout":
             start += 1  # Skip the duration before unwrapping the command.
         allow_assignment = wrapper == "env"
-    return start
+    return start, changes_cwd, reparses
 
 
-def command_launch(words, raw, directory_changed, *, posix=False):
+def command_launch(words, raw, directory_changed, *, posix=False, stdin_script=False):
     """Classify a literal command without evaluating shell input."""
-    start = command_start(words, posix=posix)
+    start, wrapper_cwd, reparses = command_start(words, posix=posix)
     program = program_name(words[start][0]) if start < len(words) else ""
-    nested_launch = False
-    if program in NESTED_SHELLS:
+    nested_launch = reparses or program in EVAL_COMMANDS or (stdin_script and program in NESTED_SHELLS)
+    if not nested_launch and program in NESTED_SHELLS:
         args = [word for word, _ in words[start + 1:]]
         command_line = " ".join(args)
         nested_launch = ORCHESTRATION_ARG.search(command_line) and (
             NESTED_LAUNCH_ARG.search(command_line)
             or any(arg.casefold() in {"-c", "-command", "/c"} for arg in args)
         )
-    current = launch(words, posix=posix, start=start)
+    current = None if nested_launch else launch(words, posix=posix, start=start)
     if nested_launch or ((current or RAW_LAUNCH.search(raw)) and any(
         words[i][0] == "orchestration" and program_name(words[i - 1][0]) in NESTED_SHELLS
         for i in range(1, len(words))
@@ -159,7 +178,7 @@ def command_launch(words, raw, directory_changed, *, posix=False):
     directory_changed |= program in DIRECTORY_CHANGES
     if not posix and start < len(words):
         directory_changed |= words[start][0].casefold() in {"cd..", "cd\\"}
-    return current, directory_changed
+    return ((*current, directory_changed or wrapper_cwd) if current else None), directory_changed
 
 
 def backtick_launches(command, pos, directory_changed, *, quoted=False):
@@ -225,11 +244,13 @@ def bash_launches(command, pos=0, *, substitution=False, directory_changed=False
     words = []
     depth = int(substitution)
     redirected = False
+    stdin_redirect = stdin_pipe = False
+    cases = []
     start = pos
     while pos < len(command):
         token = SHELL_TOKEN.match(command, pos)
         if token is None:
-            if launch(words, posix=True, start=command_start(words, posix=True)) or substitution:
+            if launch(words, posix=True, start=command_start(words, posix=True)[0]) or substitution:
                 raise LaunchError("cannot parse the orchestration launch arguments")
             # An unrelated malformed shell command is for Bash to handle.
             return
@@ -237,27 +258,53 @@ def bash_launches(command, pos=0, *, substitution=False, directory_changed=False
         kind, value = token.lastgroup, token[0]
         if kind == "redirect":
             redirected = True
+            stdin_redirect |= value.startswith(("<", "0<"))
         elif kind == "word":
             word, pos = yield from launch_word(command, token.start(), directory_changed)
             if word is None:
-                if launch(words, posix=True, start=command_start(words, posix=True)) or substitution:
+                if launch(words, posix=True, start=command_start(words, posix=True)[0]) or substitution:
                     raise LaunchError("cannot parse the orchestration launch arguments")
                 return
             if redirected:
                 redirected = False
+            elif cases and cases[-1] == "subject":
+                cases[-1] = "in"
+            elif cases and cases[-1] == "in":
+                if value == "in":
+                    cases[-1] = "pattern"
+                    words = []
+            elif not words and value == "esac" and word[0] == "esac" and cases:
+                cases.pop()
+            elif cases and cases[-1] == "pattern":
+                continue
             else:
+                if value == "case" and word[0] == "case" and all(w in POSIX_PREFIXES for w, _ in words):
+                    cases.append("subject")
                 words.append(word)
         elif kind == "operator":
+            # Pattern delimiters are not subshell parentheses or pipelines.
+            if cases and cases[-1] == "pattern":
+                if value == ")":
+                    cases[-1] = "body"
+                    start = pos
+                continue
+            if value == "\n" and stdin_pipe and not words and not stdin_redirect:
+                continue  # A newline after a pipe continues the pipeline.
             current, directory_changed = command_launch(
-                words, command[start:token.start()], directory_changed, posix=True,
+                words, command[start:token.start()], directory_changed,
+                posix=True, stdin_script=stdin_redirect or stdin_pipe,
             )
             if current:
                 if redirected:
                     raise LaunchError("cannot parse the orchestration launch redirection")
-                yield (*current, directory_changed)
+                yield current
             words = []
             start = pos
             redirected = False
+            stdin_redirect = False
+            stdin_pipe = value in {"|", "|&"}
+            if cases and value in {";;", ";&", ";;&"}:
+                cases[-1] = "pattern"
             if substitution:
                 if value == "(":
                     depth += 1
@@ -267,11 +314,13 @@ def bash_launches(command, pos=0, *, substitution=False, directory_changed=False
                         return pos
     if substitution:
         raise LaunchError("cannot parse the orchestration launch substitution")
-    current, directory_changed = command_launch(words, command[start:], directory_changed, posix=True)
+    current, _ = command_launch(
+        words, command[start:], directory_changed, posix=True, stdin_script=stdin_redirect or stdin_pipe,
+    )
     if current:
         if redirected:
             raise LaunchError("cannot parse the orchestration launch redirection")
-        yield (*current, directory_changed)
+        yield current
 
 
 def powershell_launches(command):
@@ -284,6 +333,7 @@ def powershell_launches(command):
     pos = 0
     start = 0
     directory_changed = False
+    stdin_script = False
     while pos < len(command):
         token = POWERSHELL_TOKEN.match(command, pos)
         if token is None:
@@ -293,11 +343,16 @@ def powershell_launches(command):
         if kind == "space":
             continue
         if kind == "separator":
-            current, directory_changed = command_launch(words, command[start:token.start()], directory_changed)
+            if raw.endswith("\n") and stdin_script and not words:
+                continue
+            current, directory_changed = command_launch(
+                words, command[start:token.start()], directory_changed, stdin_script=stdin_script,
+            )
             if current:
-                launches.append((*current, directory_changed))
+                launches.append(current)
             words = []
             start = pos
+            stdin_script = raw == "|"
             continue
         value = raw if kind == "bare" else raw[1:-1]
         if kind == "single":
@@ -310,9 +365,9 @@ def powershell_launches(command):
         if value.endswith("\\") and any(char.isspace() for char in value):
             raise LaunchError(error)
         words.append((value, False))
-    current, directory_changed = command_launch(words, command[start:], directory_changed)
+    current, _ = command_launch(words, command[start:], directory_changed, stdin_script=stdin_script)
     if current:
-        launches.append((*current, directory_changed))
+        launches.append(current)
     return launches
 
 

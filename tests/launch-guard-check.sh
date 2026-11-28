@@ -174,6 +174,68 @@ class LaunchGuardCheck(unittest.TestCase):
             with self.subTest(command=command):
                 self.deny("linux", command, verb_hint)
 
+    def test_env_chdir_requires_an_absolute_spec(self):
+        for option in ("-C folder", "-iC folder", "-iCfolder", "--chdir folder", "--chdir=folder"):
+            with self.subTest(option=option):
+                self.deny("linux", f"env {option} {relative}", cwd_hint)
+                self.allow("linux", f"env {option} {absolute}")
+        self.allow("linux", f"env -C folder true; {relative}")
+
+    def test_shells_reading_script_from_stdin_are_denied(self):
+        for command in (
+            """bash <<< 'orca orchestration "task-create" --help'""",
+            """echo 'orca orchestration "task-create" --help' | sh""",
+            """echo 'orca orchestration "task-create" --help' |""" + "\nsh",
+            f"bash < script.sh; {absolute}",
+        ):
+            with self.subTest(command=command):
+                self.deny("linux", command, nested_hint)
+        self.allow("linux", f"{absolute} | cat")
+        self.allow("linux", f"{absolute} || bash --version")
+        self.deny("win32", """echo 'orca orchestration task-create --help' | sh""", nested_hint)
+
+    def test_wrapper_short_options_keep_the_actual_program_visible(self):
+        for wrapper in ("env -iu KEY", "env -P altpath", "timeout -vs TERM 10", "exec -ca fake"):
+            with self.subTest(wrapper=wrapper):
+                self.deny("linux", f'{wrapper} bash -c "orca orchestration \'task-create\' --help"', nested_hint)
+        for option in ("-S", "-iS", "--split-string", "--split-string="):
+            with self.subTest(option=option):
+                gap = "" if option.endswith("=") else " "
+                self.deny("linux", f"""env {option}{gap}'orca orchestration "task-create" --help'""", nested_hint)
+
+    def test_case_patterns_do_not_end_substitutions(self):
+        for command, hint in (
+            (f"X=$(case a in a)cd folder; {relative};; esac)", cwd_hint),
+            ("X=$(case a in a)orca orchestration $v --help;; esac)", verb_hint),
+            ("X=$(case a in (a|b)orca orchestration $v --help;; esac)", verb_hint),
+            ("""X=$(case a in a)bash -c 'orca orchestration "task-create" --help';; esac)""", nested_hint),
+        ):
+            with self.subTest(command=command):
+                self.deny("linux", command, hint)
+        self.allow("linux", f"X=$(case a in a)case b in b)({absolute});; esac;; esac)")
+
+    def test_shells_eval_and_compound_prefixes_are_checked(self):
+        for shell in ("zsh", "dash", "ksh"):
+            with self.subTest(shell=shell):
+                self.deny("linux", f"""{shell} -c 'orca orchestration "task-create" --help'""", nested_hint)
+        for reader, evaluator, change in (
+            ("linux", "eval", "cd folder"),
+            ("win32", "Invoke-Expression", "Set-Location folder"),
+            ("win32", "iex", "Set-Location folder"),
+        ):
+            with self.subTest(evaluator=evaluator):
+                self.deny(reader, f'{evaluator} "orca orchestration \'task-create\' --help"', nested_hint)
+            with self.subTest(evaluator=evaluator, change=change):
+                self.deny(reader, f'{evaluator} "{change}"; {relative}', nested_hint)
+        for command, hint in (
+            (f"function f {{ cd folder; }}; f; {relative}", cwd_hint),
+            ("function f { orca orchestration $v --help; }; f", verb_hint),
+            ("""function f { bash -c 'orca orchestration "task-create" --help'; }; f""", nested_hint),
+            ("coproc orca orchestration $v --help", verb_hint),
+        ):
+            with self.subTest(command=command):
+                self.deny("linux", command, hint)
+
     def test_non_orca_commands_mentioning_orchestration_stay_allowed(self):
         for command in (
             "rg orchestration *.md", 'grep -rn orchestration "$PWD"',
