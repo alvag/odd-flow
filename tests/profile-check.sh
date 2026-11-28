@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Behavioral checks for odd-flow scripts/profile.py, run against isolated state.
 set -u
-P="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/profile.py"
-EX="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/assets/profiles.example.json"
+P="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/skills/odd-flow/scripts/profile.py"
+EX="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/skills/odd-flow/assets/profiles.example.json"
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT
 logical_T=$(CDPATH= cd -L -- "$T" && pwd -L) || exit 1
@@ -306,7 +306,7 @@ if [ "$(id -u)" -ne 0 ]; then
   done
 
   # session-start must report unresolved mode, never "profile: none", when the home is unreadable
-  SS="$(cd "$(dirname "$0")/.." && pwd)/scripts/session-start.py"
+  SS="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/scripts/session-start.py"
   chmod 000 "$PR"
   for rt in "" "--runtime codex" "--runtime antigravity"; do
     out=$(env -i HOME="$HOME" PATH="$PATH" ODD_FLOW_HOME="$PR" python3 -I "$SS" $rt 2>&1 </dev/null); ec=$?

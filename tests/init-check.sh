@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Behavioral checks for odd-flow scripts/init.py against scratch files only.
 set -u
-I="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/init.py"
+I="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/skills/odd-flow/scripts/init.py"
 tmp=${TMPDIR:-/tmp}
 T=$(mktemp -d "${tmp%/}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT

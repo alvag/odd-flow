@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -eu
-cd -- "$(dirname -- "$0")/.."
+CDPATH= cd -- "$(dirname -- "$0")/.."
 
 readme=orca-plugin/README.md
 worker=orca-plugin/src/worker.ts

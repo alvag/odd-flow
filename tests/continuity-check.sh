@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks the delivered instructions, not model adherence.
 set -u
-R="$(cd "$(dirname "$0")/.." && pwd)"
+R="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 S="$R/skills/odd-flow"
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT

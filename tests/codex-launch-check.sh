@@ -3,7 +3,7 @@
 # PowerShell twin codex-worker.ps1, and the launch fields of `profile.py resolve`.
 # A fake `codex` on PATH records its argv.
 set -u
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 L="$ROOT/skills/odd-flow/scripts/codex-worker.sh"
 P="$ROOT/skills/odd-flow/scripts/profile.py"
 PLATFORM=$(python3 -I -c 'import sys; print(sys.platform)')

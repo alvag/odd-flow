@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check placement against fake Orca layouts without touching any real terminal.
 set -u
-ROOT="$(cd "$(dirname "$0")/.." && pwd -P)" || exit 1
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)" || exit 1
 P="$ROOT/skills/odd-flow/scripts/pane.py"
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT

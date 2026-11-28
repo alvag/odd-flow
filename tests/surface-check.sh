@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exercise only the public CLI and Claude Code hook payload.
 set -u
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CLI="$ROOT/skills/odd-flow/scripts/surface.py"
 HOOK="$ROOT/scripts/pre-tool-use.py"
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
