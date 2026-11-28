@@ -15,6 +15,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Fixed
 
+- The Orca plugin's outdated-script tooltip test passes regardless of checkout path length (#75).
 - `/odd-flow init` and `/odd-flow check` reject FIFOs and other non-regular instruction files instead of blocking, and report inaccessible instruction files as unreadable rather than missing (#90, #86).
 - On macOS and Linux, pane width detection limits each `ps` lookup to two seconds (#89), and `pane-check.sh` handles symlinked checkout paths (#81).
 - `/odd-flow check` now warns when an installed init core block differs from the resolved orchestrator mode or cannot be read, without changing the exit code or advising re-init for a session-only mode (#77), and skips malformed entries in the Orca plugin list (#83).

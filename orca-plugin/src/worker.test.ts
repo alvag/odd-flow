@@ -949,6 +949,11 @@ test('status bar reports failed dispatch checks, missing scripts and Show errors
 
 test('status refresh reads only Show and warns about an outdated script for one or several coordinators', async (t) => {
   const home = await temp(t)
+  const tooltipLimit = 256
+  const warning = upgradeError(oldScript)
+  const tooltip = warning.length <= tooltipLimit
+    ? warning
+    : warning.slice(0, tooltipLimit - 1).replace(/[\uD800-\uDBFF]$/u, '') + '…'
   for (const rows of [[agent('codex')], [agent('codex'), agent('claude')]]) {
     const calls: string[] = []
     const fixture = await controlsFixture(() => rows, {
@@ -960,7 +965,7 @@ test('status refresh reads only Show and warns about an outdated script for one 
       await fixture.tick()
       assert.deepEqual(fixture.status(), {
         id: 'odd-flow-status', visible: true, text: 'odd: show failed', tone: 'warning',
-        tooltip: upgradeError(oldScript)
+        tooltip
       })
       assert.deepEqual(calls, rows.map(() => 'show'))
     } finally {
