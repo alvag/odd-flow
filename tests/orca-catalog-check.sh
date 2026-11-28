@@ -31,6 +31,15 @@ def git(*args):
     return run("git", "-C", root, *args)
 
 
+def git_probe(*args):
+    return subprocess.run(("git", "-C", root, *args), capture_output=True, text=True)
+
+
+def skip_history(reason):
+    print(f"SKIP Orca catalog history checks ({reason})")
+    sys.exit(0)
+
+
 def object_from_json(data, label):
     try:
         value = json.loads(data)
@@ -95,13 +104,6 @@ if not isinstance(source, dict) or (
 ) != ("git", url, "main", "orca-plugin"):
     fail(f"orca-catalog.json: expected git source {url}, ref main, path orca-plugin")
 
-manifest = "orca-plugin/orca-plugin.json"
-head = object_from_json(git("show", f"HEAD:{manifest}"), f"HEAD:{manifest}")
-owner = urlsplit(source["url"]).path.split("/")[1].lower()
-plugin_id = head.get("id")
-if not isinstance(plugin_id, str) or not plugin_id or plugin.get("id") != f"{owner}.{plugin_id}":
-    fail("orca-catalog.json: plugin id must be the source owner and HEAD manifest id")
-
 releases = plugin.get("releases")
 if not isinstance(releases, list) or not releases:
     fail("orca-catalog.json: expected at least one release")
@@ -120,7 +122,30 @@ for release in releases:
     commit = release.get("commit")
     if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
         fail(f"release {version}: expected a full lowercase SHA-1 commit")
-    if git("cat-file", "-t", commit).strip() != "commit":
+
+if orca is not None and orca_result("validate", catalog_path).get("valid") is not True:
+    fail("orca-catalog.json: Orca did not report a valid catalog")
+
+toplevel = git_probe("rev-parse", "--show-toplevel")
+if (toplevel.returncode or Path(toplevel.stdout.strip()).resolve() != root
+        or git_probe("rev-parse", "--verify", "HEAD^{commit}").returncode):
+    skip_history("no git history in this checkout")
+
+manifest = "orca-plugin/orca-plugin.json"
+head = object_from_json(git("show", f"HEAD:{manifest}"), f"HEAD:{manifest}")
+owner = urlsplit(source["url"]).path.split("/")[1].lower()
+plugin_id = head.get("id")
+if not isinstance(plugin_id, str) or not plugin_id or plugin.get("id") != f"{owner}.{plugin_id}":
+    fail("orca-catalog.json: plugin id must be the source owner and HEAD manifest id")
+
+missing = set()
+for release in releases:
+    commit, version = release["commit"], release["version"]
+    object_type = git_probe("cat-file", "-t", commit)
+    if object_type.returncode:
+        missing.add(commit)
+        continue
+    if object_type.stdout.strip() != "commit":
         fail(f"release {version}: {commit} is not a commit")
     if subprocess.run(
         ("git", "-C", root, "merge-base", "--is-ancestor", commit, "HEAD"), capture_output=True
@@ -136,19 +161,23 @@ newest_version = version_key(newest["version"], "orca-catalog.json newest releas
 if head_version < newest_version:
     fail(f"HEAD:{manifest}: version {head['version']} is lower than newest release {newest['version']}")
 
+if newest["commit"] in missing:
+    skip_history("catalog release commits not in this checkout's history")
+
 unreleased = head_version > newest_version or git(
     "rev-parse", f'{newest["commit"]}:orca-plugin'
 ) != git("rev-parse", "HEAD:orca-plugin")
 
 if orca is not None:
-    if orca_result("validate", catalog_path).get("valid") is not True:
-        fail("orca-catalog.json: Orca did not report a valid catalog")
     with tempfile.TemporaryDirectory() as temp:
         clone = Path(temp) / "release"
         run("git", "clone", "--quiet", "--no-checkout", root, clone)
         run("git", "-C", clone, "checkout", "--quiet", "--detach", newest["commit"])
         if orca_result("release-entry", clone / "orca-plugin").get("entry") != newest:
             fail("orca-catalog.json: newest release differs from Orca release-entry output")
+
+if missing:
+    skip_history("catalog release commits not in this checkout's history")
 
 if unreleased:
     print("NOTE: orca-plugin/ has changes not yet released in orca-catalog.json. "
