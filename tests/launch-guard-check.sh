@@ -130,6 +130,63 @@ class LaunchGuardCheck(unittest.TestCase):
             with self.subTest(separator=separator):
                 self.allow("win32", f"{task}{separator} {worker}")
 
+    def test_nested_shell_bypasses_are_denied(self):
+        inner = "powershell -Command orca orchestration task-create --help"
+        for command in (
+            f"if true; then {inner}; fi",
+            f"for x in 1; do {inner}; done",
+            f"time {inner}",
+            f"nohup {inner}",
+            f"nice -n 5 {inner}",
+            "timeout --signal=TERM 5 cmd /c orca orchestration task-create --help",
+            """bash -c 'orca orchestration "task-create" --spec-file valid.md'""",
+            """sh -c 'orca "orchestration" task-create --spec-file valid.md'""",
+            "bash -c 'v=task-create; orca orchestration $v --spec-file valid.md'",
+        ):
+            with self.subTest(reader="linux", command=command):
+                self.deny("linux", command, nested_hint)
+        for reader in readers:
+            for program in ("powershell -Command", "pwsh -Command", "cmd /c"):
+                for inner in (
+                    "orca orchestration 'task-create' --spec-file valid.md",
+                    "orca orchestration 'worker-start' --spec-file valid.md",
+                    "orca 'orchestration' task-create --spec-file valid.md",
+                ):
+                    command = f'{program} "{inner}"'
+                    with self.subTest(reader=reader, command=command):
+                        self.deny(reader, command, nested_hint)
+
+    def test_directory_change_bypasses_are_denied(self):
+        for change in (
+            "command cd folder", "builtin cd folder", "if true; then cd folder; fi",
+            "for d in folder; do cd $d; done", "if false; then true; else cd folder; fi",
+            "time cd folder", "if false; then true; elif cd folder; then true; fi",
+        ):
+            with self.subTest(reader="linux", change=change):
+                self.deny("linux", f"{change}; {relative}", cwd_hint)
+        for change in ("cd..", "CD\\"):
+            with self.subTest(reader="win32", change=change):
+                self.deny("win32", f"{change}; {relative}", cwd_hint)
+
+    def test_double_quoted_backtick_dynamic_verb_is_denied(self):
+        for prefix in ("X=", "echo ", ""):
+            command = prefix + '"`orca orchestration $v --spec-file valid.md`"'
+            with self.subTest(command=command):
+                self.deny("linux", command, verb_hint)
+
+    def test_non_orca_commands_mentioning_orchestration_stay_allowed(self):
+        for command in (
+            "rg orchestration *.md", 'grep -rn orchestration "$PWD"',
+            "git grep orchestration tests/*.sh", "echo orchestration $status",
+            "echo orchestration `date`", "cat orchestration ~/notes.md",
+            'python3 -c "print(1)" orchestration "$x"',
+        ):
+            with self.subTest(command=command):
+                self.allow("linux", command)
+        for program in ("$ORCA", "${ORCA_CLI_COMMAND:-orca}", "/usr/local/bin/orca", "orca.exe", "orca.cmd"):
+            with self.subTest(program=program):
+                self.deny("linux", f"env KEY=value {program} orchestration $v --help", verb_hint)
+
 
 unittest.main(verbosity=2)
 PY
