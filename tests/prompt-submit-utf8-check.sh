@@ -88,27 +88,29 @@ def check(label, condition, detail=""):
 
 
 ascii_claude = run_claude("claude-ascii", "Check alarm")
-utf8_claude = run_claude("claude-\u23f0", "Check \u23f0")
+utf8_claude_id = "claude-\u23f0"
+utf8_claude = run_claude(utf8_claude_id, "Check \u23f0")
 check(
     "Claude Code U+23F0 matches ASCII output and marker",
     ascii_claude.returncode == 0
     and utf8_claude.returncode == 0
     and not utf8_claude.stderr
     and utf8_claude.stdout == ascii_claude.stdout
-    and marker_value(claude_data, "claude-\u23f0") == marker_value(claude_data, "claude-ascii") == "parent",
-    f"ascii={ascii_claude!r}, utf8={utf8_claude!r}, marker={marker_value(claude_data, 'claude-\u23f0')!r}",
+    and marker_value(claude_data, utf8_claude_id) == marker_value(claude_data, "claude-ascii") == "parent",
+    f"ascii={ascii_claude!r}, utf8={utf8_claude!r}, marker={marker_value(claude_data, utf8_claude_id)!r}",
 )
 
 ascii_agy = run_antigravity("agy-ascii", "Check alarm")
-utf8_agy = run_antigravity("agy-\u23f0", "Check \u23f0")
+utf8_agy_id = "agy-\u23f0"
+utf8_agy = run_antigravity(utf8_agy_id, "Check \u23f0")
 check(
     "Antigravity U+23F0 matches ASCII output and marker",
     ascii_agy.returncode == 0
     and utf8_agy.returncode == 0
     and not utf8_agy.stderr
     and utf8_agy.stdout == ascii_agy.stdout
-    and marker_value(agy_data, "agy-\u23f0") == marker_value(agy_data, "agy-ascii") == "parent",
-    f"ascii={ascii_agy!r}, utf8={utf8_agy!r}, marker={marker_value(agy_data, 'agy-\u23f0')!r}",
+    and marker_value(agy_data, utf8_agy_id) == marker_value(agy_data, "agy-ascii") == "parent",
+    f"ascii={ascii_agy!r}, utf8={utf8_agy!r}, marker={marker_value(agy_data, utf8_agy_id)!r}",
 )
 
 bad_claude = run_raw([], {"CLAUDE_PLUGIN_DATA": str(claude_data)}, b'{"session_id":"bad-claude","prompt":"\xff"}')
