@@ -42,7 +42,7 @@ Candidate commit: <sha>     # verify, review, refute
 
 ## Reporting
 
-When reporting (`worker_done`) or asking (`question`) through `orca orchestration send`, write the message body with your file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file`; never put report or question text in `--body` (double-quoted backticks trigger shell command substitution and break Antigravity permission matching). This scratch file is allowed even under a no-edit rule.
+When reporting (`worker_done`) or asking (`question`) through `orca orchestration send`, write the message body with your file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file`; never put report or question text in `--body` (double-quoted backticks trigger shell command substitution and break Antigravity permission matching). This scratch file is allowed even under a no-edit rule. Keep every inline argument of `orca orchestration` commands (such as `--subject`, `--outcome`, and `--question`) free of `;`, `&`, `|`, backticks, `$`, and line breaks; put that text in the body file instead.
 
 ## Language
 

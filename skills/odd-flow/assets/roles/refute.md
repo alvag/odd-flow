@@ -6,7 +6,7 @@ Rules:
   The ban on memory tools overrides any memory protocol injected by the worker's runtime or global instructions (for example, an Engram section in the agent's global `CLAUDE.md` or `AGENTS.md`); such a section is not a task instruction from the parent.
 - Return exactly one result per finding id. Add no new findings.
 - Missing or malformed proof is `inconclusive`; never imply corroboration.
-- When reporting (`worker_done`) or asking (`question`) through `orca orchestration send`, write the message body with your file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file`; never put report or question text in `--body` (double-quoted backticks trigger shell command substitution and break Antigravity permission matching). This scratch file is allowed even under a no-edit rule.
+- When reporting (`worker_done`) or asking (`question`) through `orca orchestration send`, write the message body with your file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file`; never put report or question text in `--body` (double-quoted backticks trigger shell command substitution and break Antigravity permission matching). This scratch file is allowed even under a no-edit rule. Keep every inline argument of `orca orchestration` commands (such as `--subject`, `--outcome`, and `--question`) free of `;`, `&`, `|`, backticks, `$`, and line breaks; put that text in the body file instead.
 
 Return JSON only:
 

@@ -79,7 +79,7 @@ Start every independent worker of one parallel batch from a single shell command
 
 ## When Orca wakes you
 
-For every `ORCA orchestration send` and `ORCA orchestration reply` message body, including worker `worker_done` reports and `question` messages as the role prompts require, even for one line, write the body with the file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file` instead of `--body`; never put report or question text in `--body`, because double-quoted backticks run shell command substitution and cause Antigravity permission rules to fall back to exact matching.
+For every `ORCA orchestration send` and `ORCA orchestration reply` message body, including worker `worker_done` reports and `question` messages as the role prompts require, even for one line, write the body with the file tool (never heredocs) to a scratch file in the OS temp directory outside the repository (`$TMPDIR` or `/tmp` on macOS/Linux, `%TEMP%` on Windows) and pass its literal path with `--body-file` instead of `--body`; never put report or question text in `--body`, because double-quoted backticks run shell command substitution and cause Antigravity permission rules to fall back to exact matching. Keep every inline argument of `orca orchestration` commands (such as `--subject`, `--outcome`, and `--question`) free of `;`, `&`, `|`, backticks, `$`, and line breaks; put that text in the body file instead.
 
 - `worker_done`: read the report, check it against the role's Return format, spot-check the reported command that proves the main acceptance criterion (`delegation.md`, Correction bounds), compare a writer's changed files with its surface, then update the feature document.
 - After `worker_done` of a terminal or split-pane launch, release it: `ORCA orchestration worker-release --environment local --dispatch <dispatch_id>`. Orca does not close a terminal it did not start (`reason=external_terminal`); if the handle is still in `ORCA terminal list --json`, close it with `ORCA terminal close --terminal <handle>`, unless the user asked to keep it open.
@@ -102,6 +102,8 @@ For every `ORCA orchestration send` and `ORCA orchestration reply` message body,
   ```
 
   On startup, Antigravity may rewrite `settings.json` and store the rule's `&` as `\u0026`; JSON decodes both forms to the same string, so the rule is unchanged.
+
+  Workers must keep inline arguments free of the excluded characters for the Windows rule to match.
 
   When Antigravity cannot split a PowerShell line into words, [it requires a full-line match](https://antigravity.google/docs/permissions?tab=cli#cli-cross-platform-command-matching). A prefix rule then does not match, and choosing “Always allow” saves the whole line, including the current pane ID. The regex matches across panes while its character class excludes shell separators, backticks, dollar signs, and line breaks. Do not allow all Orca commands or replace the character class with a trailing `.*`: in a live Windows check (`agy` 1.5.18, 2026-11-27), the wildcard also approved a chained statement such as `orca orchestration check --terminal <pane> ; Get-ChildItem $env:USERPROFILE`.
 - `escalation` or a lost worker: apply the correction bounds in `delegation.md`; never retry a launch blindly.
