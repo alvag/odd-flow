@@ -9,11 +9,13 @@ Only text between the odd-flow markers is ever changed.
 
 import argparse
 import difflib
+import errno
 import json
 import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -47,6 +49,11 @@ RUNTIME_VARS = (
 
 class InitError(Exception):
     pass
+
+
+class SymlinkError(InitError):
+    def __init__(self, path):
+        super().__init__(f"{path} is a symlink; pass --target with the real file")
 
 
 def detect_runtime():
@@ -117,12 +124,31 @@ def updated_content(current, block, match):
 
 
 def read_current(path):
-    if os.path.islink(path):
-        raise InitError(f"{path} is a symlink; pass --target with the real file")
-    if not os.path.exists(path):
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError:
         return ""
-    with open(path, encoding="utf-8") as handle:
-        return handle.read()
+    if stat.S_ISLNK(mode):
+        raise SymlinkError(path)
+    if not stat.S_ISREG(mode):
+        raise InitError(f"{path} is not a regular file")
+
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise SymlinkError(path) from exc
+        raise
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise InitError(f"{path} is not a regular file")
+        with os.fdopen(fd, encoding="utf-8", closefd=False) as handle:
+            return handle.read()
+    finally:
+        os.close(fd)
 
 
 def format_apply_lines(command, platform):

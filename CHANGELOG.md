@@ -15,6 +15,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 ### Fixed
 
+- `/odd-flow init` and `/odd-flow check` reject FIFOs and other non-regular instruction files instead of blocking, and report inaccessible instruction files as unreadable rather than missing (#90, #86).
 - `/odd-flow check` now warns when an installed init core block differs from the resolved orchestrator mode or cannot be read, without changing the exit code or advising re-init for a session-only mode (#77), and skips malformed entries in the Orca plugin list (#83).
 - On Windows, `profile.py prune`, SessionStart cleanup and the session-state counts of `/odd-flow check` work instead of refusing, doing nothing or reporting `unreadable`. They never follow symlinks, junctions or other reparse points below the configured base, keep state directories open while scanning, delete a file through a Win32 handle only when its file ID still matches, and leave anything they cannot verify (#62).
 - The Orca dispatch guide documents platform-specific Antigravity allow rules and explains why broad rules can approve chained commands (#71).
