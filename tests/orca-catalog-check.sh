@@ -138,12 +138,12 @@ plugin_id = head.get("id")
 if not isinstance(plugin_id, str) or not plugin_id or plugin.get("id") != f"{owner}.{plugin_id}":
     fail("orca-catalog.json: plugin id must be the source owner and HEAD manifest id")
 
-missing = set()
+missing = []
 for release in releases:
     commit, version = release["commit"], release["version"]
     object_type = git_probe("cat-file", "-t", commit)
     if object_type.returncode:
-        missing.add(commit)
+        missing.append(release)
         continue
     if object_type.stdout.strip() != "commit":
         fail(f"release {version}: {commit} is not a commit")
@@ -161,8 +161,12 @@ newest_version = version_key(newest["version"], "orca-catalog.json newest releas
 if head_version < newest_version:
     fail(f"HEAD:{manifest}: version {head['version']} is lower than newest release {newest['version']}")
 
-if newest["commit"] in missing:
-    skip_history("catalog release commits not in this checkout's history")
+if missing:
+    shallow = git_probe("rev-parse", "--is-shallow-repository")
+    if len(missing) == len(releases) or (shallow.returncode == 0 and shallow.stdout.strip() == "true"):
+        skip_history("catalog release commits not in this checkout's history")
+    first = missing[0]
+    fail(f"release {first['version']}: commit {first['commit']} not found in git history")
 
 unreleased = head_version > newest_version or git(
     "rev-parse", f'{newest["commit"]}:orca-plugin'
@@ -175,9 +179,6 @@ if orca is not None:
         run("git", "-C", clone, "checkout", "--quiet", "--detach", newest["commit"])
         if orca_result("release-entry", clone / "orca-plugin").get("entry") != newest:
             fail("orca-catalog.json: newest release differs from Orca release-entry output")
-
-if missing:
-    skip_history("catalog release commits not in this checkout's history")
 
 if unreleased:
     print("NOTE: orca-plugin/ has changes not yet released in orca-catalog.json. "
