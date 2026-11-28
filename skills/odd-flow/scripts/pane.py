@@ -35,6 +35,7 @@ CREATE_HINT = "A terminal may have opened. Check terminal list and close it."
 ORCA_TIMEOUT_SECS = 30
 ORCA_SPLIT_TIMEOUT_SECS = 40
 CONSOLE_PROBE_TIMEOUT_SECS = 2
+PS_TIMEOUT_SECS = 2
 
 
 def run_orca(argv, timeout):
@@ -266,7 +267,7 @@ def parent_cols():
         while pid > 1:
             ps = subprocess.run(
                 ["ps", "-o", "ppid=,tty=", "-p", str(pid)],
-                capture_output=True, text=True, check=True,
+                capture_output=True, text=True, check=True, timeout=PS_TIMEOUT_SECS,
             )
             next_pid, *ttys = ps.stdout.split()
             next_pid = int(next_pid)

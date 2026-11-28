@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Check placement against fake Orca layouts without touching any real terminal.
 set -u
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/.." && pwd -P)" || exit 1
 P="$ROOT/skills/odd-flow/scripts/pane.py"
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT
@@ -186,9 +186,12 @@ printf '%s\n' \
   'if ttys is not None:' \
   '    chain = [entry.partition(":") for entry in ttys.split()]' \
   '    devices = {f"/dev/{tty}": int(cols) for tty, _, cols in chain if cols}' \
+  '    run_ps = pane.subprocess.run' \
   '    def ps(argv, **kwargs):' \
   '        pid = int(argv[-1])' \
   '        tty = chain[pid - 2][0]' \
+  '        if tty == "hang":' \
+  '            return run_ps(argv, **kwargs)' \
   '        if tty == "invisible":' \
   '            raise pane.subprocess.CalledProcessError(1, argv)' \
   '        parent = pid + 1 if pid - 2 < len(chain) - 1 else 1' \
@@ -198,10 +201,13 @@ printf '%s\n' \
   '            raise FileNotFoundError(path)' \
   '        return devices[path]' \
   '    def posix_cols():' \
-  '        with patch.multiple(pane.os, getppid=lambda: 2, open=open_device, close=lambda fd: None), \' \
+  '        fake_os = SimpleNamespace(getppid=lambda: 2, open=open_device, close=lambda fd: None,' \
+  '                                  O_RDONLY=os.O_RDONLY, O_NOCTTY=os.O_NOCTTY)' \
+  '        with patch.object(pane, "os", fake_os), \' \
   '             patch.object(pane.subprocess, "run", ps), \' \
   '             patch.object(fcntl, "ioctl", lambda fd, *args: struct.pack("HHHH", 0, fd, 0, 0)):' \
   '            return real_parent_cols()' \
+  '    pane.PS_TIMEOUT_SECS = 1' \
   '    pane.parent_cols = posix_cols' \
   'else:' \
   '    pane.parent_cols = sample if consoles is None else forced_windows' \
@@ -693,6 +699,29 @@ if [[ -z "$windows" ]]; then
   expect "POSIX: first ps lookup failure keeps the unknown-width tab" 0 "$ec" \
     '"placement": "tab", "handle": "term_tab", "parent": "term_parent", "target": null, "cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
     "$list_call$baseline_call$tab_call"
+
+  printf '%s\n' '#!/bin/sh' 'exec sleep 5' >"$T/ps"
+  chmod +x "$T/ps"
+
+  started=$SECONDS
+  out=$(PATH="$T:$PATH" posix_ttys=hang settle_ms=0 open_pane --role verify); ec=$?
+  if (( SECONDS - started >= 4 )); then
+    out="Exceeded the 4-second bound: $out"
+    ec=99
+  fi
+  expect "POSIX: first ps lookup times out and keeps the unknown-width tab" 0 "$ec" \
+    '"placement": "tab", "handle": "term_tab", "parent": "term_parent", "target": null, "cols": null, "min_cols": 160, "reason": "parent terminal width is unknown"' \
+    "$list_call$baseline_call$tab_call"
+
+  started=$SECONDS
+  out=$(PATH="$T:$PATH" posix_ttys='ttys010:211 hang' settle_ms=0 open_pane --role verify); ec=$?
+  if (( SECONDS - started >= 4 )); then
+    out="Exceeded the 4-second bound: $out"
+    ec=99
+  fi
+  expect "POSIX: ancestor ps lookup times out and preserves the pane TTY width" 0 "$ec" \
+    '"placement": "split-right", "handle": "term_new", "parent": "term_parent", "target": "term_parent", "cols": 211' \
+    "$list_call$right_call$title_call"
 
   printf '219\n' >"$width_record"
   out=$(posix_ttys='ttys006:80 ttys015 ??' settle_ms=0 open_pane --role verify); ec=$?
