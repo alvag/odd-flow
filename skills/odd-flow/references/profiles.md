@@ -129,7 +129,9 @@ directory open while they scan it, so it cannot be renamed or removed, and they
 delete a file through a handle only if it is still the file they scanned. A
 directory or file that another process holds in a conflicting mode is left in
 place and reported as an error. Without the required Win32 functions, nothing is
-removed.
+removed. This guarantee covers the state directories at and below the configured
+base, and assumes that no process of the same user retargets a link above the
+base during an operation.
 
 A bare profile name (`/odd-flow B`) is not a command: ask whether the user meant `--profile B`.
 

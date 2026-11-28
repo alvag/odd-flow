@@ -922,6 +922,9 @@ def _remove_pinned_windows_file(path, scanned_id, label):
             # 0x0410: reparse point or directory.
             if info.dwFileAttributes & 0x0410 or _windows_file_id(info) != scanned_id:
                 raise ProfileError(f"{path}: cannot remove {label}: it changed since it was scanned")
+            # A zero file index cannot tell one file from another.
+            if not any(scanned_id[1:]):
+                raise ProfileError(f"{path}: cannot remove {label}: no file ID")
             delete = ctypes.c_ubyte(1)  # FILE_DISPOSITION_INFO.DeleteFile
             if not kernel32.SetFileInformationByHandle(  # 4: FileDispositionInfo
                     handle, 4, ctypes.byref(delete), ctypes.sizeof(delete)):

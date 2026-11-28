@@ -116,7 +116,8 @@ def cleanup_windows_session_state(data):
 
     deadline = time.monotonic() + CLEANUP_BUDGET_SECONDS
     helpers = runpy.run_path(PROFILE_SCRIPT)
-    parent, name = os.path.split(os.path.abspath(data))
+    data = os.path.abspath(data)
+    parent, name = os.path.split(data)
     # Opening data as a part of its parent rejects a junction or symlink on data itself.
     with helpers["_open_state_dir"](Path(parent), name) as pinned:
         if pinned is None:

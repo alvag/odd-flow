@@ -131,9 +131,8 @@ class WinStateDirCheck(unittest.TestCase):
         self.assertEqual((result.returncode, result.stderr), (0, b""), result)
 
     def cleanup(self, data):
-        cleanup = runpy.run_path(str(hook_script))["cleanup_session_state"]
         with patch.dict(os.environ, self.env, clear=True):
-            cleanup(str(data))
+            runpy.run_path(str(hook_script))["cleanup_session_state"](str(data))
 
     def module(self):
         spec = importlib.util.spec_from_file_location("odd_profile", profile_script)
@@ -201,6 +200,22 @@ class WinStateDirCheck(unittest.TestCase):
         self.hook(self.data)
         self.assert_gone([later])
         self.assertGreater(stamp.stat().st_mtime_ns, before)
+
+    def test_future_stamp_is_treated_as_stale(self):
+        expired = record(self.data / "prompt-sessions" / key("old"))
+        stamp = record(self.data / stamp_name)
+        set_age(stamp, -3600 / day)
+        started = time.time()
+        self.hook(self.data)
+        self.assert_gone([expired])
+        # File times are coarser than time.time(), so allow a second of slack.
+        self.assertTrue(started - 1 <= stamp.stat().st_mtime <= time.time() + 1)
+
+    def test_session_start_cleanup_normalizes_the_data_path(self):
+        expired = [record(self.data / bucket / key("old")) for bucket in buckets]
+        self.cleanup(self.data / "sub" / "..")
+        self.assert_gone(expired)
+        self.assertEqual((self.data / stamp_name).read_bytes(), b"\n")
 
     def test_exhausted_budget_leaves_the_stamp_stale(self):
         expired = [record(self.data / "prompt-sessions" / key(name)) for name in ("first", "second")]
@@ -356,6 +371,51 @@ class WinStateDirCheck(unittest.TestCase):
         self.assertIn("changed since it was scanned", str(errors[0]))
         self.assertEqual((deletions, unlink.call_count), ([], 0))
         self.assert_present([target])
+
+    def test_zero_file_id_fails_closed(self):
+        old, new = self.seed()
+        runner = self.state / "zero-file-id.py"
+        runner.write_text("""
+import ctypes
+import os
+import runpy
+import sys
+
+load = ctypes.WinDLL
+
+
+def zero_id_dll(*args, **kwargs):
+    library = load(*args, **kwargs)
+    query = library.GetFileInformationByHandle
+
+    def zero_id(handle, pointer):
+        result = query(handle, pointer)
+        pointer._obj.nFileIndexHigh = pointer._obj.nFileIndexLow = 0
+        return result
+
+    library.GetFileInformationByHandle = zero_id
+    library.SetFileInformationByHandle = lambda *call: print("SetFileInformationByHandle") or 1
+    return library
+
+
+ctypes.WinDLL = zero_id_dll
+os.unlink = lambda *args, **kwargs: print("os.unlink")
+script = sys.argv[1]
+sys.argv = [script, "prune"]
+runpy.run_path(script, run_name="__main__")
+""", encoding="utf-8")
+        result = self.run_script(runner, str(profile_script))
+        self.assertEqual(result.returncode, 2, result)
+        self.assertEqual(result.stdout.decode().splitlines(), [
+            "removed 0 session binding(s) older than 30 days",
+            "removed 0 prompt-hook record(s) older than 30 days",
+            "removed 0 mode-notice record(s) older than 30 days",
+        ])
+        errors = result.stderr.decode().splitlines()
+        self.assertEqual(len(errors), len(old), errors)
+        for error in errors:
+            self.assertTrue(error.endswith("no file ID"), error)
+        self.assert_present(old + new)
 
     def test_missing_win32_symbol_fails_closed(self):
         old, new = self.seed()
