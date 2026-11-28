@@ -12,8 +12,9 @@ beside `profiles` because a profile's keys are roles only.
 """
 
 import argparse
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 import difflib
+import errno
 import json
 import os
 from pathlib import Path
@@ -128,6 +129,8 @@ def _state_path_error(exc, path):
 
 def remove_session_file(path, *, dir_fd=None, label="session binding"):
     """Remove a state file; return False if missing, raise ProfileError on failure."""
+    if os.name == "nt" and dir_fd is not None:
+        return _remove_pinned_windows_file(path, dir_fd[path], label)
     try:
         os.unlink(os.path.basename(path) if dir_fd is not None else path, dir_fd=dir_fd)
     except FileNotFoundError:
@@ -804,9 +807,151 @@ def cmd_set_mode(args):
         print(f"profile '{args.name}' mode: {args.mode}")
 
 
+def _win32():
+    """Return kernel32 with the handle functions that Windows state cleanup requires."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+            wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+        ]
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.GetFileInformationByHandle.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+        kernel32.SetFileInformationByHandle.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+        ]
+        kernel32.SetFileInformationByHandle.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+    except (ImportError, OSError, AttributeError) as exc:
+        raise ProfileError(f"state cleanup requires Windows Win32 handle support: {exc}") from exc
+    return kernel32
+
+
+@contextmanager
+def _windows_handle(path, access, share, flags, disposition=3):  # 3: OPEN_EXISTING
+    """Yield (kernel32, handle) for path; raise OSError when it cannot be opened."""
+    kernel32 = _win32()
+    import ctypes
+
+    handle = kernel32.CreateFileW(str(path), access, share, None, disposition, flags, None)
+    if handle == ctypes.c_void_p(-1).value:  # INVALID_HANDLE_VALUE
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield kernel32, handle
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _windows_file_info(kernel32, handle):
+    import ctypes
+    from ctypes import wintypes
+
+    class ByHandleFileInformation(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD), ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME), ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD), ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD), ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD), ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    info = ByHandleFileInformation()
+    if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return info
+
+
+def _windows_file_id(info):
+    return info.dwVolumeSerialNumber, info.nFileIndexHigh, info.nFileIndexLow
+
+
+def _is_reparse_point(info):
+    """True for an lstat result of a symlink, junction or other Windows reparse point."""
+    return stat.S_ISLNK(info.st_mode) or bool(getattr(info, "st_file_attributes", 0) & 0x0400)
+
+
+def _pin_windows_chain(pins, base, parts):
+    """Hold a handle on base and each part; False when one is missing or a reparse point."""
+    path = base
+    for part in (None, *parts):
+        if part is None:
+            flags = 0x02000000  # BACKUP_SEMANTICS follows the configured base.
+        else:
+            path /= part
+            # OPEN_REPARSE_POINT opens a junction itself instead of its target.
+            flags = 0x02200000
+        # A base failure names the requested state directory, as on POSIX.
+        target = base.joinpath(*parts) if part is None else path
+        try:
+            # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE, sharing read and write.
+            # Windows ignores the share mode of an attribute-only handle: FILE_LIST_DIRECTORY
+            # makes the missing FILE_SHARE_DELETE block renaming or removing the directory.
+            kernel32, handle = pins.enter_context(_windows_handle(path, 0x00100081, 0x3, flags))
+            info = _windows_file_info(kernel32, handle)
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise _state_path_error(exc, target) from exc
+        if part is not None and info.dwFileAttributes & 0x0400:  # FILE_ATTRIBUTE_REPARSE_POINT
+            return False
+        if not info.dwFileAttributes & 0x10:  # FILE_ATTRIBUTE_DIRECTORY
+            error = NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR))
+            raise _state_path_error(error, target)
+    return True
+
+
+def _windows_scanned_id(path):
+    # An attribute-only open succeeds even while another process holds the file exclusively.
+    # FILE_READ_ATTRIBUTES, sharing everything, without following a reparse point.
+    with _windows_handle(path, 0x80, 0x7, 0x02200000) as (kernel32, handle):
+        return _windows_file_id(_windows_file_info(kernel32, handle))
+
+
+def _remove_pinned_windows_file(path, scanned_id, label):
+    try:
+        # DELETE | FILE_READ_ATTRIBUTES, sharing everything, without following a reparse point.
+        with _windows_handle(path, 0x00010080, 0x7, 0x00200000) as (kernel32, handle):
+            import ctypes
+
+            info = _windows_file_info(kernel32, handle)
+            # 0x0410: reparse point or directory.
+            if info.dwFileAttributes & 0x0410 or _windows_file_id(info) != scanned_id:
+                raise ProfileError(f"{path}: cannot remove {label}: it changed since it was scanned")
+            # A zero file index cannot tell one file from another.
+            if not any(scanned_id[1:]):
+                raise ProfileError(f"{path}: cannot remove {label}: no file ID")
+            delete = ctypes.c_ubyte(1)  # FILE_DISPOSITION_INFO.DeleteFile
+            if not kernel32.SetFileInformationByHandle(  # 4: FileDispositionInfo
+                    handle, 4, ctypes.byref(delete), ctypes.sizeof(delete)):
+                raise ctypes.WinError(ctypes.get_last_error())
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        detail = _state_path_error(exc, path)
+        raise ProfileError(f"{path}: cannot remove {label}: {detail}") from exc
+    return True
+
+
 @contextmanager
 def _open_state_dir(base, *parts):
-    """Follow the configured base, but not symlinks inside odd-flow state."""
+    """Follow the configured base, but not symlinks inside odd-flow state.
+
+    Yield None for a missing or linked directory. Otherwise yield a directory
+    descriptor or, on Windows, where the whole chain stays pinned, a dict that
+    collects the IDs of the scanned files.
+    """
+    if os.name == "nt":
+        with ExitStack() as pins:
+            if _pin_windows_chain(pins, base, parts):
+                yield {}
+                return
+        yield None
+        return
     flags = os.O_RDONLY | os.O_DIRECTORY
     try:
         fd = os.open(base, flags)
@@ -861,11 +1006,12 @@ def discover_plugin_data_dirs(*, errors=None):
                 if fd is None:
                     continue
                 reported_lookup_error = False
-                for entry in os.listdir(fd):
+                windows = os.name == "nt"
+                for entry in os.listdir(root if windows else fd):
                     if not (entry == "odd-flow" if antigravity else entry.startswith("odd-flow-")):
                         continue
                     try:
-                        info = os.lstat(entry, dir_fd=fd)
+                        info = os.lstat(root / entry) if windows else os.lstat(entry, dir_fd=fd)
                     except FileNotFoundError:
                         continue
                     except OSError as exc:
@@ -875,6 +1021,14 @@ def discover_plugin_data_dirs(*, errors=None):
                             reported_lookup_error = True
                         continue
                     identity = info.st_dev, info.st_ino
+                    if windows:
+                        if _is_reparse_point(info):
+                            continue
+                        # Without a file ID, aliases of one directory cannot be told apart.
+                        if stat.S_ISDIR(info.st_mode) and not info.st_ino:
+                            message = f"{root / entry}: cannot discover plugin data: no file ID"
+                            _record_state_error(errors, message, None)
+                            continue
                     if stat.S_ISDIR(info.st_mode) and identity not in found:
                         found.add(identity)
                         yield root / entry
@@ -895,9 +1049,11 @@ def _state_folders(data_dirs):
 
 
 def _list_state_files(fd, folder, label, cutoff, errors, deadline):
+    windows = os.name == "nt"
+    source = folder if windows else fd
     try:
         # Automatic cleanup must not enumerate an entire directory before checking the deadline.
-        listing = nullcontext(os.listdir(fd)) if deadline is None else os.scandir(fd)
+        listing = nullcontext(os.listdir(source)) if deadline is None else os.scandir(source)
     except OSError as exc:
         detail = _state_path_error(exc, folder)
         raise ProfileError(f"{folder}: cannot read {label}s: {detail}") from exc
@@ -910,16 +1066,26 @@ def _list_state_files(fd, folder, label, cutoff, errors, deadline):
                 continue
             path = folder / entry
             try:
-                info = os.lstat(entry, dir_fd=fd)
+                if windows:
+                    # Read before lstat: a file replaced in between then fails the age check
+                    # or no longer matches this ID at deletion.
+                    scanned_id = _windows_scanned_id(path)
+                    info = os.lstat(path)
+                else:
+                    info = os.lstat(entry, dir_fd=fd)
             except FileNotFoundError:
                 continue
             except OSError as exc:
                 detail = _state_path_error(exc, path)
                 _record_state_error(errors, f"{path}: cannot inspect {label}: {detail}", exc)
                 continue
+            if windows and _is_reparse_point(info):
+                continue
             if stat.S_ISREG(info.st_mode) and (cutoff is None or info.st_mtime < cutoff):
                 if deadline is not None and time.monotonic() >= deadline:
                     return
+                if windows:
+                    fd[path] = scanned_id
                 yield path
 
 
@@ -973,8 +1139,10 @@ def prune_session_state(data_dirs, cutoff, *, errors=None, deadline=None):
 
 
 def cmd_prune(args):
+    if os.name == "nt":
+        _win32()
     # Older Python versions advertise lstat's dir_fd support under stat.
-    if (not hasattr(os, "O_DIRECTORY")
+    elif (not hasattr(os, "O_DIRECTORY")
             or not {os.open, os.stat, os.unlink} <= os.supports_dir_fd
             or os.listdir not in os.supports_fd):
         raise ProfileError("prune requires O_DIRECTORY and directory file descriptor support")

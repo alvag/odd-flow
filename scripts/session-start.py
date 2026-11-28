@@ -12,6 +12,7 @@ blocks the session.
 
 import json
 import os
+from pathlib import Path
 import runpy
 import stat
 import subprocess
@@ -102,10 +103,78 @@ def profile_state(env):
     return text or "odd-flow profile state unavailable (no output)."
 
 
+def cleanup_windows_session_state(data):
+    import ctypes
+    from ctypes import wintypes
+
+    class Overlapped(ctypes.Structure):
+        _fields_ = [
+            ("Internal", ctypes.c_size_t), ("InternalHigh", ctypes.c_size_t),
+            ("Offset", wintypes.DWORD), ("OffsetHigh", wintypes.DWORD),
+            ("hEvent", wintypes.HANDLE),
+        ]
+
+    deadline = time.monotonic() + CLEANUP_BUDGET_SECONDS
+    helpers = runpy.run_path(PROFILE_SCRIPT)
+    data = os.path.abspath(data)
+    parent, name = os.path.split(data)
+    # Opening data as a part of its parent rejects a junction or symlink on data itself.
+    with helpers["_open_state_dir"](Path(parent), name) as pinned:
+        if pinned is None:
+            return
+        # GENERIC_READ | GENERIC_WRITE, share read and write, OPEN_REPARSE_POINT, 4: OPEN_ALWAYS.
+        with helpers["_windows_handle"](os.path.join(data, "session-cleanup.stamp"), 0xC0000000,
+                                        0x3, 0x00200000, disposition=4) as (kernel32, stamp):
+            overlapped_pointer = ctypes.POINTER(Overlapped)
+            kernel32.LockFileEx.argtypes = [
+                wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                wintypes.DWORD, overlapped_pointer,
+            ]
+            kernel32.LockFileEx.restype = wintypes.BOOL
+            kernel32.UnlockFileEx.argtypes = [
+                wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                overlapped_pointer,
+            ]
+            kernel32.UnlockFileEx.restype = wintypes.BOOL
+            kernel32.WriteFile.argtypes = [
+                wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p,
+            ]
+            kernel32.WriteFile.restype = wintypes.BOOL
+            overlapped = Overlapped()
+            # Claim the daily scan through the stamp without waiting for another hook:
+            # 0x3 is LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, on byte 0.
+            if not kernel32.LockFileEx(stamp, 0x3, 0, 1, 0, ctypes.byref(overlapped)):
+                return
+            try:
+                info = helpers["_windows_file_info"](kernel32, stamp)
+                # 0x0410: reparse point or directory.
+                if info.dwFileAttributes & 0x0410 or info.nNumberOfLinks != 1:
+                    return
+                now = time.time()
+                written = info.ftLastWriteTime
+                # FILETIME counts 100 ns intervals since 1601.
+                ticks = written.dwHighDateTime << 32 | written.dwLowDateTime
+                age = now - (ticks / 10_000_000 - 11_644_473_600)
+                if (info.nFileSizeHigh or info.nFileSizeLow) and 0 <= age < SECONDS_PER_DAY:
+                    return
+                helpers["prune_session_state"]([data], now - 30 * SECONDS_PER_DAY,
+                                               deadline=deadline)
+                if time.monotonic() < deadline:
+                    count = wintypes.DWORD()
+                    if not kernel32.WriteFile(stamp, b"\n", 1, ctypes.byref(count), None):
+                        raise ctypes.WinError(ctypes.get_last_error())
+            finally:
+                kernel32.UnlockFileEx(stamp, 0, 1, 0, ctypes.byref(overlapped))
+
+
 def cleanup_session_state(data):
     if not data:
         return
     try:
+        if os.name == "nt":
+            cleanup_windows_session_state(data)
+            return
         import fcntl
 
         deadline = time.monotonic() + CLEANUP_BUDGET_SECONDS
