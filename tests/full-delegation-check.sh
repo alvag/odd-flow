@@ -2,7 +2,7 @@
 # Checks for full delegation mode: the hooks pick the mode's rules, no organic routing rule reaches a
 # full delegation session, and organic mode keeps every rule it had.
 set -u
-R="$(cd "$(dirname "$0")/.." && pwd)"
+R="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 S="$R/skills/odd-flow"
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT

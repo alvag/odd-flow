@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Behavioral checks for the orchestrator mode in odd-flow scripts/profile.py, run against an isolated ODD_FLOW_HOME.
 set -u
-P="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/profile.py"
+P="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/skills/odd-flow/scripts/profile.py"
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0

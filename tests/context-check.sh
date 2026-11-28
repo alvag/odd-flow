@@ -2,7 +2,7 @@
 # Behavioral checks for scripts/context.py against fake Claude Code transcripts and
 # Codex rollouts in an isolated home.
 set -u
-C="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/context.py"
+C="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)/skills/odd-flow/scripts/context.py"
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0

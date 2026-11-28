@@ -2,6 +2,13 @@
 # Pin which catalog states pass, warn, or fail.
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if ! toplevel=$(git -C "$root" rev-parse --show-toplevel 2>/dev/null) ||
+    [[ "$toplevel" != "$(cd -- "$root" && pwd -P)" ]] ||
+    ! git -C "$root" rev-parse --verify 'HEAD^{commit}' >/dev/null 2>&1; then
+    echo "SKIP Orca catalog path checks (no git history in this checkout)"
+    exit 0
+fi
+
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 
@@ -22,6 +29,8 @@ offline_env = dict(os.environ, PATH=str(offline_bin))
 orca = shutil.which("orca")
 manifest_path = Path("orca-plugin/orca-plugin.json")
 note = "NOTE: orca-plugin/ has changes not yet released in orca-catalog.json"
+missing_commit = "0" * 40
+missing_history = "catalog release commits not in this checkout's history"
 failures = 0
 
 
@@ -93,8 +102,24 @@ def check(case, expected, message="", *, with_orca=False):
         release["version"] = "1.2.0-alpha.01"
     elif case == "empty-version":
         release["version"] = ""
-    elif case == "missing-commit":
-        release["commit"] = "0" * 40
+    elif case == "all-commits-missing":
+        release["commit"] = missing_commit
+    elif case in ("missing-commit", "shallow-missing-commit", "shallow-all-commits-present"):
+        older, newer = "0.9.0", "0.10.0"
+        if version != older:
+            release.update(commit=set_version(repo, older), version=older)
+        newest = dict(release, commit=set_version(repo, newer), version=newer)
+        if case == "missing-commit":
+            newest["commit"] = missing_commit
+        plugin["releases"] = [newest] if case == "shallow-all-commits-present" else [newest, release]
+        if case.startswith("shallow-"):
+            shallow = scratch / f"{case}-clone"
+            git(root, "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth=1",
+                "--", repo.as_uri(), shallow)
+            repo = shallow
+            catalog_path = repo / "orca-catalog.json"
+    elif case == "non-commit":
+        release["commit"] = git(repo, "rev-parse", f"HEAD:{manifest_path}")
     elif case == "non-ancestor":
         (repo / "orca-plugin" / "README.md").write_text("Off-branch edit\n", encoding="utf-8")
         release["commit"] = commit(repo, "Edit the plugin off the release branch")
@@ -124,15 +149,20 @@ def check(case, expected, message="", *, with_orca=False):
         capture_output=True, text=True, env=None if with_orca else offline_env,
     )
     notices = [line for line in result.stdout.splitlines() if line.startswith("NOTE:")]
+    skips = [line for line in result.stdout.splitlines()
+             if line.startswith("SKIP Orca catalog history checks")]
     if expected == "note":
         passed = (result.returncode == 0 and len(notices) == 1 and notices[0].startswith(note)
-                  and message in notices[0] and not result.stderr)
+                  and message in notices[0] and not skips and not result.stderr)
     elif expected == "fail":
-        passed = (result.returncode == 1 and not notices
+        passed = (result.returncode == 1 and not notices and not skips
                   and any(line.startswith("FAIL ") and message in line
                           for line in result.stderr.splitlines()))
+    elif expected == "skip":
+        passed = (result.returncode == 0 and not notices and len(skips) == 1
+                  and message in skips[0] and not result.stderr)
     else:
-        passed = result.returncode == 0 and not notices and not result.stderr
+        passed = result.returncode == 0 and not notices and not skips and not result.stderr
     if passed:
         print(f"PASS {case}")
     else:
@@ -155,7 +185,11 @@ check("invalid-release-version", "fail", "expected a valid SemVer version")
 check("leading-zero-core", "fail", "expected a valid SemVer version")
 check("leading-zero-prerelease", "fail", "expected a valid SemVer version")
 check("empty-version", "fail", "release versions must be non-empty and unique")
-check("missing-commit", "fail", "cat-file -t")
+check("missing-commit", "fail", missing_commit)
+check("all-commits-missing", "skip", missing_history)
+check("shallow-missing-commit", "skip", missing_history)
+check("shallow-all-commits-present", "pass")
+check("non-commit", "fail", "is not a commit")
 check("non-ancestor", "fail", "is not an ancestor of HEAD")
 check("release-version-mismatch", "fail", "does not match")
 check("duplicate-version", "fail", "release versions must be non-empty and unique")
