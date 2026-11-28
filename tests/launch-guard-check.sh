@@ -236,6 +236,31 @@ class LaunchGuardCheck(unittest.TestCase):
             with self.subTest(command=command):
                 self.deny("linux", command, hint)
 
+    def test_non_launch_orchestration_after_unrelated_shells_stays_allowed(self):
+        for reader, command in (
+            ("linux", "echo hi | sh; orca orchestration check --json"),
+            ("linux", """eval "$(python3 -c 'print(1)')" >/dev/null; """
+                      "orca orchestration send --to bot:x --type status --subject a --body-file /tmp/b.md"),
+            ("win32", 'iex "1+1"; orca orchestration check --json'),
+            ("win32", "echo hi | sh; orca orchestration check --json"),
+            ("linux", "env -S 'echo hi'; orca orchestration check --json"),
+            ("linux", "echo orchestration | cat; echo hi | sh; orca orchestration check --json"),
+        ):
+            with self.subTest(reader=reader, command=command):
+                self.allow(reader, command)
+
+    def test_nested_shell_hazards_still_deny_launches(self):
+        for reader, command in (
+            ("linux", "echo 'v=task-create; orca orchestration $v --spec-file bad.md' | sh"),
+            ("linux", "bash <<< 'v=task-create; orca orchestration $v --spec-file bad.md'"),
+            ("linux", f"{absolute}; echo hi | sh"),
+            ("linux", f"env -S 'echo hi'; X=$({relative})"),
+            ("win32", f'{absolute}; iex "1+1"'),
+            ("win32", """echo 'ORCA ORCHESTRATION TASK-CREATE --help' | cat | sh"""),
+        ):
+            with self.subTest(reader=reader, command=command):
+                self.deny(reader, command, nested_hint)
+
     def test_non_orca_commands_mentioning_orchestration_stay_allowed(self):
         for command in (
             "rg orchestration *.md", 'grep -rn orchestration "$PWD"',
