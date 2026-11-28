@@ -77,6 +77,7 @@ class LaunchScan:
     # when the direct launch appears earlier or in a different segment.
     def __init__(self):
         self.nested_script = False
+        self.literal_nonlaunches = 0
 
 
 def shell_word(raw):
@@ -170,7 +171,7 @@ def mentions_orchestration(raw, words):
 
 
 def command_launch(words, raw, directory_changed, scan, *, posix=False,
-                   stdin_script=False, pipeline_mentions_orchestration=False):
+                   stdin_script=False, pipeline_mentions_orchestration=False, scope_positions=()):
     """Classify a literal command without evaluating shell input."""
     start, wrapper_cwd, reparses = command_start(words, posix=posix)
     program = program_name(words[start][0]) if start < len(words) else ""
@@ -190,6 +191,14 @@ def command_launch(words, raw, directory_changed, scan, *, posix=False,
         for i in range(1, len(words))
     )):
         raise LaunchError(NESTED_SHELL_ERROR)
+    if (not current and program == "orca" and len(words) > start + 2
+            and (not posix or start + 1 in scope_positions)):
+        (_, executable_dynamic), (scope, scope_dynamic), (verb, verb_dynamic) = words[start:start + 3]
+        if not posix:
+            scope, verb = scope.casefold(), verb.casefold()
+        if (not (executable_dynamic or scope_dynamic or verb_dynamic) and scope == "orchestration"
+                and verb and verb not in LAUNCHES):
+            scan.literal_nonlaunches += 1
     directory_changed |= program in DIRECTORY_CHANGES
     if not posix and start < len(words):
         directory_changed |= words[start][0].casefold() in {"cd..", "cd\\"}
@@ -257,6 +266,7 @@ def launch_word(command, pos, directory_changed, scan):
 def bash_launches(command, pos=0, *, scan, substitution=False, directory_changed=False):
     """Yield direct launches, including each command in a parallel batch."""
     words = []
+    scope_positions = set()
     depth = int(substitution)
     redirected = False
     stdin_redirect = stdin_pipe = False
@@ -289,6 +299,7 @@ def bash_launches(command, pos=0, *, scan, substitution=False, directory_changed
                 if value == "in":
                     cases[-1] = "pattern"
                     words = []
+                    scope_positions.clear()
             elif not words and value == "esac" and word[0] == "esac" and cases:
                 cases.pop()
             elif cases and cases[-1] == "pattern":
@@ -296,6 +307,9 @@ def bash_launches(command, pos=0, *, scan, substitution=False, directory_changed
             else:
                 if value == "case" and word[0] == "case" and all(w in POSIX_PREFIXES for w, _ in words):
                     cases.append("subject")
+                # Only a scope spelt contiguously can account for a raw occurrence.
+                if word[0] == "orchestration" and "orchestration" in command[token.start():pos]:
+                    scope_positions.add(len(words))
                 words.append(word)
         elif kind == "operator":
             # Pattern delimiters are not subshell parentheses or pipelines.
@@ -310,7 +324,7 @@ def bash_launches(command, pos=0, *, scan, substitution=False, directory_changed
             current, directory_changed = command_launch(
                 words, segment, directory_changed, scan,
                 posix=True, stdin_script=stdin_redirect or stdin_pipe,
-                pipeline_mentions_orchestration=pipe_orchestration,
+                pipeline_mentions_orchestration=pipe_orchestration, scope_positions=scope_positions,
             )
             if current:
                 if redirected:
@@ -319,6 +333,7 @@ def bash_launches(command, pos=0, *, scan, substitution=False, directory_changed
             stdin_pipe = value in {"|", "|&"}
             pipe_orchestration = bool(stdin_pipe and (pipe_orchestration or mentions_orchestration(segment, words)))
             words = []
+            scope_positions.clear()
             start = pos
             redirected = False
             stdin_redirect = False
@@ -335,7 +350,7 @@ def bash_launches(command, pos=0, *, scan, substitution=False, directory_changed
         raise LaunchError("cannot parse the orchestration launch substitution")
     current, _ = command_launch(
         words, command[start:], directory_changed, scan, posix=True, stdin_script=stdin_redirect or stdin_pipe,
-        pipeline_mentions_orchestration=pipe_orchestration,
+        pipeline_mentions_orchestration=pipe_orchestration, scope_positions=scope_positions,
     )
     if current:
         if redirected:
@@ -662,16 +677,18 @@ def denial_reason(payload, *, read_launches=bash_launches):
             return "internal error while checking the writer launch; verify the edit-surface guard before retrying."
     elif tool == "Bash":
         command = tool_input.get("command")
-        if not isinstance(command, str) or "orchestration" not in (
-            command.casefold() if read_launches is powershell_launches else command
-        ):
+        if not isinstance(command, str):
+            return None
+        command_text = command.casefold() if read_launches is powershell_launches else command
+        orchestration_count = command_text.count("orchestration")
+        if not orchestration_count:
             return None
         surface = None
         launches = []
         try:
             scan = LaunchScan()
             launches.extend(read_launches(command, scan=scan))
-            if scan.nested_script and launches:
+            if scan.nested_script and (launches or orchestration_count > scan.literal_nonlaunches):
                 raise LaunchError(NESTED_SHELL_ERROR)
             for verb, args, directory_changed in launches:
                 selected = launch_spec(verb, args)

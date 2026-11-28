@@ -244,7 +244,7 @@ class LaunchGuardCheck(unittest.TestCase):
             ("win32", 'iex "1+1"; orca orchestration check --json'),
             ("win32", "echo hi | sh; orca orchestration check --json"),
             ("linux", "env -S 'echo hi'; orca orchestration check --json"),
-            ("linux", "echo orchestration | cat; echo hi | sh; orca orchestration check --json"),
+            ("linux", "bash < /dev/null; orca orchestration check --json"),
         ):
             with self.subTest(reader=reader, command=command):
                 self.allow(reader, command)
@@ -260,6 +260,41 @@ class LaunchGuardCheck(unittest.TestCase):
         ):
             with self.subTest(reader=reader, command=command):
                 self.deny(reader, command, nested_hint)
+
+    def test_staged_nested_shell_launches_are_denied(self):
+        literal = """cmd='orca orchestration "task-create" --spec-file bad.md'"""
+        dynamic = """cmd='v=task-create; orca orchestration $v --spec-file bad.md'"""
+        for group, command in (
+            ("B1", f'{dynamic}; eval "$cmd"'),
+            ("B1", f'{literal}; eval "$cmd"'),
+            ("B1", 'o=orchestration; v=task-create; eval "orca $o $v --spec-file bad.md"'),
+            ("B1", """s=$(printf 'orca orchestration "task-create" --spec-file bad.md'); """ 'eval "$s"'),
+            ("B1", """f() { eval "$1"; }; f 'orca orchestration "task-create" --spec-file bad.md'"""),
+            ("B1", f'{literal}; eval "$cmd"; orca orchestration check'),
+            ("B2", f'{literal}; echo "$cmd" | sh'),
+            ("B2", f'{dynamic}; echo "$cmd" | sh'),
+            ("B2", """o=orchestration; echo "orca $o 'task-create' --spec-file bad.md" | sh"""),
+            ("B2", f'{literal}; echo "$cmd" | cat | sh'),
+            ("B3", f'{literal}; bash <<< "$cmd"'),
+            ("B3", f'{dynamic}; bash <<< "$cmd"'),
+            ("B3", f'{literal}; zsh <<< "$cmd"'),
+            ("B4", f"bash <<'EOF'\n{literal}\neval \"$cmd\"\nEOF"),
+            ("B4", f"cat <<'EOF' | sh\n{literal}\n$cmd\nEOF"),
+            ("B4", """printf 'orca orchestration "task-create" --spec-file bad.md\\n' > /tmp/s.sh; sh < /tmp/s.sh"""),
+            ("B4", f'{literal}; env -S "$cmd"'),
+        ):
+            with self.subTest(group=group, command=command):
+                self.deny("linux", command, nested_hint)
+        for producer, consumers in (
+            ("Set-Variable c 'ORCA ORCHESTRATION ''task-create'' --spec-file bad.md'; "
+             "Get-Variable c -ValueOnly", ("iex", "Invoke-Expression", "pwsh", "powershell")),
+            ("Set-Content s.ps1 'orca orchestration ''task-create'' --spec-file bad.md'; "
+             "Get-Content s.ps1", ("iex", "pwsh", "powershell")),
+        ):
+            for consumer in consumers:
+                command = f"{producer} | {consumer}"
+                with self.subTest(group="B5", command=command):
+                    self.deny("win32", command, nested_hint)
 
     def test_non_orca_commands_mentioning_orchestration_stay_allowed(self):
         for command in (
