@@ -593,6 +593,43 @@ assert_init none
 check human-init-none 0
 grep -Fx 'Init blocks: none installed' out
 
+assert_claude_init_unreadable() {
+    PATH="$bin" "$python" -I - "$root/skills/odd-flow/scripts/install_check.py" "$1" <<'PY'
+import json
+import subprocess
+import sys
+
+script, reason = sys.argv[1:]
+try:
+    done = subprocess.run([sys.executable, "-I", script, "--json"], capture_output=True, timeout=5)
+except subprocess.TimeoutExpired:
+    sys.exit(f"install check timed out; expected: {reason}")
+assert done.returncode == 0 and not done.stderr, (done.returncode, done.stderr)
+report = json.loads(done.stdout)
+row = next(row for row in report["init_blocks"]["runtimes"] if row["runtime"] == "claude")
+assert row == {"runtime": "claude", "status": "unreadable", "reason": reason}, row
+print(f"PASS Claude init block is unreadable: {reason}")
+PY
+}
+
+init_read_fail=0
+claude_instructions="$HOME/.claude/CLAUDE.md"
+rm -- "$claude_instructions"
+mkfifo "$claude_instructions"
+assert_claude_init_unreadable 'instructions file is not a regular file' || init_read_fail=1
+rm -- "$claude_instructions"
+printf 'My own rules.\n' > "$claude_instructions"
+if [[ $(id -u) == 0 ]]; then
+    echo 'SKIP inaccessible instructions directory (running as root)'
+else
+    trap 'chmod 700 "$HOME/.claude"; rm -rf -- "$scratch"' EXIT
+    chmod 000 "$HOME/.claude"
+    assert_claude_init_unreadable 'cannot read instructions file' || init_read_fail=1
+    chmod 700 "$HOME/.claude"
+    trap 'rm -rf -- "$scratch"' EXIT
+fi
+test "$init_read_fail" -eq 0
+
 # An unresolvable home directory leaves every init block unreadable without failing the report.
 result=0
 PATH="$bin" "$python" -I - "$root/skills/odd-flow/scripts/install_check.py" --json > out 2> err <<'PY' || result=$?
@@ -747,7 +784,7 @@ report = json.loads(Path("out").read_text())
 reasons = {
     "claude": "instructions file is a symlink",
     "codex": "the file has more than one odd-flow block; fix it by hand first",
-    "antigravity": "cannot read instructions file",
+    "antigravity": "instructions file is not a regular file",
 }
 assert report["init_blocks"]["runtimes"] == [
     {"runtime": runtime, "status": "unreadable", "reason": reason}

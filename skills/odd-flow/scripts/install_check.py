@@ -329,9 +329,10 @@ def check_init_blocks(warnings):
         try:
             path = Path.home() / target
             current = init["read_current"](path)
-        except init["InitError"]:
-            # read_current only refuses symlinks, and its message includes the path.
+        except init["SymlinkError"]:
             reason = "instructions file is a symlink"
+        except init["InitError"]:
+            reason = "instructions file is not a regular file"
         except (OSError, UnicodeError, RuntimeError):
             reason = "cannot read instructions file"
         else:

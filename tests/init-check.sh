@@ -2,7 +2,8 @@
 # Behavioral checks for odd-flow scripts/init.py against scratch files only.
 set -u
 I="$(cd "$(dirname "$0")/.." && pwd)/skills/odd-flow/scripts/init.py"
-T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX") || exit 1
+tmp=${TMPDIR:-/tmp}
+T=$(mktemp -d "${tmp%/}/tmp.XXXXXXXXXX") || exit 1
 trap 'rm -rf -- "$T"' EXIT
 pass=0; fail=0
 ok() { pass=$((pass+1)); echo "PASS $1"; }
@@ -23,12 +24,11 @@ expected_block core-block-full-delegation.md > "$T/full-delegation"
 windows_plan() {
     isolated python3 -I -B -X utf8 -c '
 import os, sys
-from types import SimpleNamespace
 from unittest.mock import patch
 sys.path.insert(0, os.path.dirname(sys.argv[1]))
 import init
 sys.stdout.reconfigure(newline="\n")
-with patch.object(init, "os", SimpleNamespace(name="nt", path=os.path)):
+with patch.object(init.os, "name", "nt"):
     sys.exit(init.main(["plan", "--mode", "organic", "--target", sys.argv[2]]))' "$I" "$1"
 }
 
@@ -146,7 +146,38 @@ out=$(run apply --target "$d"); [[ $? == 2 && "$out" == *"more than one odd-flow
 u="$T/unbal.md"; printf 'x\n<!-- odd-flow:core -->\nbody\n' > "$u"
 out=$(run apply --target "$u"); [[ $? == 2 && "$out" == *"unbalanced"* ]] && ok "unbalanced marker refused" || ko "unbal" "$out"
 ln -s "$g" "$T/link.md"
-out=$(run apply --target "$T/link.md"); [[ $? == 2 && "$out" == *"symlink"* ]] && ok "symlink target refused" || ko "symlink" "$out"
+out=$(run apply --target "$T/link.md"); [[ $? == 2 && "$out" == "odd-flow init: $T/link.md is a symlink; pass --target with the real file" ]] && ok "symlink target refused" || ko "symlink" "$out"
+
+mkdir -p "$T/home/.claude"
+fifo="$T/home/.claude/CLAUDE.md"
+if mkfifo "$fifo"; then
+    out=$(isolated python3 -I -c '
+import subprocess, sys
+try:
+    sys.exit(subprocess.run([sys.executable, "-I", *sys.argv[1:]], timeout=5).returncode)
+except subprocess.TimeoutExpired:
+    sys.exit("init timed out opening a FIFO")
+' "$I" plan --runtime claude --mode organic); ec=$?
+    [[ $ec == 2 && "$out" == "odd-flow init: $fifo is not a regular file" ]] &&
+        ok "FIFO target refused without blocking" ||
+        ko "FIFO target refused without blocking" "exit $ec: $out"
+    rm -f -- "$fifo"
+else
+    ko "FIFO target refused without blocking" "could not create FIFO"
+fi
+
+if [[ $(id -u) == 0 ]]; then
+    echo "SKIP inaccessible instructions directory (running as root)"
+else
+    printf 'Personal rules.\n' > "$fifo"
+    trap 'chmod 700 "$T/home/.claude"; rm -rf -- "$T"' EXIT
+    chmod 000 "$T/home/.claude"
+    out=$(isolated LC_ALL=C python3 -I "$I" plan --runtime claude --mode organic); ec=$?
+    chmod 700 "$T/home/.claude"
+    [[ $ec == 2 && "$out" == "odd-flow init: "*"Permission denied"* && "$out" != *Traceback* ]] &&
+        ok "inaccessible instructions directory is not treated as absent" ||
+        ko "inaccessible instructions directory is not treated as absent" "exit $ec: $out"
+fi
 
 chmod 600 "$g"
 cp "$g" "$T/before-remove"
