@@ -454,6 +454,8 @@ if [ "$(id -u)" -ne 0 ]; then
     CLAUDE_CONFIG_DIR="$unrelated_config" check unrelated-session-root 0 --json
     chmod 700 "$unrelated_data"
     assert_json unrelated-session-root
+else
+    echo 'SKIP unreadable unrelated session root (running as root)'
 fi
 
 printf 'not a directory\n' > "$codex_data/prompt-sessions"

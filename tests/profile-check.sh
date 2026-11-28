@@ -504,6 +504,8 @@ if os.geteuid() != 0:
         f"odd-flow: {codex_root}: cannot discover plugin data: [Errno 13] Permission denied: '{codex_root}'",
         f"odd-flow: {stuck}: cannot remove mode-notice record: [Errno 13] Permission denied: '{stuck}'",
     ])
+else:
+    print("SKIP prune permission-denied checks (running as root)")
 try:
     for folder, mode in blocks:
         folder.chmod(mode)
