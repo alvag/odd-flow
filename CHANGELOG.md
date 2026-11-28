@@ -17,6 +17,7 @@ separately; see the [compatibility table](docs/compatibility.md).
 
 - The Orca plugin's outdated-script tooltip test passes regardless of checkout path length (#75).
 - Tests now resolve the checkout with `CDPATH` set (#97) and run the UTF-8 prompt check on Python 3.9 (#84). The read-only directory check skips as root (#68), and catalog history checks skip when the required commits are missing (#67).
+- The Orca launch guard rejects launches through nested shells, requires absolute spec paths after directory changes, and rejects dynamic orchestration verbs on POSIX (#92, #93, #94).
 - `/odd-flow init` and `/odd-flow check` reject FIFOs and other non-regular instruction files instead of blocking, and report inaccessible instruction files as unreadable rather than missing (#90, #86).
 - On macOS and Linux, pane width detection limits each `ps` lookup to two seconds (#89), and `pane-check.sh` handles symlinked checkout paths (#81).
 - `/odd-flow check` now warns when an installed init core block differs from the resolved orchestrator mode or cannot be read, without changing the exit code or advising re-init for a session-only mode (#77), and skips malformed entries in the Orca plugin list (#83).

@@ -5,7 +5,7 @@ import glob
 import importlib.util
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import re
 import sys
 
@@ -17,7 +17,21 @@ PLUGIN_ROOT = Path((None if ANTIGRAVITY else os.environ.get(ROOT_VAR)) or Path(_
 SURFACE_SCRIPT = PLUGIN_ROOT / "skills" / "odd-flow" / "scripts" / "surface.py"
 EDIT_PATH_FIELDS = {"Edit": "file_path", "Write": "file_path", "NotebookEdit": "notebook_path"}
 LAUNCHES = {"task-create", "worker-start"}
+EVAL_COMMANDS = {"eval", "invoke-expression", "iex"}
+NESTED_SHELLS = {"powershell", "pwsh", "cmd", "bash", "sh", "zsh", "dash", "ksh"} | EVAL_COMMANDS
+DIRECTORY_CHANGES = {"cd", "set-location", "push-location", "pop-location", "pushd", "popd", "sl", "chdir"}
+POSIX_PREFIXES = {"{", "!", "if", "then", "do", "else", "elif", "while", "until", "time", "function", "coproc"}
+COMMAND_WRAPPERS = {"env", "command", "exec", "builtin", "nohup", "nice", "timeout"}
+WRAPPER_VALUE_OPTIONS = {
+    "env": {"-u", "--unset", "-C", "--chdir", "-P", "-S", "--split-string"},
+    "exec": {"-a"},
+    "nice": {"-n", "--adjustment"},
+    "timeout": {"-k", "--kill-after", "-s", "--signal"},
+}
 RAW_LAUNCH = re.compile(r"(?<![\w-])orchestration(?:\s|\\\n)+(?:task-create|worker-start)(?![\w-])")
+ORCHESTRATION_ARG = re.compile(r"(?<![\w-])orchestration(?![\w-])", re.IGNORECASE)
+NESTED_LAUNCH_ARG = re.compile(r"(?<![\w-])(?:orca|task-create|worker-start|--spec(?:-file)?)(?![\w-])",
+                               re.IGNORECASE)
 SPEC_FLAGS = {"--spec", "--spec-file", "--task"}
 VALUE_FLAGS = {
     "--agent", "--base-branch", "--comment", "--deps", "--display-name", "--effort",
@@ -28,15 +42,17 @@ VALUE_FLAGS = {
 
 # Tokenize the literal launch forms, not the evaluated shell program. Keep quoted
 # operators and newlines inside their words, and never run a command to find a spec.
-WORD_FRAGMENT = re.compile(r"""(?:'[^']*'|\\[\s\S]|[^\s;&|()<>'"`\\])+|""" r'"')
+WORD_FRAGMENT = re.compile(r"""(?:'[^']*'|\\[\s\S]|\$(?!\()|[^\s;&|()<>'"`\\$])+|\$\(|""" r'["`]')
 SHELL_TOKEN = re.compile(
     r"""(?P<space>[ \t]+|\\\n)|(?P<comment>\#[^\n]*)|"""
-    r"""(?P<redirect>[0-9]*(?:<<<|<<-?|<>|>>|>&|<&|>\||[<>]))|(?P<operator>[\n;&|()`])|"""
+    r"""(?P<redirect>[0-9]*(?:<<<|<<-?|<>|>>|>&|<&|>\||[<>]))|"""
+    r"""(?P<operator>;;&|;;|;&|&&|\|\||\|&|[\n;&|()])|"""
     rf"(?P<word>{WORD_FRAGMENT.pattern})"
 )
 WORD_PART = re.compile(r"""'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]|[^'"\\]+""")
 DOUBLE_QUOTE_PART = re.compile(r"\\[$`\"\\\n]|(?P<expansion>[$`])")
-QUOTED_FRAGMENT = re.compile(r'\\[\s\S]|\$\(|"|[^"\\$]+|\$')
+QUOTED_FRAGMENT = re.compile(r'\\[\s\S]|\$\(|["`]|[^"`\\$]+|\$')
+BACKTICK_BODY = re.compile(r'((?:\\[\s\S]|[^\\`])*)`')
 POWERSHELL_TOKEN = re.compile(
     r"(?P<space>[ \t]+)|(?P<separator>\r?\n|&&|\|\||[;|])|"
     r"""(?:(?P<single>'(?:[^'"&|<>\r\n]|'')+')|(?P<double>"[^"$`&|<>\r\n]+")|"""
@@ -44,6 +60,9 @@ POWERSHELL_TOKEN = re.compile(
 )
 POWERSHELL_UNSUPPORTED = re.compile(r"[%^\x00\u2018-\u201e]|[^\S \t\r\n]|\r(?!\n)")
 PARSE_HINT = 'Write the launch as a plain command or in an unquoted $() substitution.'
+NESTED_SHELL_ERROR = ("cannot parse the orchestration launch inside a nested shell; "
+                      "run orca orchestration directly without a nested shell")
+DYNAMIC_VERB_HINT = "write the literal orchestration verb instead of an expansion or substitution"
 PATCH_HEADER = re.compile(r"\*\*\* (Add|Delete|Update) File: (.+)", re.DOTALL)
 # Match Rust str::trim, not Python's extra ASCII record separators.
 PATCH_WHITESPACE = " \t\n\r\v\f\x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
@@ -51,6 +70,14 @@ PATCH_WHITESPACE = " \t\n\r\v\f\x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u200
 
 class LaunchError(ValueError):
     """A literal Orca launch could not be checked."""
+
+
+class LaunchScan:
+    # Shared by substitutions and their enclosing scan so hazards also apply
+    # when the direct launch appears earlier or in a different segment.
+    def __init__(self):
+        self.nested_script = False
+        self.literal_nonlaunches = 0
 
 
 def shell_word(raw):
@@ -72,18 +99,145 @@ def shell_word(raw):
     return "".join(parts), dynamic
 
 
-def launch(words):
+def launch(words, *, posix=False, start=0):
+    orca = start < len(words) and (program_name(words[start][0]) == "orca" or words[start][1])
     for i in range(len(words) - 1):
-        if words[i][0] == "orchestration" and words[i + 1][0] in LAUNCHES:
-            return words[i + 1][0], words[i + 2:]
+        if words[i][0] != "orchestration":
+            continue
+        verb, dynamic = words[i + 1]
+        if posix and orca and i == start + 1 and dynamic:
+            raise LaunchError(DYNAMIC_VERB_HINT)
+        if verb in LAUNCHES:
+            return verb, words[i + 2:]
     return None
 
 
-def launch_word(command, pos):
-    """Read one shell word and yield launches inside its quoted substitutions."""
+def program_name(word):
+    name = re.split(r"[/\\]", word)[-1].casefold()
+    return name.removesuffix(".exe").removesuffix(".cmd")
+
+
+def command_start(words, *, posix):
+    """Locate the invoked program and collect wrapper cwd and re-parsing effects."""
+    start = 0
+    changes_cwd = reparses = False
+    allow_assignment = posix
+    while start < len(words):
+        word = words[start][0]
+        if posix and word in POSIX_PREFIXES:
+            start += 1
+            if word == "time":
+                while start < len(words) and words[start][0] in {"-p", "--"}:
+                    start += 1
+            elif word == "function":
+                start += 1  # Skip the function name, not the body.
+            continue
+        if allow_assignment and re.match(r"[a-zA-Z_]\w*=", word):
+            start += 1
+            continue
+        wrapper = program_name(word)
+        if wrapper not in COMMAND_WRAPPERS:
+            break
+        start += 1
+        while start < len(words) and words[start][0].startswith("-"):
+            option = words[start][0]
+            start += 1
+            if option == "--":
+                break
+            takes_value = WRAPPER_VALUE_OPTIONS.get(wrapper, ())
+            if option.startswith("--"):
+                option, attached, _ = option.partition("=")
+            else:
+                # The first value-taking flag owns the rest of a short bundle.
+                for i, flag in enumerate(option[1:], 2):
+                    if "-" + flag in takes_value:
+                        option, attached = "-" + flag, option[i:]
+                        break
+                else:
+                    continue
+            if wrapper == "env":
+                changes_cwd |= option in {"-C", "--chdir"}
+                reparses |= option in {"-S", "--split-string"}
+            if option in takes_value and not attached:
+                start += 1
+        if wrapper == "timeout":
+            start += 1  # Skip the duration before unwrapping the command.
+        allow_assignment = wrapper == "env"
+    return start, changes_cwd, reparses
+
+
+def mentions_orchestration(raw, words):
+    return bool(ORCHESTRATION_ARG.search(raw)) or any(ORCHESTRATION_ARG.search(word) for word, _ in words)
+
+
+def command_launch(words, raw, directory_changed, scan, *, posix=False,
+                   stdin_script=False, pipeline_mentions_orchestration=False, scope_positions=()):
+    """Classify a literal command without evaluating shell input."""
+    start, wrapper_cwd, reparses = command_start(words, posix=posix)
+    program = program_name(words[start][0]) if start < len(words) else ""
+    nested_script = reparses or program in EVAL_COMMANDS
+    nested_launch = False
+    if program in NESTED_SHELLS:
+        args = [word for word, _ in words[start + 1:]]
+        command_line = " ".join(args)
+        nested_script |= stdin_script or any(arg.casefold() in {"-c", "-command", "/c"} for arg in args)
+        nested_launch = bool(ORCHESTRATION_ARG.search(command_line) and NESTED_LAUNCH_ARG.search(command_line))
+    if nested_script:
+        scan.nested_script = True
+        nested_launch |= pipeline_mentions_orchestration or mentions_orchestration(raw, words)
+    current = None if nested_launch else launch(words, posix=posix, start=start)
+    if nested_launch or ((current or RAW_LAUNCH.search(raw)) and any(
+        words[i][0] == "orchestration" and program_name(words[i - 1][0]) in NESTED_SHELLS
+        for i in range(1, len(words))
+    )):
+        raise LaunchError(NESTED_SHELL_ERROR)
+    if (not current and program == "orca" and len(words) > start + 2
+            and (not posix or start + 1 in scope_positions)):
+        (_, executable_dynamic), (scope, scope_dynamic), (verb, verb_dynamic) = words[start:start + 3]
+        if not posix:
+            scope, verb = scope.casefold(), verb.casefold()
+        if (not (executable_dynamic or scope_dynamic or verb_dynamic) and scope == "orchestration"
+                and verb and verb not in LAUNCHES):
+            scan.literal_nonlaunches += 1
+    directory_changed |= program in DIRECTORY_CHANGES
+    if not posix and start < len(words):
+        directory_changed |= words[start][0].casefold() in {"cd..", "cd\\"}
+    return ((*current, directory_changed or wrapper_cwd) if current else None), directory_changed
+
+
+def backtick_launches(command, pos, directory_changed, scan, *, quoted=False):
+    """Check a legacy substitution and return the offset after its closing backtick."""
+    body = BACKTICK_BODY.match(command, pos)
+    if body is None:
+        return None
+    # The outer shell removes only escapes special to backtick substitution.
+    escapes = r'\\([$`"\\\n])' if quoted else r'\\([$`\\\n])'
+    inner = re.sub(escapes, lambda m: m[1].replace("\n", ""), body[1])
+    for current in bash_launches(inner, directory_changed=directory_changed, scan=scan):
+        if quoted:
+            # Quoted legacy launch substitutions are not a supported literal form.
+            raise LaunchError("cannot parse the orchestration launch inside double-quoted backticks")
+        yield current
+    return body.end()
+
+
+def launch_word(command, pos, directory_changed, scan):
+    """Read one shell word and yield launches inside its substitutions."""
     parts = []
     while fragment := WORD_FRAGMENT.match(command, pos):
         pos = fragment.end()
+        if fragment[0] == "$(":
+            pos = yield from bash_launches(command, pos, substitution=True,
+                                           directory_changed=directory_changed, scan=scan)
+            parts.append("$")
+            continue
+        if fragment[0] == "`":
+            end = yield from backtick_launches(command, pos, directory_changed, scan)
+            if end is None:
+                return None, pos
+            pos = end
+            parts.append("$")
+            continue
         if fragment[0] != '"':
             parts.append(fragment[0])
             continue
@@ -91,8 +245,15 @@ def launch_word(command, pos):
         while quoted := QUOTED_FRAGMENT.match(command, pos):
             pos = quoted.end()
             if quoted[0] == "$(":
-                pos = yield from bash_launches(command, pos, substitution=True)
+                pos = yield from bash_launches(command, pos, substitution=True,
+                                               directory_changed=directory_changed, scan=scan)
                 parts.append("$")  # Keep the resulting word dynamic without evaluating it.
+            elif quoted[0] == "`":
+                end = yield from backtick_launches(command, pos, directory_changed, scan, quoted=True)
+                if end is None:
+                    return None, pos
+                pos = end
+                parts.append("$")
             else:
                 parts.append(quoted[0])
                 if quoted[0] == '"':
@@ -102,15 +263,20 @@ def launch_word(command, pos):
     return shell_word("".join(parts)), pos
 
 
-def bash_launches(command, pos=0, *, substitution=False):
+def bash_launches(command, pos=0, *, scan, substitution=False, directory_changed=False):
     """Yield direct launches, including each command in a parallel batch."""
     words = []
+    scope_positions = set()
     depth = int(substitution)
     redirected = False
+    stdin_redirect = stdin_pipe = False
+    pipe_orchestration = False
+    cases = []
+    start = pos
     while pos < len(command):
         token = SHELL_TOKEN.match(command, pos)
         if token is None:
-            if launch(words) or substitution:
+            if launch(words, posix=True, start=command_start(words, posix=True)[0]) or substitution:
                 raise LaunchError("cannot parse the orchestration launch arguments")
             # An unrelated malformed shell command is for Bash to handle.
             return
@@ -118,24 +284,61 @@ def bash_launches(command, pos=0, *, substitution=False):
         kind, value = token.lastgroup, token[0]
         if kind == "redirect":
             redirected = True
+            stdin_redirect |= value.startswith(("<", "0<"))
         elif kind == "word":
-            word, pos = yield from launch_word(command, token.start())
+            word, pos = yield from launch_word(command, token.start(), directory_changed, scan)
             if word is None:
-                if launch(words) or substitution:
+                if launch(words, posix=True, start=command_start(words, posix=True)[0]) or substitution:
                     raise LaunchError("cannot parse the orchestration launch arguments")
                 return
             if redirected:
                 redirected = False
+            elif cases and cases[-1] == "subject":
+                cases[-1] = "in"
+            elif cases and cases[-1] == "in":
+                if value == "in":
+                    cases[-1] = "pattern"
+                    words = []
+                    scope_positions.clear()
+            elif not words and value == "esac" and word[0] == "esac" and cases:
+                cases.pop()
+            elif cases and cases[-1] == "pattern":
+                continue
             else:
+                if value == "case" and word[0] == "case" and all(w in POSIX_PREFIXES for w, _ in words):
+                    cases.append("subject")
+                # Only a scope spelt contiguously can account for a raw occurrence.
+                if word[0] == "orchestration" and "orchestration" in command[token.start():pos]:
+                    scope_positions.add(len(words))
                 words.append(word)
         elif kind == "operator":
-            current = launch(words)
+            # Pattern delimiters are not subshell parentheses or pipelines.
+            if cases and cases[-1] == "pattern":
+                if value == ")":
+                    cases[-1] = "body"
+                    start = pos
+                continue
+            if value == "\n" and stdin_pipe and not words and not stdin_redirect:
+                continue  # A newline after a pipe continues the pipeline.
+            segment = command[start:token.start()]
+            current, directory_changed = command_launch(
+                words, segment, directory_changed, scan,
+                posix=True, stdin_script=stdin_redirect or stdin_pipe,
+                pipeline_mentions_orchestration=pipe_orchestration, scope_positions=scope_positions,
+            )
             if current:
                 if redirected:
                     raise LaunchError("cannot parse the orchestration launch redirection")
                 yield current
+            stdin_pipe = value in {"|", "|&"}
+            pipe_orchestration = bool(stdin_pipe and (pipe_orchestration or mentions_orchestration(segment, words)))
             words = []
+            scope_positions.clear()
+            start = pos
             redirected = False
+            stdin_redirect = False
+            if cases and value in {";;", ";&", ";;&"}:
+                cases[-1] = "pattern"
             if substitution:
                 if value == "(":
                     depth += 1
@@ -145,14 +348,17 @@ def bash_launches(command, pos=0, *, substitution=False):
                         return pos
     if substitution:
         raise LaunchError("cannot parse the orchestration launch substitution")
-    current = launch(words)
+    current, _ = command_launch(
+        words, command[start:], directory_changed, scan, posix=True, stdin_script=stdin_redirect or stdin_pipe,
+        pipeline_mentions_orchestration=pipe_orchestration, scope_positions=scope_positions,
+    )
     if current:
         if redirected:
             raise LaunchError("cannot parse the orchestration launch redirection")
         yield current
 
 
-def powershell_launches(command):
+def powershell_launches(command, *, scan):
     """Read the literal PowerShell subset before checking any launch in the command."""
     error = "cannot parse the orchestration launch arguments"
     if POWERSHELL_UNSUPPORTED.search(command):
@@ -160,6 +366,10 @@ def powershell_launches(command):
     launches = []
     words = []
     pos = 0
+    start = 0
+    directory_changed = False
+    stdin_script = False
+    pipe_orchestration = False
     while pos < len(command):
         token = POWERSHELL_TOKEN.match(command, pos)
         if token is None:
@@ -169,9 +379,19 @@ def powershell_launches(command):
         if kind == "space":
             continue
         if kind == "separator":
-            if current := launch(words):
+            if raw.endswith("\n") and stdin_script and not words:
+                continue
+            segment = command[start:token.start()]
+            current, directory_changed = command_launch(
+                words, segment, directory_changed, scan, stdin_script=stdin_script,
+                pipeline_mentions_orchestration=pipe_orchestration,
+            )
+            if current:
                 launches.append(current)
+            stdin_script = raw == "|"
+            pipe_orchestration = bool(stdin_script and (pipe_orchestration or mentions_orchestration(segment, words)))
             words = []
+            start = pos
             continue
         value = raw if kind == "bare" else raw[1:-1]
         if kind == "single":
@@ -184,7 +404,11 @@ def powershell_launches(command):
         if value.endswith("\\") and any(char.isspace() for char in value):
             raise LaunchError(error)
         words.append((value, False))
-    if current := launch(words):
+    current, _ = command_launch(
+        words, command[start:], directory_changed, scan, stdin_script=stdin_script,
+        pipeline_mentions_orchestration=pipe_orchestration,
+    )
+    if current:
         launches.append(current)
     return launches
 
@@ -453,13 +677,20 @@ def denial_reason(payload, *, read_launches=bash_launches):
             return "internal error while checking the writer launch; verify the edit-surface guard before retrying."
     elif tool == "Bash":
         command = tool_input.get("command")
-        if not isinstance(command, str) or "orchestration" not in command:
+        if not isinstance(command, str):
+            return None
+        command_text = command.casefold() if read_launches is powershell_launches else command
+        orchestration_count = command_text.count("orchestration")
+        if not orchestration_count:
             return None
         surface = None
-        parsed = 0
+        launches = []
         try:
-            for verb, args in read_launches(command):
-                parsed += 1
+            scan = LaunchScan()
+            launches.extend(read_launches(command, scan=scan))
+            if scan.nested_script and (launches or orchestration_count > scan.literal_nonlaunches):
+                raise LaunchError(NESTED_SHELL_ERROR)
+            for verb, args, directory_changed in launches:
                 selected = launch_spec(verb, args)
                 if selected is None:
                     continue
@@ -473,6 +704,12 @@ def denial_reason(payload, *, read_launches=bash_launches):
                     if key == "--spec-file":
                         if dynamic or any(c in value for c in "$`") or glob.has_magic(value) or value == "-":
                             raise LaunchError(f"{value!r} is not a literal spec path")
+                        if directory_changed and not (
+                            Path(value).is_absolute()
+                            or (read_launches is powershell_launches and PureWindowsPath(value).is_absolute())
+                        ):
+                            raise LaunchError("pass an absolute --spec-file path or run the launch "
+                                              "without changing directory")
                         source = f"spec file {value!r}"
                         cwd = payload.get("cwd") or os.getcwd()
                         spec = surface.read_spec(Path(cwd) / value)
@@ -484,13 +721,13 @@ def denial_reason(payload, *, read_launches=bash_launches):
                         surface.check(spec)
                 except surface.SurfaceError as exc:
                     raise LaunchError(f"{source}: {exc}") from exc
-            if len(RAW_LAUNCH.findall(command)) > parsed:
+            if len(RAW_LAUNCH.findall(command)) > len(launches):
                 raise LaunchError("cannot parse the orchestration launch")
         except LaunchError as exc:
             hint = f" {PARSE_HINT}" if str(exc).startswith("cannot parse the orchestration launch") else ""
             return f"{exc}.{hint} Pass a readable file with a literal spec path to --spec-file, and fix the spec before launching."
         except Exception:
-            if parsed or RAW_LAUNCH.search(command):
+            if launches or RAW_LAUNCH.search(command):
                 return "internal error while checking the orchestration launch; verify the edit-surface guard before retrying."
     return None
 

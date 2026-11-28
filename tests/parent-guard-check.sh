@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exercise the Claude Code hooks through stdin with isolated state.
 set -eu
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 T=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX")
 trap 'rm -rf -- "$T"' EXIT
 echo "Scratch: $T"
