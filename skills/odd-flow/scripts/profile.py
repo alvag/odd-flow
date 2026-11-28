@@ -880,19 +880,18 @@ def _pin_windows_chain(pins, base, parts):
     path = base
     for part in (None, *parts):
         if part is None:
-            # FILE_READ_ATTRIBUTES | SYNCHRONIZE; BACKUP_SEMANTICS follows the configured base.
-            access, flags = 0x00100080, 0x02000000
+            flags = 0x02000000  # BACKUP_SEMANTICS follows the configured base.
         else:
             path /= part
-            # Windows ignores the share mode of an attribute-only handle: FILE_LIST_DIRECTORY
-            # makes the missing FILE_SHARE_DELETE block renaming or removing the directory.
             # OPEN_REPARSE_POINT opens a junction itself instead of its target.
-            access, flags = 0x00100081, 0x02200000
+            flags = 0x02200000
         # A base failure names the requested state directory, as on POSIX.
         target = base.joinpath(*parts) if part is None else path
         try:
-            # FILE_SHARE_READ | FILE_SHARE_WRITE
-            kernel32, handle = pins.enter_context(_windows_handle(path, access, 0x3, flags))
+            # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE, sharing read and write.
+            # Windows ignores the share mode of an attribute-only handle: FILE_LIST_DIRECTORY
+            # makes the missing FILE_SHARE_DELETE block renaming or removing the directory.
+            kernel32, handle = pins.enter_context(_windows_handle(path, 0x00100081, 0x3, flags))
             info = _windows_file_info(kernel32, handle)
         except FileNotFoundError:
             return False

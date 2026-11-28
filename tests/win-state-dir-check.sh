@@ -23,6 +23,7 @@ import msvcrt
 from pathlib import Path
 import runpy
 import subprocess
+import tempfile
 import time
 import unittest
 from unittest.mock import patch
@@ -82,7 +83,8 @@ GENERIC_READ, DELETE = 0x80000000, 0x00010000
 
 class WinStateDirCheck(unittest.TestCase):
     def setUp(self):
-        self.state = scratch / self._testMethodName
+        # Short names keep the deepest record path under MAX_PATH when TMPDIR is long.
+        self.state = Path(tempfile.mkdtemp(prefix="t", dir=scratch))
         self.home = self.state / "home"
         self.odd = self.state / "odd-flow"
         self.bindings = self.odd / "sessions"
@@ -283,6 +285,18 @@ class WinStateDirCheck(unittest.TestCase):
             with self.assertRaises(OSError):
                 os.rmdir(folder)
         os.rename(folder, folder.with_name("moved"))
+
+    def test_pinned_base_directory_cannot_be_renamed_or_removed(self):
+        folder = self.state / "root"
+        folder.mkdir()
+        module = self.module()
+        with module._open_state_dir(folder) as pinned:
+            self.assertIsNotNone(pinned)
+            with self.assertRaises(OSError):
+                os.rename(folder, folder.with_name("moved"))
+            with self.assertRaises(OSError):
+                os.rmdir(folder)
+        os.rmdir(folder)
 
     def test_held_state_directory_is_skipped_with_an_error(self):
         for name, access, share in (("exclusive", GENERIC_READ, 0), ("delete-access", DELETE, 7)):
